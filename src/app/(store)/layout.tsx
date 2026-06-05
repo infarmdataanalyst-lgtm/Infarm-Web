@@ -3,6 +3,7 @@
 // Memaksa tema terang & membungkus konten dalam kontainer lebar mobile (desain mobile-first).
 
 import type { Metadata } from 'next'
+import AppBar from '@/components/ui/AppBar'
 
 export const metadata: Metadata = {
   title: 'infarm — Berkebun Jadi Mudah, Pasti Panen',
@@ -16,7 +17,9 @@ export default function StoreLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <div className="flex min-h-screen w-full flex-col bg-white text-zinc-900">
+    <div className="flex min-h-screen w-full flex-col bg-brand-surface text-zinc-900">
+      {/* Navbar global — fixed & selalu di lapisan teratas (lihat AppBar) */}
+      <AppBar />
       {children}
     </div>
   )

@@ -35,12 +35,9 @@ export default function CategoryGrid() {
                 className="relative flex aspect-[16/10] items-center justify-center overflow-hidden rounded-xl shadow-sm transition active:scale-[0.98]"
               >
                 {/* TODO: ganti dengan gambar kategori asli (background bertema tanaman) */}
-                <span
-                  aria-hidden
-                  className="absolute inset-0 bg-gradient-to-br from-green-500 to-green-700"
-                />
-                {/* Overlay hijau transparan agar konsisten dengan desain */}
-                <span aria-hidden className="absolute inset-0 bg-green-900/10" />
+                <span aria-hidden className="absolute inset-0 bg-brand-primary" />
+                {/* Overlay transparan agar judul tetap kontras saat nanti memakai gambar */}
+                <span aria-hidden className="absolute inset-0 bg-black/10" />
 
                 <span className="relative px-2 text-center text-lg font-extrabold uppercase leading-tight text-white drop-shadow sm:text-xl">
                   {cat.label}

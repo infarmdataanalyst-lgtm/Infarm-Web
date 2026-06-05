@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="600" height="600" viewBox="0 0 600 600" role="img" aria-label="Placeholder produk infarm">
   <rect width="600" height="600" fill="#e8f3e9"/>
-  <g fill="none" stroke="#3BB346" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+  <g fill="none" stroke="#46B33C" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
     <path d="M300 230c-40-50-110-50-140-20 30 40 100 50 140 20Z"/>
     <path d="M300 230c40-50 110-50 140-20-30 40-100 50-140 20Z"/>
     <line x1="300" y1="230" x2="300" y2="360"/>
   </g>
-  <text x="300" y="430" font-family="Arial, Helvetica, sans-serif" font-size="56" font-weight="700" fill="#3BB346" text-anchor="middle">infarm</text>
+  <text x="300" y="430" font-family="Arial, Helvetica, sans-serif" font-size="56" font-weight="700" fill="#46B33C" text-anchor="middle">infarm</text>
   <text x="300" y="470" font-family="Arial, Helvetica, sans-serif" font-size="24" fill="#7bb37e" text-anchor="middle">foto produk</text>
 </svg>

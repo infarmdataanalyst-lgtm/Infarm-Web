@@ -33,11 +33,11 @@ export default function Footer() {
   const year = new Date().getFullYear()
 
   return (
-    <footer className="mt-auto w-full bg-[#3BB346] text-white">
+    <footer className="mt-auto w-full bg-brand-primary text-white">
       <div className="mx-auto w-full max-w-6xl px-4 py-10 sm:px-6 lg:px-8">
         {/* === Our Achievements === */}
         <section className="text-center">
-          <h2 className="inline-block rounded-md bg-green-800/40 px-5 py-2 text-base font-bold uppercase tracking-wide">
+          <h2 className="inline-block rounded-md bg-black/15 px-5 py-2 text-base font-bold uppercase tracking-wide">
             Our Achievements
           </h2>
           <ul className="mt-5 flex flex-wrap justify-center gap-3">
@@ -54,7 +54,7 @@ export default function Footer() {
 
         {/* === Bersertifikasi === */}
         <section className="mt-8 text-center">
-          <h2 className="inline-block rounded-md bg-green-800/40 px-5 py-2 text-base font-bold uppercase tracking-wide">
+          <h2 className="inline-block rounded-md bg-black/15 px-5 py-2 text-base font-bold uppercase tracking-wide">
             Bersertifikat
           </h2>
           <ul className="mt-5 flex flex-wrap justify-center gap-2">

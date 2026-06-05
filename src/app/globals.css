@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Memuat warna brand (brand.primary/light/surface) dari tailwind.config.ts (Tailwind v4) */
+@config "../../tailwind.config.ts";
+
 :root {
   --background: #ffffff;
   --foreground: #171717;

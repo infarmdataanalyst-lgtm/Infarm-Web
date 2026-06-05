@@ -8,6 +8,7 @@ import type { Product } from '@/types/product'
 const PLACEHOLDER_IMAGE = '/images/product-placeholder.svg'
 
 // 10 produk dummy meniru katalog terlaris pada desain
+// TODO: ganti dengan query Supabase setelah OMS selesai
 export const dummyProducts: Product[] = [
   {
     id: 'prod-001',

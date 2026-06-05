@@ -10,7 +10,8 @@ import { formatRupiah } from '@/lib/format'
 
 // Menampilkan section "Katalog Terlaris" berisi 10 produk pertama + tombol lihat semua.
 export default function BestSellingProducts() {
-  // Ambil 10 produk pertama (nanti diganti query Supabase terurut penjualan)
+  // Ambil 10 produk pertama untuk ditampilkan sebagai "terlaris"
+  // TODO: ganti dengan query Supabase setelah OMS selesai (urut berdasarkan penjualan)
   const products = dummyProducts.slice(0, 10)
 
   return (
@@ -20,7 +21,7 @@ export default function BestSellingProducts() {
         <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
           Produk Pilihan
         </p>
-        <h2 className="mt-1 text-2xl font-bold text-[#2e9c3a] sm:text-3xl">Katalog Terlaris</h2>
+        <h2 className="mt-1 text-2xl font-bold text-brand-primary sm:text-3xl">Katalog Terlaris</h2>
 
         {/* === Grid produk: 2 kolom mobile → bertambah di layar lebih besar === */}
         <ul className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-5">
@@ -36,7 +37,7 @@ export default function BestSellingProducts() {
         <div id="load-more-trigger" className="flex justify-center py-8">
           <span
             aria-label="Memuat produk lainnya"
-            className="h-8 w-8 animate-spin rounded-full border-4 border-zinc-200 border-t-[#3BB346]"
+            className="h-8 w-8 animate-spin rounded-full border-4 border-zinc-200 border-t-brand-primary"
           />
         </div>
 
@@ -44,7 +45,7 @@ export default function BestSellingProducts() {
         <div className="pb-2">
           <Link
             href="/produk"
-            className="flex w-full items-center justify-center rounded-xl bg-[#3BB346] px-6 py-3 text-base font-bold text-white shadow-sm transition hover:bg-[#34a23d] active:scale-[0.99]"
+            className="flex w-full items-center justify-center rounded-xl bg-brand-primary px-6 py-3 text-base font-bold text-white shadow-sm transition hover:brightness-90 active:scale-[0.99]"
           >
             Lihat Semua Produk
           </Link>

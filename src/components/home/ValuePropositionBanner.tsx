@@ -40,7 +40,7 @@ const VALUE_PROPS: ValueProp[] = [
 // Menampilkan banner alasan membeli di website infarm sebagai carousel kartu.
 export default function ValuePropositionBanner() {
   return (
-    <section className="w-full bg-[#3BB346] text-white">
+    <section className="w-full bg-brand-primary text-white">
       <div className="mx-auto w-full max-w-6xl px-4 py-10 sm:px-6 lg:px-8">
         {/* === Heading === */}
         <p className="text-sm font-medium uppercase tracking-wide text-white/80">
@@ -59,13 +59,14 @@ export default function ValuePropositionBanner() {
           {VALUE_PROPS.map((vp) => (
             <li
               key={vp.title}
-              className="min-w-[260px] flex-1 snap-start rounded-2xl bg-white/15 p-5 backdrop-blur-sm"
+              className="min-w-[260px] flex-1 snap-start rounded-2xl bg-brand-light p-5 shadow-sm"
             >
               <span className="text-3xl" aria-hidden>
                 {vp.icon}
               </span>
-              <h3 className="mt-3 text-lg font-bold">{vp.title}</h3>
-              <p className="mt-1 text-sm leading-relaxed text-white/90">
+              {/* Teks gelap agar kontras di atas kartu hijau muda (brand-light) */}
+              <h3 className="mt-3 text-lg font-bold text-zinc-900">{vp.title}</h3>
+              <p className="mt-1 text-sm leading-relaxed text-zinc-700">
                 {vp.description}
               </p>
             </li>
