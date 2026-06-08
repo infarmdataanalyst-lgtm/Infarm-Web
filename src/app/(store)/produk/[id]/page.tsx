@@ -16,6 +16,7 @@ import ProductDescription from '@/components/product/ProductDescription'
 import RecentlyViewed from '@/components/product/RecentlyViewed'
 import ProductReviews from '@/components/product/ProductReviews'
 import StickyBuyBar from '@/components/product/StickyBuyBar'
+import CartToast from '@/components/product/CartToast'
 
 // Halaman detail satu produk berdasarkan id pada URL (/produk/[id]).
 // Di Next.js 16, `params` berupa Promise sehingga perlu di-await.
@@ -61,6 +62,9 @@ export default async function ProductDetailPage({
 
       {/* 8 + 9 — Bilah aksi bawah (sticky) + logika simpan ke cookie keranjang */}
       <StickyBuyBar productId={product.id} price={product.promoPrice} />
+
+      {/* Toast notifikasi sukses (dipicu via event dari StickyBuyBar & BundleOffer) */}
+      <CartToast />
     </main>
   )
 }

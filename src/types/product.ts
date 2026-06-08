@@ -1,12 +1,22 @@
 // src/types/product.ts
 // Tipe data produk untuk digunakan di seluruh project (katalog, kartu produk, dll)
 
+// Slug kategori produk. Dipakai untuk filter di URL (?category=...) — bukan untuk ditampilkan.
+export type ProductCategory =
+  | 'benih-premium'
+  | 'pupuk-nutrisi'
+  | 'peralatan-berkebun'
+  | 'pot-polybag'
+  | 'media-tanam'
+  | 'paket-berkebun'
+
 export type Product = {
   id: string
   name: string
   originalPrice: number
   promoPrice: number
   imageUrl: string
+  category: ProductCategory // kategori internal untuk penyaringan (tidak ditampilkan ke user)
   badge?: string
 }
 

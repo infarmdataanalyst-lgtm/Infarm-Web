@@ -1,24 +1,36 @@
+'use client'
+
 // src/components/product/BundleOffer.tsx
-// Seksi rekomendasi paket kombo "Produk A + Produk B" — berupa kartu yang bisa diklik
-// menuju halaman kombo, lengkap dengan info harga hemat. Server Component.
+// Seksi rekomendasi paket kombo "Produk A + Produk B" — kartu yang bisa diklik untuk menambahkan
+// paket ke keranjang, lengkap dengan info harga hemat. Memicu pop ikon + toast sukses saat diklik.
 
 import Image from 'next/image'
-import Link from 'next/link'
 import type { BundleSuggestion } from '@/lib/data/dummy-product-details'
 import { formatRupiah } from '@/lib/format'
+import { addToCart, showCartToast, CART_BUMP_EVENT } from '@/lib/cart-client'
 
-// Menampilkan kartu kombo hemat yang clickable; menautkan ke halaman paket kombo.
+// Menampilkan kartu kombo hemat yang clickable; klik = tambahkan kedua produk ke keranjang.
 export default function BundleOffer({ bundle }: { bundle: BundleSuggestion }) {
   const { primary, partner, bundlePrice, savings } = bundle
+
+  // Tambahkan paket kombo (kedua produk) ke cookie keranjang, lalu picu pop ikon + toast.
+  // TODO: terapkan harga kombo sebenarnya (bundlePrice) saat skema harga paket sudah ada di OMS.
+  function handleAddBundle() {
+    addToCart({ productId: primary.id, quantity: 1, price: primary.promoPrice })
+    addToCart({ productId: partner.id, quantity: 1, price: partner.promoPrice })
+    window.dispatchEvent(new CustomEvent(CART_BUMP_EVENT))
+    showCartToast('Paket kombo berhasil ditambahkan ke keranjang!')
+  }
 
   return (
     <section className="bg-white px-4 py-4">
       <h2 className="mb-2 text-sm font-bold text-zinc-800">Beli Kombo Lebih Hemat</h2>
 
-      {/* Seluruh kartu adalah satu tombol/link yang bisa diklik */}
-      <Link
-        href={`/produk/kombo/${primary.id}-${partner.id}`}
-        className="flex items-center gap-3 rounded-xl border border-brand-light bg-brand-surface p-3 transition hover:brightness-95 active:scale-[0.99]"
+      {/* Seluruh kartu adalah satu tombol yang bisa diklik */}
+      <button
+        type="button"
+        onClick={handleAddBundle}
+        className="flex w-full items-center gap-3 rounded-xl border border-brand-light bg-brand-surface p-3 text-left transition hover:brightness-95 active:scale-[0.99]"
       >
         {/* Foto Produk A + ikon plus + Foto Produk B */}
         <div className="flex shrink-0 items-center gap-1">
@@ -42,7 +54,7 @@ export default function BundleOffer({ bundle }: { bundle: BundleSuggestion }) {
 
         {/* Panah penanda dapat diklik */}
         <ChevronRightIcon className="shrink-0 text-zinc-400" />
-      </Link>
+      </button>
     </section>
   )
 }

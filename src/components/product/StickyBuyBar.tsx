@@ -7,7 +7,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useCallback, useRef, useState } from 'react'
-import { addToCart, CART_BUMP_EVENT } from '@/lib/cart-client'
+import { addToCart, showCartToast, CART_BUMP_EVENT } from '@/lib/cart-client'
 import FlyToCart, { type FlyPoint } from '@/components/product/FlyToCart'
 
 // Satu partikel animasi yang sedang berjalan
@@ -31,6 +31,7 @@ export default function StickyBuyBar({
   const commitAdd = useCallback(() => {
     addToCart({ productId, quantity: 1, price }) // tulis cookie → badge naik reaktif
     window.dispatchEvent(new CustomEvent(CART_BUMP_EVENT)) // pop ikon keranjang
+    showCartToast() // toast sukses
     setJustAdded(true)
     window.setTimeout(() => setJustAdded(false), 1500)
   }, [productId, price])

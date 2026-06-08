@@ -9,14 +9,14 @@ type Category = {
   href: string
 }
 
-// Daftar kategori utama; href mengarah ke halaman katalog dengan filter kategori
+// Daftar kategori utama; href mengarah ke katalog /products dengan filter ?category=<slug>
 const CATEGORIES: Category[] = [
-  { label: 'Benih Premium', href: '/produk?category=benih' },
-  { label: 'Pupuk Nutrisi', href: '/produk?category=pupuk' },
-  { label: 'Peralatan Berkebun', href: '/produk?category=peralatan' },
-  { label: 'Pot Polybag', href: '/produk?category=pot' },
-  { label: 'Media Tanam', href: '/produk?category=media-tanam' },
-  { label: 'Paket Berkebun', href: '/produk?category=paket' },
+  { label: 'Benih Premium', href: '/products?category=benih-premium' },
+  { label: 'Pupuk Nutrisi', href: '/products?category=pupuk-nutrisi' },
+  { label: 'Peralatan Berkebun', href: '/products?category=peralatan-berkebun' },
+  { label: 'Pot Polybag', href: '/products?category=pot-polybag' },
+  { label: 'Media Tanam', href: '/products?category=media-tanam' },
+  { label: 'Paket Berkebun', href: '/products?category=paket-berkebun' },
 ]
 
 // Menampilkan grid kategori produk yang bisa diklik untuk menuju katalog terfilter.

@@ -15,6 +15,14 @@ export const CART_UPDATED_EVENT = 'infarm:cart-updated'
 // Event khusus untuk memicu efek "pop/getar" pada ikon keranjang saat animasi terbang menyentuhnya
 export const CART_BUMP_EVENT = 'infarm:cart-bump'
 
+// Event untuk memunculkan toast notifikasi sukses ("Berhasil ditambahkan ke keranjang")
+export const CART_TOAST_EVENT = 'infarm:cart-toast'
+
+// Memunculkan toast sukses dari mana saja (StickyBuyBar, BundleOffer, dll). Pesan opsional.
+export function showCartToast(message?: string): void {
+  window.dispatchEvent(new CustomEvent(CART_TOAST_EVENT, { detail: { message } }))
+}
+
 // === Baca Cookie ===
 
 // Membaca seluruh isi keranjang dari cookie browser. Mengembalikan array kosong bila belum ada/rusak.
