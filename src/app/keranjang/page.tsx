@@ -17,6 +17,7 @@ import {
   subscribeCart,
   getCartSnapshot,
   getServerCartSnapshot,
+  setCheckoutItems,
 } from '@/lib/cart-client'
 import CartHeader from '@/components/cart/CartHeader'
 import GiftBanner from '@/components/cart/GiftBanner'
@@ -114,8 +115,14 @@ export default function CartPage() {
     removeFromCart(productId)
   }
 
-  // Lanjut ke checkout (hanya aktif bila ada item tercentang)
+  // Lanjut ke checkout: simpan dulu item TERCENTANG ke cookie checkout agar dibaca di /checkout
   function handleCheckout() {
+    const chosen = selectedItems.map((i) => ({
+      productId: i.productId,
+      quantity: i.quantity,
+      price: i.price,
+    }))
+    setCheckoutItems(chosen)
     router.push('/checkout')
   }
 
