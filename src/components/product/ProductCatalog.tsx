@@ -6,19 +6,9 @@
 
 import { useMemo } from 'react'
 import { useSearchParams } from 'next/navigation'
-import type { ProductCategory } from '@/types/product'
 import { dummyProducts } from '@/lib/data/dummy-products'
+import { getCategoryLabel } from '@/lib/data/categories'
 import ProductCard from '@/components/product/ProductCard'
-
-// Label tampilan per slug kategori — hanya untuk judul halaman, BUKAN ditampilkan di kartu produk.
-const CATEGORY_LABELS: Record<ProductCategory, string> = {
-  'benih-premium': 'Benih Premium',
-  'pupuk-nutrisi': 'Pupuk Nutrisi',
-  'peralatan-berkebun': 'Peralatan Berkebun',
-  'pot-polybag': 'Pot & Polybag',
-  'media-tanam': 'Media Tanam',
-  'paket-berkebun': 'Paket Berkebun',
-}
 
 // Menampilkan judul + grid produk yang sudah disaring sesuai kategori di URL.
 export default function ProductCatalog() {
@@ -32,10 +22,7 @@ export default function ProductCatalog() {
   }, [category])
 
   // Judul: pakai label kategori bila dikenali, selain itu "Semua Produk"
-  const heading =
-    category && category in CATEGORY_LABELS
-      ? CATEGORY_LABELS[category as ProductCategory]
-      : 'Semua Produk'
+  const heading = getCategoryLabel(category) ?? 'Semua Produk'
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-8">

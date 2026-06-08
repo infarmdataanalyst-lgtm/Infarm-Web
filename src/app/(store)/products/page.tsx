@@ -3,13 +3,16 @@
 // useSearchParams (di ProductCatalog) wajib dibungkus <Suspense> agar build Next.js tidak error.
 
 import { Suspense } from 'react'
+import CategoryFilterTabs from '@/components/product/CategoryFilterTabs'
 import ProductCatalog from '@/components/product/ProductCatalog'
 
 export default function ProductsPage() {
   return (
     // pt-14: ruang untuk AppBar fixed (h-14) yang dirender di layout (store)
     <main className="flex flex-1 flex-col bg-brand-surface pt-14">
+      {/* Kapsul filter & katalog sama-sama membaca ?category → dibungkus satu Suspense */}
       <Suspense fallback={<CatalogFallback />}>
+        <CategoryFilterTabs />
         <ProductCatalog />
       </Suspense>
     </main>

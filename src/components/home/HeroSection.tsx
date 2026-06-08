@@ -5,6 +5,7 @@
 // Server Component — belum ada interaktivitas. Responsive mobile → desktop.
 
 import Image from 'next/image'
+import Link from 'next/link'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -64,6 +65,15 @@ export default function HeroSection() {
           Pasti Panen
         </h1>
 
+        {/* CTA utama — kapsul lonjong menuju katalog semua produk (/products, tanpa filter) */}
+        <Link
+          href="/products"
+          className="mt-6 inline-flex items-center gap-2 rounded-full bg-brand-primary px-7 py-3 text-base font-bold text-white shadow-md transition hover:brightness-90 active:scale-[0.98]"
+        >
+          Belanja Sekarang
+          <ArrowRightIcon />
+        </Link>
+
         {/* Trust badges — vertikal di mobile, sejajar di layar lebih besar */}
         <ul className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
           <TrustBadge highlight="3,4 Juta +" label="Pembeli Puas" />
@@ -84,6 +94,16 @@ function TrustBadge({ highlight, label }: { highlight: string; label: string }) 
       <p className="text-2xl font-extrabold text-brand-primary">{highlight}</p>
       <p className="text-sm font-medium text-zinc-800">{label}</p>
     </li>
+  )
+}
+
+// Ikon panah ke kanan (inline SVG) untuk tombol CTA "Belanja Sekarang"
+function ArrowRightIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <line x1="5" y1="12" x2="19" y2="12" />
+      <polyline points="12 5 19 12 12 19" />
+    </svg>
   )
 }
 

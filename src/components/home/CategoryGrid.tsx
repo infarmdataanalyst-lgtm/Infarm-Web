@@ -2,22 +2,7 @@
 // Section 3 homepage: grid navigasi kategori produk. Server Component, responsive.
 
 import Link from 'next/link'
-
-// Satu kategori produk beserta tujuan link-nya
-type Category = {
-  label: string
-  href: string
-}
-
-// Daftar kategori utama; href mengarah ke katalog /products dengan filter ?category=<slug>
-const CATEGORIES: Category[] = [
-  { label: 'Benih Premium', href: '/products?category=benih-premium' },
-  { label: 'Pupuk Nutrisi', href: '/products?category=pupuk-nutrisi' },
-  { label: 'Peralatan Berkebun', href: '/products?category=peralatan-berkebun' },
-  { label: 'Pot Polybag', href: '/products?category=pot-polybag' },
-  { label: 'Media Tanam', href: '/products?category=media-tanam' },
-  { label: 'Paket Berkebun', href: '/products?category=paket-berkebun' },
-]
+import { PRODUCT_CATEGORIES } from '@/lib/data/categories'
 
 // Menampilkan grid kategori produk yang bisa diklik untuk menuju katalog terfilter.
 export default function CategoryGrid() {
@@ -28,10 +13,10 @@ export default function CategoryGrid() {
 
         {/* 2 kolom di mobile, 3 di tablet ke atas */}
         <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4">
-          {CATEGORIES.map((cat) => (
-            <li key={cat.href}>
+          {PRODUCT_CATEGORIES.map((cat) => (
+            <li key={cat.slug}>
               <Link
-                href={cat.href}
+                href={`/products?category=${cat.slug}`}
                 className="relative flex aspect-[16/10] items-center justify-center overflow-hidden rounded-xl shadow-sm transition active:scale-[0.98]"
               >
                 {/* TODO: ganti dengan gambar kategori asli (background bertema tanaman) */}
