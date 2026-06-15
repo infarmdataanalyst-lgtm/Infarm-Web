@@ -7,6 +7,7 @@
 
 import { useMemo, useState } from 'react'
 import Image from 'next/image'
+import Link from 'next/link'
 import OmsHeader from '@/components/oms/OmsHeader'
 
 // === Tipe Data ===
@@ -138,13 +139,13 @@ export default function ProductsPage() {
               Kelola varian, harga, dan perbarui stok gudang aktif Infarm.
             </p>
           </div>
-          <button
-            type="button"
+          <Link
+            href="/oms/dashboard/products/upload"
             className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
           >
             <PlusIcon />
             Tambah Produk Baru
-          </button>
+          </Link>
         </header>
 
         {/* === Ringkasan Stok (3 Mini Cards) === */}
