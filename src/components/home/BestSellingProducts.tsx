@@ -6,13 +6,16 @@ import Image from 'next/image'
 import Link from 'next/link'
 import type { Product } from '@/types/product'
 import { dummyProducts } from '@/lib/data/dummy-products'
+import { readProducts } from '@/lib/mock-db/products'
 import { formatRupiah } from '@/lib/format'
 
-// Menampilkan section "Katalog Terlaris" berisi 10 produk pertama + tombol lihat semua.
-export default function BestSellingProducts() {
-  // Ambil 10 produk pertama untuk ditampilkan sebagai "terlaris"
+// Menampilkan section "Katalog Terlaris": produk baru dari OMS + dummy.
+export default async function BestSellingProducts() {
+  // Produk hasil input OMS (mock DB) tampil paling depan, lalu dummy bawaan.
+  // Produk yang diarsipkan disembunyikan dari ecommerce (tetap ada di OMS).
   // TODO: ganti dengan query Supabase setelah OMS selesai (urut berdasarkan penjualan)
-  const products = dummyProducts.slice(0, 10)
+  const omsProducts = (await readProducts()).filter((p) => !p.archived)
+  const products: Product[] = [...omsProducts, ...dummyProducts].slice(0, 10)
 
   return (
     <section className="w-full">

@@ -8,7 +8,7 @@ import { useState } from 'react'
 import type { ShippingAddress } from '@/lib/data/dummy-checkout'
 
 // Bentuk data form alamat
-type AddressFormState = {
+export type AddressFormState = {
   recipientName: string
   phone: string
   street: string
@@ -18,7 +18,15 @@ type AddressFormState = {
 }
 
 // Menampilkan form pengisian alamat pengiriman dengan input bergaya bersih.
-export default function AddressForm({ defaultAddress }: { defaultAddress: ShippingAddress }) {
+// onChange: mengabarkan nilai form terbaru ke parent setiap kali ada perubahan
+// (agar nama/telepon yang diketik bisa dipakai saat membuat order).
+export default function AddressForm({
+  defaultAddress,
+  onChange,
+}: {
+  defaultAddress: ShippingAddress
+  onChange?: (address: AddressFormState) => void
+}) {
   // Prefill sebagian field dari alamat dummy agar mudah diuji
   const [form, setForm] = useState<AddressFormState>({
     recipientName: defaultAddress.recipientName,
@@ -29,9 +37,11 @@ export default function AddressForm({ defaultAddress }: { defaultAddress: Shippi
     cityPostal: '',
   })
 
-  // Memperbarui satu field form berdasarkan nama field
+  // Memperbarui satu field form lalu mengabarkan nilai terbaru ke parent
   function updateField(field: keyof AddressFormState, value: string) {
-    setForm((prev) => ({ ...prev, [field]: value }))
+    const next = { ...form, [field]: value }
+    setForm(next)
+    onChange?.(next)
   }
 
   return (

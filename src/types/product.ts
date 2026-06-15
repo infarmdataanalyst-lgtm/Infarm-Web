@@ -20,6 +20,28 @@ export type Product = {
   badge?: string
 }
 
+// Produk yang disimpan via OMS ke mock database (superset Product + data gudang).
+// Tetap kompatibel dengan Product agar bisa langsung dipakai kartu produk ecommerce.
+export type StoredProduct = Product & {
+  sku: string
+  stock: number
+  description?: string
+  archived?: boolean // true = tetap tersimpan di OMS tapi disembunyikan dari ecommerce
+  createdAt: string // ISO date, untuk urutan terbaru
+}
+
+// Payload dari form upload produk OMS (sebelum disimpan).
+// Opsi harga sederhana: satu harga jual (originalPrice = promoPrice = price).
+export type CreateProductInput = {
+  name: string
+  sku: string
+  category: ProductCategory
+  price: number
+  stock: number
+  description?: string
+  imageUrl?: string
+}
+
 // Satu ulasan pembeli untuk halaman detail produk
 export type ProductReview = {
   id: string

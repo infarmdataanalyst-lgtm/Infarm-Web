@@ -8,6 +8,9 @@ import CategoryGrid from '@/components/home/CategoryGrid'
 import BestSellingProducts from '@/components/home/BestSellingProducts'
 import Footer from '@/components/home/Footer'
 
+// Membaca produk OMS dari mock DB (fs) → selalu segarkan agar produk baru langsung tampil
+export const dynamic = 'force-dynamic'
+
 // Homepage publik infarm — merakit Hero, value proposition, kategori, produk terlaris, dan footer
 // menjadi satu halaman yang menyesuaikan diri di berbagai ukuran layar.
 export default function HomePage() {

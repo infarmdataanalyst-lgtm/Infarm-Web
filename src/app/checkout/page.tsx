@@ -8,7 +8,7 @@ import { useMemo, useState, useSyncExternalStore } from 'react'
 import { useRouter } from 'next/navigation'
 import CheckoutHeader from '@/components/checkout/CheckoutHeader'
 import CheckoutProductSummary from '@/components/checkout/CheckoutProductSummary'
-import AddressForm from '@/components/checkout/AddressForm'
+import AddressForm, { type AddressFormState } from '@/components/checkout/AddressForm'
 import OptionRow from '@/components/checkout/OptionRow'
 import OrderSummary from '@/components/checkout/OrderSummary'
 import CheckoutBottomBar from '@/components/checkout/CheckoutBottomBar'
@@ -38,6 +38,16 @@ export default function CheckoutPage() {
   const [isDeliveryModalOpen, setIsDeliveryModalOpen] = useState(false)
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false)
   const [isPaying, setIsPaying] = useState(false) // mencegah double submit saat memproses bayar
+
+  // === Alamat pengiriman: diangkat dari AddressForm agar nama/telepon yang diketik dipakai saat order ===
+  const [address, setAddress] = useState<AddressFormState>({
+    recipientName: dummyAddress.recipientName,
+    phone: dummyAddress.phone,
+    street: '',
+    village: '',
+    district: '',
+    cityPostal: '',
+  })
 
   // === State pilihan user ===
   const [selectedCourierId, setSelectedCourierId] = useState('jne') // default: rekomendasi
@@ -104,8 +114,8 @@ export default function CheckoutPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           orderId,
-          customerName: dummyAddress.recipientName,
-          customerPhone: dummyAddress.phone,
+          customerName: address.recipientName.trim() || dummyAddress.recipientName,
+          customerPhone: address.phone.trim() || dummyAddress.phone,
           date: new Date().toISOString(),
           items: orderItems.map((item) => ({
             productId: item.id,
@@ -136,7 +146,7 @@ export default function CheckoutPage() {
         <CheckoutProductSummary items={orderItems} />
 
         {/* 3 — Form input alamat pengiriman */}
-        <AddressForm defaultAddress={dummyAddress} />
+        <AddressForm defaultAddress={dummyAddress} onChange={setAddress} />
 
         {/* 4 — Pilihan pengiriman (klik → buka modal) */}
         <OptionRow

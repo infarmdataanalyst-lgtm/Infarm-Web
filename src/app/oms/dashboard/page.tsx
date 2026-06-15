@@ -16,6 +16,11 @@ import {
 } from 'lucide-react'
 import OmsHeader from '@/components/oms/OmsHeader'
 import SalesChart from '@/components/oms/SalesChart'
+import { readOrders } from '@/lib/mock-db/orders'
+import type { OrderPaymentStatus } from '@/types/order'
+
+// Dashboard membaca order asli dari mock DB → selalu segarkan, jangan di-cache
+export const dynamic = 'force-dynamic'
 
 // === Tipe Data ===
 
@@ -27,13 +32,6 @@ type Stat = {
   accent: string // kelas warna untuk wadah ikon
 }
 
-type Order = {
-  invoice: string
-  customer: string
-  total: number
-  payment: 'Lunas' | 'Menunggu' | 'Gagal'
-}
-
 type LowStock = {
   name: string
   sku: string
@@ -42,45 +40,6 @@ type LowStock = {
 }
 
 // === Data Dummy ===
-
-const STATS: Stat[] = [
-  {
-    label: 'Total Pendapatan',
-    value: 'Rp 150.000k',
-    delta: 12.5,
-    icon: Wallet,
-    accent: 'bg-emerald-50 text-emerald-700',
-  },
-  {
-    label: 'Total Pesanan',
-    value: '1.250',
-    delta: 8.2,
-    icon: ShoppingBag,
-    accent: 'bg-blue-50 text-blue-600',
-  },
-  {
-    label: 'Produk Aktif',
-    value: '450',
-    delta: 0,
-    icon: Boxes,
-    accent: 'bg-amber-50 text-amber-600',
-  },
-  {
-    label: 'Rata-rata Rating',
-    value: '4.8/5.0',
-    delta: 0.1,
-    icon: Star,
-    accent: 'bg-yellow-50 text-yellow-500',
-  },
-]
-
-const RECENT_ORDERS: Order[] = [
-  { invoice: '#INV-98231', customer: 'Budi Santoso', total: 450000, payment: 'Lunas' },
-  { invoice: '#INV-98230', customer: 'Siti Aminah', total: 1250000, payment: 'Lunas' },
-  { invoice: '#INV-98229', customer: 'Andi Wijaya', total: 320000, payment: 'Menunggu' },
-  { invoice: '#INV-98228', customer: 'Rina Kartika', total: 890000, payment: 'Gagal' },
-  { invoice: '#INV-98227', customer: 'Joko Pratama', total: 175000, payment: 'Lunas' },
-]
 
 const LOW_STOCKS: LowStock[] = [
   { name: 'Media Tanam Premium 5L', sku: 'MDT-PRM-5L', stock: 7, max: 100 },
@@ -99,7 +58,50 @@ function formatRupiah(value: number): string {
   }).format(value)
 }
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
+  // Baca pesanan asli dari mock DB (data dari checkout ecommerce)
+  const orders = await readOrders()
+
+  // 5 pesanan terbaru untuk widget "Pesanan Terbaru" (data disimpan newest-first)
+  const recentOrders = orders.slice(0, 5)
+
+  // Pendapatan = jumlah total pesanan yang sudah Lunas
+  const totalRevenue = orders
+    .filter((o) => o.paymentStatus === 'Lunas')
+    .reduce((sum, o) => sum + o.totalAmount, 0)
+
+  // Statistik dihitung dari data asli (kartu Produk Aktif & Rating masih dummy)
+  const STATS: Stat[] = [
+    {
+      label: 'Total Pendapatan',
+      value: formatRupiah(totalRevenue),
+      delta: 12.5,
+      icon: Wallet,
+      accent: 'bg-emerald-50 text-emerald-700',
+    },
+    {
+      label: 'Total Pesanan',
+      value: orders.length.toLocaleString('id-ID'),
+      delta: 8.2,
+      icon: ShoppingBag,
+      accent: 'bg-blue-50 text-blue-600',
+    },
+    {
+      label: 'Produk Aktif',
+      value: '450',
+      delta: 0,
+      icon: Boxes,
+      accent: 'bg-amber-50 text-amber-600',
+    },
+    {
+      label: 'Rata-rata Rating',
+      value: '4.8/5.0',
+      delta: 0.1,
+      icon: Star,
+      accent: 'bg-yellow-50 text-yellow-500',
+    },
+  ]
+
   return (
     <>
       <OmsHeader title="Dashboard" notificationCount={3} />
@@ -185,20 +187,28 @@ export default function DashboardPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {RECENT_ORDERS.map((order) => (
-                    <tr key={order.invoice} className="hover:bg-gray-50/70">
-                      <td className="px-6 py-4 font-semibold text-gray-900">
-                        {order.invoice}
-                      </td>
-                      <td className="px-6 py-4 text-gray-700">{order.customer}</td>
-                      <td className="px-6 py-4 text-gray-700">
-                        {formatRupiah(order.total)}
-                      </td>
-                      <td className="px-6 py-4">
-                        <PaymentBadge status={order.payment} />
+                  {recentOrders.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-6 py-10 text-center text-sm text-gray-400">
+                        Belum ada pesanan masuk.
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    recentOrders.map((order) => (
+                      <tr key={order.orderId} className="hover:bg-gray-50/70">
+                        <td className="px-6 py-4 font-semibold text-gray-900">
+                          {order.orderId.startsWith('#') ? order.orderId : `#${order.orderId}`}
+                        </td>
+                        <td className="px-6 py-4 text-gray-700">{order.customerName}</td>
+                        <td className="px-6 py-4 text-gray-700">
+                          {formatRupiah(order.totalAmount)}
+                        </td>
+                        <td className="px-6 py-4">
+                          <PaymentBadge status={order.paymentStatus} />
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -275,8 +285,8 @@ function StatCard({ stat }: { stat: Stat }) {
 }
 
 // Badge status pembayaran berwarna (pill)
-function PaymentBadge({ status }: { status: Order['payment'] }) {
-  const styles: Record<Order['payment'], string> = {
+function PaymentBadge({ status }: { status: OrderPaymentStatus }) {
+  const styles: Record<OrderPaymentStatus, string> = {
     Lunas: 'bg-emerald-50 text-emerald-700',
     Menunggu: 'bg-amber-50 text-amber-600',
     Gagal: 'bg-red-50 text-red-600',
