@@ -5,6 +5,7 @@
 // Orchestrator: menyimpan semua state (modal, kurir, asuransi, pembayaran) & menghitung total reaktif.
 
 import { useMemo, useState, useSyncExternalStore } from 'react'
+import { useRouter } from 'next/navigation'
 import CheckoutHeader from '@/components/checkout/CheckoutHeader'
 import CheckoutProductSummary from '@/components/checkout/CheckoutProductSummary'
 import AddressForm from '@/components/checkout/AddressForm'
@@ -31,9 +32,12 @@ import {
 } from '@/lib/data/dummy-checkout'
 
 export default function CheckoutPage() {
+  const router = useRouter()
+
   // === State tampilan modal ===
   const [isDeliveryModalOpen, setIsDeliveryModalOpen] = useState(false)
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false)
+  const [isPaying, setIsPaying] = useState(false) // mencegah double submit saat memproses bayar
 
   // === State pilihan user ===
   const [selectedCourierId, setSelectedCourierId] = useState('jne') // default: rekomendasi
@@ -82,9 +86,43 @@ export default function CheckoutPage() {
   const shipping = selectedCourier.price + (insuranceEnabled ? INSURANCE_FEE : 0)
   const total = subtotal + shipping - ORDER_DISCOUNT
 
-  // Proses bayar — placeholder. TODO: buat invoice via lib/xendit lalu redirect ke halaman Xendit.
-  function handlePay() {
-    window.alert(`Memproses pembayaran ${formatRupiah(total)} via ${selectedPayment.name}…`)
+  // Proses bayar (mode prototipe): simpan order ke mock DB lalu arahkan ke halaman sukses.
+  // TODO: ganti simulasi ini dengan buat invoice via lib/xendit & redirect ke halaman Xendit.
+  async function handlePay() {
+    if (isPaying) return
+    setIsPaying(true)
+
+    // ID invoice unik sederhana untuk prototipe
+    const orderId = `INV-${Date.now().toString().slice(-8)}`
+
+    // Pecah string kurir ('JNE Reguler') → courier + service untuk tipe Order
+    const [courier, ...serviceParts] = selectedCourier.courier.split(' ')
+
+    try {
+      await fetch('/api/orders/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orderId,
+          customerName: dummyAddress.recipientName,
+          customerPhone: dummyAddress.phone,
+          date: new Date().toISOString(),
+          items: orderItems.map((item) => ({
+            productId: item.id,
+            name: item.name,
+            quantity: item.quantity,
+            price: item.price,
+          })),
+          totalAmount: total,
+          paymentStatus: 'Lunas',
+          logistics: { courier, service: serviceParts.join(' ') || 'Reguler' },
+        }),
+      })
+    } catch {
+      // Mode prototipe: walau simpan gagal, tetap lanjut ke halaman sukses.
+    }
+
+    router.push(`/checkout/success?order=${orderId}`)
   }
 
   return (
@@ -126,7 +164,7 @@ export default function CheckoutPage() {
       </main>
 
       {/* Bilah bayar bawah (sticky) */}
-      <CheckoutBottomBar total={total} onPay={handlePay} />
+      <CheckoutBottomBar total={total} onPay={handlePay} isPaying={isPaying} />
 
       {/* === Modal Pengiriman === */}
       <DeliveryModal

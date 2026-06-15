@@ -4,12 +4,15 @@
 import { formatRupiah } from '@/lib/format'
 
 // Menampilkan total pembayaran & tombol bayar; total diberikan dari parent (reaktif).
+// isPaying: saat true tombol dinonaktifkan & berubah jadi "Memproses…" (cegah double submit).
 export default function CheckoutBottomBar({
   total,
   onPay,
+  isPaying = false,
 }: {
   total: number
   onPay: () => void
+  isPaying?: boolean
 }) {
   return (
     <div className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-200 bg-white">
@@ -22,9 +25,10 @@ export default function CheckoutBottomBar({
         <button
           type="button"
           onClick={onPay}
-          className="ml-auto shrink-0 rounded-xl bg-brand-primary px-8 py-3 text-base font-bold text-white shadow-sm transition hover:brightness-90 active:scale-[0.99]"
+          disabled={isPaying}
+          className="ml-auto shrink-0 rounded-xl bg-brand-primary px-8 py-3 text-base font-bold text-white shadow-sm transition hover:brightness-90 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-70"
         >
-          Bayar Sekarang
+          {isPaying ? 'Memproses…' : 'Bayar Sekarang'}
         </button>
       </div>
     </div>

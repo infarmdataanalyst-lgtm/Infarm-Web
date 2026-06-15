@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# mock database lokal (rapid prototyping) — jangan ikut ke Git/Vercel
+src/data/orders.json
