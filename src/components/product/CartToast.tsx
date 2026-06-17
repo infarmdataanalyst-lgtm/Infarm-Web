@@ -5,6 +5,7 @@
 // CART_TOAST_EVENT, bertahan 2 detik, lalu memudar otomatis. Posisi: tengah-atas (di bawah header).
 
 import { useEffect, useRef, useState } from 'react'
+import { ShoppingCart, Check } from 'lucide-react'
 import { CART_TOAST_EVENT } from '@/lib/cart-client'
 
 const DEFAULT_MESSAGE = 'Berhasil ditambahkan ke keranjang belanja!'
@@ -66,15 +67,17 @@ export default function CartToast() {
   )
 }
 
-// Ikon keranjang hijau dengan tanda centang di dalam keranjangnya
+// Ikon keranjang hijau dengan tanda centang yang diposisikan tepat di tengah wadah keranjang.
+// Wrapper `relative` + centang `absolute inset-0` agar selalu terpusat di dalam ikon keranjang.
 function CartCheckIcon() {
   return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-brand-primary" aria-hidden>
-      <circle cx="9" cy="21" r="1.5" />
-      <circle cx="19" cy="21" r="1.5" />
-      <path d="M2.5 3h2l2.6 12.4a2 2 0 0 0 2 1.6h8.7a2 2 0 0 0 2-1.6L23 7H6" />
-      {/* Centang di area keranjang */}
-      <polyline points="9.5 9.5 11.5 11.5 15 7.5" />
-    </svg>
+    <span className="relative inline-flex h-6 w-6 shrink-0 text-emerald-600" aria-hidden>
+      <ShoppingCart className="h-6 w-6" strokeWidth={2} />
+      {/* Centang kecil di tengah wadah keranjang.
+          Digeser kanan ~2px (gagang keranjang ada di kiri) & atas ~1px agar pas di tengah wadah, bukan di roda. */}
+      <span className="absolute inset-0 flex items-center justify-center">
+        <Check className="h-2.5 w-2.5 translate-x-[2px] -translate-y-[1px]" strokeWidth={3.5} />
+      </span>
+    </span>
   )
 }

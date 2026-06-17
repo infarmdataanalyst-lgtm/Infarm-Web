@@ -1,15 +1,29 @@
 'use client'
 
 // src/components/product/ProductReviews.tsx
-// Seksi ulasan produk: skor kepuasan ringkas, filter kategori, dan daftar komentar pembeli.
-// Client Component karena filter kategori memakai state interaktif.
+// Seksi ulasan produk: skor kepuasan ringkas, filter rating bintang + media, dan daftar komentar.
+// Client Component karena filter memakai state interaktif.
 
 import Image from 'next/image'
 import { useMemo, useState } from 'react'
+import { Star } from 'lucide-react'
 import type { ProductReview } from '@/types/product'
 import StarRating from '@/components/product/StarRating'
 
-// Menampilkan ringkasan rating + filter kategori + daftar ulasan yang bisa difilter.
+// Tipe filter media (berdasarkan ada/tidaknya foto pada ulasan)
+type MediaFilter = 'all' | 'with-photo' | 'comment-only'
+
+// Nilai filter rating; 0 = "Semua Rating", 1–5 = jumlah bintang tepat
+const RATING_VALUES = [0, 5, 4, 3, 2, 1]
+
+// Opsi filter media
+const MEDIA_FILTERS: { label: string; value: MediaFilter }[] = [
+  { label: 'Semua Konten', value: 'all' },
+  { label: 'Dengan Foto', value: 'with-photo' },
+  { label: 'Hanya Komentar', value: 'comment-only' },
+]
+
+// Menampilkan ringkasan rating + filter bintang/media + daftar ulasan yang bisa difilter.
 export default function ProductReviews({
   rating,
   reviewCount,
@@ -19,19 +33,26 @@ export default function ProductReviews({
   reviewCount: number
   reviews: ProductReview[]
 }) {
-  // Kategori filter dibangun dinamis dari data ulasan, diawali "Semua"
-  const categories = useMemo(() => {
-    const unique = Array.from(new Set(reviews.map((r) => r.category)))
-    return ['Semua', ...unique]
-  }, [reviews])
+  // === State filter ===
+  const [selectedRating, setSelectedRating] = useState<number>(0) // 0 = semua rating
+  const [mediaFilter, setMediaFilter] = useState<MediaFilter>('all')
 
-  const [activeCategory, setActiveCategory] = useState('Semua')
+  // === Logika filter (kuantitatif + media) ===
+  const visibleReviews = useMemo(() => {
+    return reviews.filter((review) => {
+      // Filter rating bintang: 0 = semua, selain itu cocokkan nilai persis
+      const ratingMatch = selectedRating === 0 || review.rating === selectedRating
 
-  // Saring ulasan sesuai kategori aktif
-  const visibleReviews =
-    activeCategory === 'Semua'
-      ? reviews
-      : reviews.filter((r) => r.category === activeCategory)
+      // Filter media: cek apakah ulasan punya lampiran foto (imageUrls = field foto yang ada)
+      const hasPhoto = (review.imageUrls?.length ?? 0) > 0
+      const mediaMatch =
+        mediaFilter === 'all' ||
+        (mediaFilter === 'with-photo' && hasPhoto) ||
+        (mediaFilter === 'comment-only' && !hasPhoto)
+
+      return ratingMatch && mediaMatch
+    })
+  }, [reviews, selectedRating, mediaFilter])
 
   return (
     <section className="bg-white px-4 py-4">
@@ -49,21 +70,27 @@ export default function ProductReviews({
         </div>
       </div>
 
-      {/* === Filter kategori ulasan === */}
-      <div className="mt-3 flex gap-2 overflow-x-auto scrollbar-hide">
-        {categories.map((cat) => (
-          <button
-            key={cat}
-            type="button"
-            onClick={() => setActiveCategory(cat)}
-            className={`shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition ${
-              cat === activeCategory
-                ? 'border-brand-primary bg-brand-primary text-white'
-                : 'border-zinc-200 bg-white text-zinc-600 hover:border-brand-primary'
-            }`}
-          >
-            {cat}
-          </button>
+      {/* === Filter rating bintang (ikon) === */}
+      <div className="mt-4 flex flex-wrap gap-2">
+        {RATING_VALUES.map((value) => (
+          <RatingPill
+            key={value}
+            value={value}
+            active={selectedRating === value}
+            onClick={() => setSelectedRating(value)}
+          />
+        ))}
+      </div>
+
+      {/* === Filter media (foto vs teks) === */}
+      <div className="mt-2 flex flex-wrap gap-2">
+        {MEDIA_FILTERS.map((filter) => (
+          <FilterPill
+            key={filter.value}
+            label={filter.label}
+            active={mediaFilter === filter.value}
+            onClick={() => setMediaFilter(filter.value)}
+          />
         ))}
       </div>
 
@@ -75,12 +102,78 @@ export default function ProductReviews({
           </li>
         ))}
         {visibleReviews.length === 0 && (
-          <li className="py-6 text-center text-sm text-zinc-400">
-            Belum ada ulasan untuk kategori ini.
+          <li className="py-8 text-center text-sm text-zinc-400">
+            Tidak ada ulasan yang cocok dengan kriteria filter.
           </li>
         )}
       </ul>
     </section>
+  )
+}
+
+// === Sub-komponen ===
+
+// Tombol filter rating berbentuk kapsul berisi ikon bintang.
+// value 0 = "Semua Rating" (teks + 1 bintang), 1–5 = sejumlah ikon bintang.
+function RatingPill({
+  value,
+  active,
+  onClick,
+}: {
+  value: number
+  active: boolean
+  onClick: () => void
+}) {
+  // Bintang: putih saat aktif, emas saat nonaktif
+  const starClass = active ? 'fill-white stroke-white' : 'fill-amber-400 stroke-amber-400'
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={value === 0 ? 'Semua rating' : `${value} bintang`}
+      className={`flex shrink-0 items-center gap-1 rounded-full border px-3.5 py-1.5 text-xs font-medium transition ${
+        active
+          ? 'border-emerald-600 bg-emerald-600 text-white'
+          : 'border-zinc-200 bg-white text-zinc-600 hover:bg-slate-50'
+      }`}
+    >
+      {value === 0 ? (
+        <>
+          <span>Semua Rating</span>
+          <Star className={`h-3.5 w-3.5 ${starClass}`} />
+        </>
+      ) : (
+        Array.from({ length: value }, (_, i) => (
+          <Star key={i} className={`h-3.5 w-3.5 ${starClass}`} />
+        ))
+      )}
+    </button>
+  )
+}
+
+// Tombol filter berbentuk kapsul: hijau Infarm saat aktif, abu terang saat nonaktif
+function FilterPill({
+  label,
+  active,
+  onClick,
+}: {
+  label: string
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-medium transition ${
+        active
+          ? 'bg-emerald-600 text-white'
+          : 'bg-slate-50 text-zinc-600 hover:bg-slate-100'
+      }`}
+    >
+      {label}
+    </button>
   )
 }
 

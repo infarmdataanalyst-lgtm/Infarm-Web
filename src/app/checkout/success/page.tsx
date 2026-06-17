@@ -67,16 +67,17 @@ export default async function CheckoutSuccessPage({
     <div className="flex min-h-screen justify-center bg-brand-surface">
       {/* Container lebar mobile (terpusat di desktop) */}
       <div className="flex w-full max-w-md flex-col px-5 pb-8">
-        {/* === Header: tutup + judul === */}
-        <header className="flex items-center gap-3 py-5">
+        {/* === Header: tutup + judul (warna disamakan dengan header beranda: bg-brand-primary + teks putih) === */}
+        {/* -mx-5 px-5 agar latar hijau membentang penuh seperti header beranda */}
+        <header className="-mx-5 flex items-center gap-3 bg-brand-primary px-5 py-5 text-white">
           <Link
             href="/"
             aria-label="Tutup"
-            className="flex h-9 w-9 items-center justify-center rounded-full text-zinc-500 transition hover:bg-black/5"
+            className="flex h-9 w-9 items-center justify-center rounded-full text-white transition hover:bg-white/15"
           >
             <X className="h-5 w-5" />
           </Link>
-          <h1 className="text-lg font-bold text-zinc-900">Order Confirmed</h1>
+          <h1 className="text-lg font-bold text-white">Order Confirmed</h1>
         </header>
 
         {/* === Ilustrasi sukses === */}
@@ -95,7 +96,7 @@ export default async function CheckoutSuccessPage({
             Yeay! Pesananmu Sedang Disiapkan
           </h2>
           <p className="mx-auto mt-2 max-w-xs text-sm text-zinc-500">
-            Terima kasih telah berkontribusi untuk masa depan yang lebih hijau.
+            Terima kasih telah berbelanja!
           </p>
         </div>
 
