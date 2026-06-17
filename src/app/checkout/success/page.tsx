@@ -65,11 +65,11 @@ export default async function CheckoutSuccessPage({
 
   return (
     <div className="flex min-h-screen justify-center bg-brand-surface">
-      {/* Container lebar mobile (terpusat di desktop) */}
-      <div className="flex w-full max-w-md flex-col px-5 pb-8">
+      {/* Container: full-width di mobile (max-w-md), dibatasi & terpusat di desktop (xl → 2xl) */}
+      <div className="mx-auto flex w-full max-w-md flex-col px-5 pb-8 md:max-w-xl lg:max-w-2xl">
         {/* === Header: tutup + judul (warna & tinggi disamakan dengan header beranda: bg-brand-primary, teks putih, h-14) === */}
         {/* -mx-5 px-5 agar latar hijau membentang penuh seperti header beranda */}
-        <header className="-mx-5 flex h-14 items-center gap-3 bg-brand-primary px-5 text-white">
+        <header className="-mx-5 flex h-14 items-center gap-3 bg-brand-primary px-5 text-white md:px-8">
           <Link
             href="/"
             aria-label="Tutup"
@@ -101,7 +101,7 @@ export default async function CheckoutSuccessPage({
         </div>
 
         {/* === Kartu detail pesanan === */}
-        <div className="mt-6 rounded-2xl bg-white p-5 shadow-sm">
+        <div className="mt-6 w-full rounded-2xl bg-white p-5 shadow-sm md:shadow-md md:rounded-2xl">
           {/* Baris atas: Order ID + tanggal/status */}
           <div className="flex items-start justify-between">
             <div>
