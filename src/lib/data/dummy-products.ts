@@ -17,7 +17,7 @@ export const dummyProducts: Product[] = [
     promoPrice: 75000,
     imageUrl: PLACEHOLDER_IMAGE,
     category: 'pupuk-nutrisi',
-    badge: 'Barang Murah',
+    badge: 'Baru',
   },
   {
     id: 'prod-002',
@@ -42,7 +42,7 @@ export const dummyProducts: Product[] = [
     promoPrice: 75000,
     imageUrl: PLACEHOLDER_IMAGE,
     category: 'pupuk-nutrisi',
-    badge: 'Barang Murah',
+    badge: 'Baru',
   },
   {
     id: 'prod-005',
@@ -67,7 +67,7 @@ export const dummyProducts: Product[] = [
     promoPrice: 75000,
     imageUrl: PLACEHOLDER_IMAGE,
     category: 'pupuk-nutrisi',
-    badge: 'Barang Murah',
+    badge: 'Baru',
   },
   {
     id: 'prod-008',
@@ -92,7 +92,7 @@ export const dummyProducts: Product[] = [
     promoPrice: 199000,
     imageUrl: PLACEHOLDER_IMAGE,
     category: 'paket-berkebun',
-    badge: 'Barang Murah',
+    badge: 'Baru',
   },
 
   // === Produk tambahan agar setiap kategori punya isi (untuk demo filter /products) ===
@@ -111,7 +111,7 @@ export const dummyProducts: Product[] = [
     promoPrice: 22000,
     imageUrl: PLACEHOLDER_IMAGE,
     category: 'benih-premium',
-    badge: 'Barang Murah',
+    badge: 'Baru',
   },
   {
     id: 'prod-013',
@@ -128,7 +128,7 @@ export const dummyProducts: Product[] = [
     promoPrice: 59000,
     imageUrl: PLACEHOLDER_IMAGE,
     category: 'peralatan-berkebun',
-    badge: 'Barang Murah',
+    badge: 'Baru',
   },
   {
     id: 'prod-015',
@@ -145,7 +145,7 @@ export const dummyProducts: Product[] = [
     promoPrice: 35000,
     imageUrl: PLACEHOLDER_IMAGE,
     category: 'pot-polybag',
-    badge: 'Barang Murah',
+    badge: 'Baru',
   },
   {
     id: 'prod-017',

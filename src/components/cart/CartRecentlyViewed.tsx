@@ -28,7 +28,7 @@ export default function CartRecentlyViewed({ products }: { products: Product[] }
 
 // === Sub-komponen ===
 
-// Kartu produk dengan badge promo "+ Barang Murah" (bila ada), harga coret, dan harga diskon
+// Kartu produk dengan badge "+ Baru" (bila ada), harga coret, dan harga diskon
 function RecentCard({ product }: { product: Product }) {
   const { id, name, originalPrice, promoPrice, imageUrl, badge } = product
 
