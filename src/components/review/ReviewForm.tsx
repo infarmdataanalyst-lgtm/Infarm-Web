@@ -35,11 +35,12 @@ export default function ReviewForm() {
     setReviews((prev) => ({ ...prev, [productId]: { ...prev[productId], review } }))
   }
 
-  // Kirim ulasan — placeholder. TODO: simpan ke Supabase setelah OMS selesai.
+  // Kirim ulasan lalu arahkan ke halaman konfirmasi "review submitted".
+  // TODO: simpan ke Supabase (beserta foto via Storage) setelah OMS selesai.
   function handleSubmit() {
     const payload = products.map((p) => ({ productId: p.id, ...reviews[p.id] }))
     console.log('Kirim ulasan:', { orderId, items: payload })
-    window.alert('Terima kasih! Ulasan Kakak berhasil dikirim.')
+    router.push(`/review/submitted?order=${encodeURIComponent(orderId)}`)
   }
 
   return (

@@ -5,7 +5,7 @@
 
 import Link from 'next/link'
 import Image from 'next/image'
-import { X, Leaf, Clock, MapPin } from 'lucide-react'
+import { X, Leaf, Clock, MapPin, Star } from 'lucide-react'
 import { readOrders } from '@/lib/mock-db/orders'
 import { formatRupiah } from '@/lib/format'
 import type { Order } from '@/types/order'
@@ -165,6 +165,14 @@ export default async function CheckoutSuccessPage({
             >
               <MapPin className="h-4 w-4" />
               Lacak Pesanan
+            </Link>
+            {/* Arahkan ke halaman ulasan dengan membawa Order ID agar item yang diulas sesuai pesanan ini */}
+            <Link
+              href={`/review?order=${encodeURIComponent(data.orderId)}`}
+              className="flex items-center justify-center gap-2 rounded-xl border border-white/40 bg-white/5 py-3 text-sm font-semibold text-white transition hover:bg-white/15"
+            >
+              <Star className="h-4 w-4" />
+              Beri Ulasan Produk
             </Link>
             <Link
               href="/"

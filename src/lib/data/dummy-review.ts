@@ -7,6 +7,8 @@ export type ReviewProduct = {
   name: string
   variant: string
   imageUrl: string
+  // Harga satuan produk saat di-checkout (untuk ditampilkan di kartu produk)
+  price: number
 }
 
 export type MockOrder = {
@@ -24,12 +26,14 @@ export const dummyReviewOrder: MockOrder = {
       name: 'Pupuk Organik Cair (POC) Buah & Sayuran Daun Infarm',
       variant: 'Pack 500ml',
       imageUrl: PLACEHOLDER_IMAGE,
+      price: 25000,
     },
     {
       id: 'prod-009',
       name: 'Benih Premium Cabai Rawit Unggul',
       variant: 'Isi 50 butir',
       imageUrl: PLACEHOLDER_IMAGE,
+      price: 15000,
     },
   ],
 }
