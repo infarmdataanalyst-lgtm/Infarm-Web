@@ -4,13 +4,17 @@
 
 import type { ReactNode } from 'react'
 import Sidebar from '@/components/oms/Sidebar'
+import { SidebarProvider } from '@/components/oms/SidebarContext'
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="min-h-screen bg-gray-50">
-      <Sidebar />
-      {/* Konten utama digeser sejauh lebar sidebar (64) pada layar desktop */}
-      <div className="md:ml-64">{children}</div>
-    </div>
+    // Provider membungkus header & sidebar agar berbagi state drawer mobile
+    <SidebarProvider>
+      <div className="min-h-screen bg-gray-50">
+        <Sidebar />
+        {/* Konten utama digeser sejauh lebar sidebar (64) pada layar desktop */}
+        <div className="md:ml-64">{children}</div>
+      </div>
+    </SidebarProvider>
   )
 }

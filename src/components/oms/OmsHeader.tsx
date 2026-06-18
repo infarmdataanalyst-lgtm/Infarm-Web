@@ -1,7 +1,11 @@
-// src/components/oms/OmsHeader.tsx
-// Header atas OMS yang reusable: judul halaman dinamis, search bar, notifikasi, dan profil admin.
+'use client'
 
-import { Search, Bell, Settings } from 'lucide-react'
+// src/components/oms/OmsHeader.tsx
+// Header atas OMS yang reusable: tombol menu mobile, judul halaman dinamis,
+// search bar, notifikasi, dan profil admin.
+
+import { Search, Bell, Settings, Menu } from 'lucide-react'
+import { useSidebar } from './SidebarContext'
 
 type OmsHeaderProps = {
   // Judul halaman yang ditampilkan di sisi kiri header (mis. "Dashboard")
@@ -11,8 +15,20 @@ type OmsHeaderProps = {
 }
 
 export default function OmsHeader({ title, notificationCount = 0 }: OmsHeaderProps) {
+  const { toggle } = useSidebar()
+
   return (
-    <header className="sticky top-0 z-20 flex items-center gap-4 border-b border-gray-200 bg-white px-6 py-3.5">
+    <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-gray-200 bg-white px-4 py-3.5 sm:gap-4 sm:px-6">
+      {/* === Tombol menu (hamburger) — hanya tampil di mobile === */}
+      <button
+        type="button"
+        onClick={toggle}
+        aria-label="Buka menu navigasi"
+        className="flex h-10 w-10 flex-none items-center justify-center rounded-full text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 md:hidden"
+      >
+        <Menu className="h-5 w-5" />
+      </button>
+
       {/* === Judul halaman === */}
       <h1 className="hidden text-lg font-bold text-gray-900 lg:block">{title}</h1>
 
