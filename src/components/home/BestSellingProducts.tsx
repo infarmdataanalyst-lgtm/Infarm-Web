@@ -47,7 +47,7 @@ export default async function BestSellingProducts() {
         {/* === Tombol lihat semua produk === */}
         <div className="pb-2">
           <Link
-            href="/produk"
+            href="/products"
             className="flex w-full items-center justify-center rounded-xl bg-brand-primary px-6 py-3 text-base font-bold text-white shadow-sm transition hover:brightness-90 active:scale-[0.99]"
           >
             Lihat Semua Produk

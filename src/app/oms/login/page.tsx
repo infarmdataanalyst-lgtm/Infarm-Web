@@ -16,7 +16,7 @@ import { useRouter } from 'next/navigation'
 // TODO: hapus & ganti dengan signInWithPassword Supabase setelah OMS dibangun.
 const DUMMY_CREDENTIALS = {
   email: 'admin@infarm.id',
-  password: 'password123',
+  password: 'admin',
 } as const
 
 export default function OmsLoginPage() {
