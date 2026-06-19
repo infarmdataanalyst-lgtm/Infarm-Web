@@ -7,7 +7,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useCallback, useRef, useState } from 'react'
-import { addToCart, showCartToast, CART_BUMP_EVENT } from '@/lib/cart-client'
+import { addToCart, setCheckoutItems, showCartToast, CART_BUMP_EVENT } from '@/lib/cart-client'
 import FlyToCart, { type FlyPoint } from '@/components/product/FlyToCart'
 
 // Satu partikel animasi yang sedang berjalan
@@ -67,9 +67,13 @@ export default function StickyBuyBar({
     [commitAdd],
   )
 
-  // "Beli Langsung": pastikan masuk keranjang dulu (tanpa animasi), lalu lanjut ke checkout
+  // "Beli Langsung": masukkan ke keranjang, lalu set item checkout = HANYA produk ini, baru ke /checkout.
+  // setCheckoutItems wajib dipanggil karena halaman /checkout membaca cookie checkout (infarm_checkout),
+  // bukan seluruh isi keranjang. Tanpa ini, checkout menampilkan snapshot lama / dummy (produk berbeda).
   function handleBuyNow() {
-    addToCart({ productId, quantity: 1, price })
+    const item = { productId, quantity: 1, price }
+    addToCart(item)
+    setCheckoutItems([item])
     router.push('/checkout')
   }
 

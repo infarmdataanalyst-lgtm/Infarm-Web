@@ -4,8 +4,9 @@
 // Halaman Checkout. Di luar route group (store) karena punya header hijau sendiri (CheckoutHeader).
 // Orchestrator: menyimpan semua state (modal, kurir, asuransi, pembayaran) & menghitung total reaktif.
 
-import { useMemo, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { useRouter } from 'next/navigation'
+import type { Product } from '@/types/product'
 import CheckoutHeader from '@/components/checkout/CheckoutHeader'
 import CheckoutProductSummary from '@/components/checkout/CheckoutProductSummary'
 import AddressForm, { type AddressFormState } from '@/components/checkout/AddressForm'
@@ -61,12 +62,38 @@ export default function CheckoutPage() {
     getServerCheckoutSnapshot,
   )
 
+  // === Produk OMS (mock DB) diambil via API agar item dari OMS ikut ter-resolve, bukan hanya dummy ===
+  // TODO: ganti dengan query Supabase setelah OMS selesai
+  const [omsProducts, setOmsProducts] = useState<Product[]>([])
+  useEffect(() => {
+    let active = true
+    fetch('/api/products/list')
+      .then((res) => res.json())
+      .then((data) => {
+        if (active && Array.isArray(data.products)) setOmsProducts(data.products as Product[])
+      })
+      .catch(() => {
+        // Mode prototipe: bila gagal, fallback ke produk dummy saja
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  // Lookup produk gabungan (OMS + dummy). Produk OMS menimpa dummy bila id sama.
+  const productById = useMemo(() => {
+    const map = new Map<string, Product>()
+    for (const product of dummyProducts) map.set(product.id, product)
+    for (const product of omsProducts) map.set(product.id, product)
+    return map
+  }, [omsProducts])
+
   // Gabungkan item cookie dengan detail produk (nama, foto). Bila cookie kosong (mis. user
   // membuka /checkout langsung), pakai data dummy agar halaman tetap terisi.
   const orderItems: CheckoutItem[] = useMemo(() => {
     if (checkoutCookieItems.length === 0) return DUMMY_ORDER_ITEMS
     return checkoutCookieItems.flatMap((ci) => {
-      const product = dummyProducts.find((p) => p.id === ci.productId)
+      const product = productById.get(ci.productId)
       if (!product) return []
       return [
         {
@@ -78,7 +105,7 @@ export default function CheckoutPage() {
         },
       ]
     })
-  }, [checkoutCookieItems])
+  }, [checkoutCookieItems, productById])
 
   // Subtotal dihitung dari item pesanan aktual (harga × kuantitas)
   const subtotal = useMemo(
