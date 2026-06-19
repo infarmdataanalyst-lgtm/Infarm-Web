@@ -8,16 +8,25 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import type { Product } from '@/types/product'
+import { dummyProducts } from '@/lib/data/dummy-products'
+import { readProducts } from '@/lib/mock-db/products'
+import HeroSearchBar from './HeroSearchBar'
 
 // Path gambar background hero. Taruh file di: public/images/hero-background.jpg
 const HERO_IMAGE_PATH = '/images/hero-background.jpg'
 
 // Menampilkan bagian hero teratas homepage: background, kolom pencarian, judul marketing,
 // dan tiga trust badge. Menyesuaikan diri dari mobile hingga layar lebar.
-export default function HeroSection() {
+export default async function HeroSection() {
   // Cek ketersediaan file gambar hero agar tidak muncul broken image bila belum di-upload.
   // Jika file ada → tampilkan <Image> responsive; jika belum → fallback ke gradient.
   const heroImageExists = existsSync(join(process.cwd(), 'public', HERO_IMAGE_PATH))
+
+  // Produk untuk saran pencarian (OMS non-arsip + dummy). Dikirim ke kolom pencarian client.
+  // TODO: ganti dengan query Supabase setelah OMS selesai
+  const omsProducts = (await readProducts()).filter((p) => !p.archived)
+  const searchProducts: Product[] = [...omsProducts, ...dummyProducts]
 
   return (
     <section className="relative isolate flex min-h-[80vh] flex-col overflow-hidden">
@@ -52,16 +61,8 @@ export default function HeroSection() {
       <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col justify-between px-4 pt-20 pb-12 sm:px-6 sm:pt-24 lg:px-8">
         {/* Grup atas: search + headline */}
         <div>
-          {/* Floating search input */}
-          <div className="flex max-w-xl items-center gap-2 rounded-full border border-white/60 bg-white/70 px-5 py-3 shadow-md backdrop-blur-sm">
-            <input
-              type="text"
-              placeholder="Media tanam"
-              aria-label="Cari produk"
-              className="w-full bg-transparent text-base text-zinc-700 placeholder:text-zinc-500 focus:outline-none"
-            />
-            <SearchIcon className="shrink-0 text-zinc-600" />
-          </div>
+          {/* Floating search input — autocomplete: menampilkan saran produk di bawah kolom */}
+          <HeroSearchBar products={searchProducts} />
 
           {/* Marketing headline — putih, dengan drop-shadow agar tetap terbaca di atas background */}
           <h1 className="mt-8 max-w-2xl font-sans text-4xl font-extrabold leading-tight tracking-tight text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.45)] sm:text-5xl lg:text-6xl">
@@ -116,12 +117,3 @@ function ArrowRightIcon() {
   )
 }
 
-// Ikon kaca pembesar (inline SVG) untuk kolom pencarian hero
-function SearchIcon({ className = '' }: { className?: string }) {
-  return (
-    <svg className={className} width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <circle cx="11" cy="11" r="7" />
-      <line x1="21" y1="21" x2="16.65" y2="16.65" />
-    </svg>
-  )
-}

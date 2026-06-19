@@ -1,13 +1,12 @@
 // src/components/home/BestSellingProducts.tsx
-// Section 4 homepage: grid produk terlaris dari dummy data. Server Component, responsive.
+// Section 4 homepage: grid "Katalog Terlaris" dari produk OMS + dummy. Server Component, responsive.
 // Menyertakan placeholder trigger infinite scroll (logika fetch belum diimplementasi).
 
-import Image from 'next/image'
 import Link from 'next/link'
 import type { Product } from '@/types/product'
 import { dummyProducts } from '@/lib/data/dummy-products'
 import { readProducts } from '@/lib/mock-db/products'
-import { formatRupiah } from '@/lib/format'
+import ProductCard from '@/components/product/ProductCard'
 
 // Menampilkan section "Katalog Terlaris": produk baru dari OMS + dummy.
 export default async function BestSellingProducts() {
@@ -21,9 +20,7 @@ export default async function BestSellingProducts() {
     <section className="w-full">
       <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
         {/* === Heading === */}
-        <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-          Produk Pilihan
-        </p>
+        <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Produk Pilihan</p>
         <h2 className="mt-1 text-2xl font-bold text-brand-primary sm:text-3xl">Katalog Terlaris</h2>
 
         {/* === Grid produk: 2 kolom mobile → bertambah di layar lebih besar === */}
@@ -55,47 +52,5 @@ export default async function BestSellingProducts() {
         </div>
       </div>
     </section>
-  )
-}
-
-// === Sub-komponen ===
-
-// Kartu satu produk: foto 1:1, badge promo (opsional), nama (maks 2 baris), harga coret + harga promo
-function ProductCard({ product }: { product: Product }) {
-  const { id, name, originalPrice, promoPrice, imageUrl, badge } = product
-
-  return (
-    <Link
-      href={`/produk/${id}`}
-      className="group flex h-full flex-col overflow-hidden rounded-xl border border-zinc-100 bg-white shadow-sm transition hover:shadow-md"
-    >
-      {/* Foto produk dengan rasio 1:1 */}
-      <div className="relative aspect-square w-full bg-zinc-50">
-        {/* unoptimized dipakai karena imageUrl masih SVG placeholder; hapus saat memakai foto raster asli */}
-        <Image
-          src={imageUrl}
-          alt={name}
-          fill
-          unoptimized
-          sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 20vw"
-          className="object-cover transition group-hover:scale-[1.02]"
-        />
-        {/* Badge promo merah — hanya tampil jika produk punya badge */}
-        {badge && (
-          <span className="absolute left-0 top-2 rounded-r-md bg-red-600 px-2 py-1 text-xs font-semibold text-white shadow">
-            + {badge}
-          </span>
-        )}
-      </div>
-
-      {/* Info produk */}
-      <div className="flex flex-1 flex-col p-2.5">
-        <h3 className="line-clamp-2 text-sm font-medium leading-snug text-zinc-800">{name}</h3>
-        <div className="mt-auto pt-2">
-          <p className="text-xs text-zinc-400 line-through">{formatRupiah(originalPrice)}</p>
-          <p className="text-base font-bold text-red-600">{formatRupiah(promoPrice)}</p>
-        </div>
-      </div>
-    </Link>
   )
 }

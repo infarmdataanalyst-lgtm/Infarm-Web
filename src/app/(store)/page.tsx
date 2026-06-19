@@ -16,7 +16,7 @@ export const dynamic = 'force-dynamic'
 export default function HomePage() {
   return (
     <main className="flex flex-1 flex-col">
-      {/* Section 1 — Hero & Navigation */}
+      {/* Section 1 — Hero & Navigation (berisi kolom pencarian + autocomplete) */}
       <HeroSection />
 
       {/* Section 2 — Value Proposition Banner */}
