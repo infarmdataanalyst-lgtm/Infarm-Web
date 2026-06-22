@@ -10,7 +10,8 @@ import {
   getRecentlyViewed,
 } from '@/lib/data/dummy-product-details'
 import { getProductById } from '@/lib/mock-db/products'
-import type { StoredProduct, ProductDetail } from '@/types/product'
+import { getReviewsByProduct, getProductRatingSummary } from '@/lib/mock-db/reviews'
+import type { StoredProduct, ProductDetail, ProductReview } from '@/types/product'
 import ProductImageSlider from '@/components/product/ProductImageSlider'
 import ProductInfo from '@/components/product/ProductInfo'
 import BundleOffer from '@/components/product/BundleOffer'
@@ -20,9 +21,13 @@ import ProductReviews from '@/components/product/ProductReviews'
 import StickyBuyBar from '@/components/product/StickyBuyBar'
 import CartToast from '@/components/product/CartToast'
 
-// Membangun ProductDetail dari produk Supabase (StoredProduct).
-// Galeri memakai satu foto produk; rating/ulasan masih kosong sampai tabel reviews dibuat.
-function toProductDetail(p: StoredProduct): ProductDetail {
+// Membangun ProductDetail dari produk Supabase (StoredProduct) + ulasan & rating real.
+// Galeri memakai satu foto produk (multi-foto menyusul saat ada Supabase Storage).
+function toProductDetail(
+  p: StoredProduct,
+  reviews: ProductReview[],
+  summary: { rating: number; reviewCount: number },
+): ProductDetail {
   return {
     id: p.id,
     name: p.name,
@@ -32,10 +37,10 @@ function toProductDetail(p: StoredProduct): ProductDetail {
     category: p.category,
     badge: p.badge,
     images: [p.imageUrl],
-    rating: 0,
-    reviewCount: 0,
+    rating: summary.rating,
+    reviewCount: summary.reviewCount,
     description: p.description?.trim() || 'Belum ada deskripsi untuk produk ini.',
-    reviews: [],
+    reviews,
   }
 }
 
@@ -51,8 +56,17 @@ export default async function ProductDetailPage({
   // Sumber utama: produk OMS dari Supabase (sembunyikan yang diarsipkan dari storefront).
   // Fallback: produk dummy lama agar halaman contoh tetap bisa dibuka.
   const stored = await getProductById(id)
-  const product =
-    stored && !stored.archived ? toProductDetail(stored) : getProductDetail(id)
+  let product: ProductDetail | null
+  if (stored && !stored.archived) {
+    // Ambil ulasan tampil & rating agregat untuk produk ini
+    const [reviews, summary] = await Promise.all([
+      getReviewsByProduct(stored.id),
+      getProductRatingSummary(stored.id),
+    ])
+    product = toProductDetail(stored, reviews, summary)
+  } else {
+    product = getProductDetail(id)
+  }
   if (!product) notFound()
 
   const bundle = getBundleSuggestion(product)

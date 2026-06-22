@@ -3,10 +3,10 @@
 // src/app/oms/dashboard/reviews/page.tsx
 // Halaman Manajemen Ulasan Pelanggan OMS Infarm — tata letak Top-Down Analytics:
 // Header + filter produk (kemudi) → metrik & chart → sub-filter → tabel detail ulasan.
-// Data masih dummy; moderasi (balas & tampilkan di web) dikelola di state lokal.
-// TODO: hubungkan ke mock DB / Supabase + sinkron ke ulasan storefront setelah OMS dibangun.
+// Data ulasan dibaca dari Supabase via /api/reviews/list; moderasi (balas & tampilkan
+// di web) disimpan ke Supabase via /api/reviews/reply & /api/reviews/visibility.
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 import { Star, MessageSquare, Clock4 } from 'lucide-react'
 import OmsHeader from '@/components/oms/OmsHeader'
@@ -29,27 +29,12 @@ type OmsReview = {
 
 type MediaFilter = 'all' | 'with-photo' | 'text-only'
 
-const PLACEHOLDER = '/images/product-placeholder.png'
 const RATING_VALUES = [0, 5, 4, 3, 2, 1] // 0 = semua rating
 
 const MEDIA_FILTERS: { label: string; value: MediaFilter }[] = [
   { label: 'Semua Konten', value: 'all' },
   { label: 'Dengan Foto', value: 'with-photo' },
   { label: 'Hanya Teks', value: 'text-only' },
-]
-
-// === Data Dummy Ulasan ===
-// TODO: ganti dengan query Supabase setelah OMS selesai
-const INITIAL_REVIEWS: OmsReview[] = [
-  { id: 'REV-001', customerName: 'Andi Wijaya', productName: 'Media Tanam Premium 5L', productSku: 'MDT-PRM-5L', productImage: PLACEHOLDER, rating: 5, comment: 'Kualitas media tanamnya gembur dan wangi kompos. Tanaman cabai saya tumbuh subur sejak pindah ke media ini.', images: [PLACEHOLDER, PLACEHOLDER], date: '2026-06-14T09:24:00.000Z', visible: true },
-  { id: 'REV-002', customerName: 'Siti Aminah', productName: 'Pupuk Organik Cair (POC) 1L', productSku: 'PPK-POC-1L', rating: 4, productImage: PLACEHOLDER, comment: 'Tanaman lebih hijau setelah pakai POC ini. Baunya agak menyengat tapi wajar untuk pupuk organik.', images: [], date: '2026-06-13T15:40:00.000Z', reply: 'Terima kasih ulasannya, Kak Siti! Aroma alami menandakan kandungan mikroba aktif 🌱', visible: true },
-  { id: 'REV-003', customerName: 'Budi Santoso', productName: 'Benih Cabai Rawit Unggul', productSku: 'BNH-CBR-01', productImage: PLACEHOLDER, rating: 2, comment: 'Daya tumbuh kurang, dari 20 benih hanya 8 yang berkecambah. Agak kecewa.', images: [PLACEHOLDER], date: '2026-06-12T11:05:00.000Z', visible: true },
-  { id: 'REV-004', customerName: 'Rina Kartika', productName: 'Media Tanam Premium 5L', productSku: 'MDT-PRM-5L', productImage: PLACEHOLDER, rating: 5, comment: 'Pengiriman cepat dan kemasan rapi. Recommended!', images: [], date: '2026-06-12T08:10:00.000Z', visible: true },
-  { id: 'REV-005', customerName: 'Joko Pratama', productName: 'Benih Selada Hidroponik', productSku: 'BNH-SLD-02', productImage: PLACEHOLDER, rating: 3, comment: 'Lumayan, sebagian tumbuh bagus tapi ada yang layu di minggu kedua.', images: [], date: '2026-06-11T19:32:00.000Z', visible: true },
-  { id: 'REV-006', customerName: 'Dewi Lestari', productName: 'Pupuk Organik Cair (POC) 1L', productSku: 'PPK-POC-1L', productImage: PLACEHOLDER, rating: 5, comment: 'Hasilnya nyata di tanaman buah saya. Pasti beli lagi!', images: [PLACEHOLDER, PLACEHOLDER, PLACEHOLDER], date: '2026-06-11T07:48:00.000Z', visible: true },
-  { id: 'REV-007', customerName: 'Agus Salim', productName: 'Benih Cabai Rawit Unggul', productSku: 'BNH-CBR-01', productImage: PLACEHOLDER, rating: 1, comment: 'Benih tidak tumbuh sama sekali. Mohon diperbaiki kualitasnya.', images: [], date: '2026-06-10T14:00:00.000Z', visible: false },
-  { id: 'REV-008', customerName: 'Maya Putri', productName: 'Media Tanam Premium 5L', productSku: 'MDT-PRM-5L', productImage: PLACEHOLDER, rating: 4, comment: 'Bagus untuk semai. Teksturnya pas, tidak terlalu padat.', images: [PLACEHOLDER], date: '2026-06-10T10:15:00.000Z', visible: true },
-  { id: 'REV-009', customerName: 'Hendra Gunawan', productName: 'Benih Selada Hidroponik', productSku: 'BNH-SLD-02', productImage: PLACEHOLDER, rating: 5, comment: 'Mantap, panen melimpah dan daunnya renyah.', images: [], date: '2026-06-09T16:50:00.000Z', reply: 'Senang mendengarnya, Kak Hendra! Selamat panen 🥬', visible: true },
 ]
 
 // === Helper ===
@@ -64,7 +49,15 @@ function formatDateTime(iso: string): string {
 
 export default function ReviewsPage() {
   // === State ===
-  const [reviews, setReviews] = useState<OmsReview[]>(INITIAL_REVIEWS)
+  const [reviews, setReviews] = useState<OmsReview[]>([])
+
+  // Ambil ulasan real dari Supabase saat halaman dibuka
+  useEffect(() => {
+    fetch('/api/reviews/list')
+      .then((res) => res.json())
+      .then((data) => setReviews(data.reviews ?? []))
+      .catch(() => setReviews([]))
+  }, [])
   const [selectedProduct, setSelectedProduct] = useState<string>('all') // 'all' = semua produk
   const [selectedRating, setSelectedRating] = useState<number>(0) // 0 = semua rating
   const [mediaFilter, setMediaFilter] = useState<MediaFilter>('all')
@@ -122,16 +115,34 @@ export default function ReviewsPage() {
 
   function saveReply() {
     if (!replyingId) return
+    const id = replyingId
     const text = replyDraft.trim()
+    // Update optimistik di UI
     setReviews((prev) =>
-      prev.map((r) => (r.id === replyingId ? { ...r, reply: text || undefined } : r)),
+      prev.map((r) => (r.id === id ? { ...r, reply: text || undefined } : r)),
     )
     setReplyingId(null)
     setReplyDraft('')
+    // Simpan ke Supabase
+    fetch('/api/reviews/reply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, reply: text }),
+    }).catch(() => {})
   }
 
   function toggleVisible(id: string) {
-    setReviews((prev) => prev.map((r) => (r.id === id ? { ...r, visible: !r.visible } : r)))
+    const current = reviews.find((r) => r.id === id)
+    if (!current) return
+    const nextVisible = !current.visible
+    // Update optimistik di UI
+    setReviews((prev) => prev.map((r) => (r.id === id ? { ...r, visible: nextVisible } : r)))
+    // Simpan ke Supabase
+    fetch('/api/reviews/visibility', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, visible: nextVisible }),
+    }).catch(() => {})
   }
 
   return (
