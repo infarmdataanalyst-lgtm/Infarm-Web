@@ -20,8 +20,8 @@ function isValidPayload(body: unknown): body is CreateReviewInput {
     typeof b.rating === 'number' &&
     b.rating >= 1 &&
     b.rating <= 5 &&
-    typeof b.comment === 'string' &&
-    b.comment.trim().length > 0
+    // Komentar boleh kosong (pelanggan boleh hanya memberi rating)
+    typeof b.comment === 'string'
   )
 }
 
@@ -36,7 +36,7 @@ export async function POST(request: Request) {
 
   if (!isValidPayload(body)) {
     return NextResponse.json(
-      { error: 'Data ulasan tidak lengkap (produk, nama, rating 1–5, komentar wajib).' },
+      { error: 'Data ulasan tidak valid (produk, nama, dan rating 1–5 wajib).' },
       { status: 422 },
     )
   }

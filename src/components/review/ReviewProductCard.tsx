@@ -71,7 +71,9 @@ export default function ReviewProductCard({
             <h3 className="line-clamp-2 text-sm font-bold leading-snug text-gray-800">
               {product.name}
             </h3>
-            <p className="mt-0.5 text-xs text-gray-400">Varian: {product.variant}</p>
+            {product.variant && (
+              <p className="mt-0.5 text-xs text-gray-400">Varian: {product.variant}</p>
+            )}
             <p className="mt-1 text-sm font-semibold text-gray-700">{formatRupiah(product.price)}</p>
           </div>
         </div>

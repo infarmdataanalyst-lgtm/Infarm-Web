@@ -76,6 +76,23 @@ export async function readOrders(): Promise<Order[]> {
   return (data as OrderRow[]).map(rowToOrder)
 }
 
+// Membaca satu pesanan berdasarkan nomor pesanan (order_id). null bila tidak ditemukan.
+export async function getOrderByOrderId(orderId: string): Promise<Order | null> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('orders')
+    .select('*')
+    .eq('order_id', orderId)
+    .maybeSingle()
+
+  if (error) {
+    console.error('Gagal membaca pesanan dari Supabase:', error.message)
+    return null
+  }
+
+  return data ? rowToOrder(data as OrderRow) : null
+}
+
 // === Tulis ===
 
 // Menyimpan satu pesanan baru lalu mengembalikan pesanan tersimpan.

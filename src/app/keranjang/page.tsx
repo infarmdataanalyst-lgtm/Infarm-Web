@@ -8,10 +8,9 @@
 import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import type { CartLineItem } from '@/types/cart'
+import type { StoredProduct } from '@/types/product'
 import { dummyProducts } from '@/lib/data/dummy-products'
 import {
-  addToCart,
-  getCart,
   updateQuantity,
   removeFromCart,
   subscribeCart,
@@ -35,19 +34,24 @@ export default function CartPage() {
   // Set ID produk yang TIDAK dicentang (default: semua tercentang). Hanya state UI, tak masuk cookie.
   const [excluded, setExcluded] = useState<Set<string>>(new Set())
 
-  // === Seed dummy bila cookie kosong (hanya menulis cookie → store re-render sendiri) ===
-  // TODO: hapus fallback ini setelah alur "+ Keranjang" dipakai end-to-end.
+  // Produk OMS dari Supabase (untuk me-resolve detail item keranjang yang ber-id UUID)
+  const [omsProducts, setOmsProducts] = useState<StoredProduct[]>([])
+
+  // === Ambil produk real dari API saat halaman dibuka ===
   useEffect(() => {
-    if (getCart().length === 0) {
-      const sample = dummyProducts[1] // "Media Tanam Organik Infarm 5 Liter"
-      addToCart({ productId: sample.id, quantity: 3, price: sample.promoPrice })
-    }
+    fetch('/api/products/list')
+      .then((res) => res.json())
+      .then((data) => setOmsProducts(data.products ?? []))
+      .catch(() => setOmsProducts([]))
   }, [])
 
   // === Gabungkan item cookie dengan detail produk (nama, foto, harga coret, badge) ===
+  // Cari produk dari Supabase dulu, lalu fallback ke dummy (produk contoh lama).
   const items: CartLineItem[] = useMemo(() => {
     return cookieCart.flatMap((ci) => {
-      const product = dummyProducts.find((p) => p.id === ci.productId)
+      const product =
+        omsProducts.find((p) => p.id === ci.productId) ??
+        dummyProducts.find((p) => p.id === ci.productId)
       if (!product) return []
       return [
         {
@@ -62,7 +66,7 @@ export default function CartPage() {
         },
       ]
     })
-  }, [cookieCart, excluded])
+  }, [cookieCart, excluded, omsProducts])
 
   // === Kalkulasi dinamis (item tercentang) ===
   const selectedItems = useMemo(() => items.filter((i) => i.selected), [items])
