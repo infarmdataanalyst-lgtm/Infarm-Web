@@ -1,7 +1,7 @@
 // src/app/(store)/produk/[id]/page.tsx
 // Halaman Detail Produk dinamis. Header (AppBar) sudah disediakan oleh layout (store).
 // Merakit: slider foto, info utama, kombo hemat, deskripsi, "baru dilihat", ulasan, dan bilah aksi bawah.
-// Server Component — data dari dummy (TODO: ganti query Supabase setelah OMS selesai).
+// Server Component — produk OMS dibaca dari Supabase; produk dummy lama dipakai sebagai fallback.
 
 import { notFound } from 'next/navigation'
 import {
@@ -9,6 +9,8 @@ import {
   getBundleSuggestion,
   getRecentlyViewed,
 } from '@/lib/data/dummy-product-details'
+import { getProductById } from '@/lib/mock-db/products'
+import type { StoredProduct, ProductDetail } from '@/types/product'
 import ProductImageSlider from '@/components/product/ProductImageSlider'
 import ProductInfo from '@/components/product/ProductInfo'
 import BundleOffer from '@/components/product/BundleOffer'
@@ -17,6 +19,25 @@ import RecentlyViewed from '@/components/product/RecentlyViewed'
 import ProductReviews from '@/components/product/ProductReviews'
 import StickyBuyBar from '@/components/product/StickyBuyBar'
 import CartToast from '@/components/product/CartToast'
+
+// Membangun ProductDetail dari produk Supabase (StoredProduct).
+// Galeri memakai satu foto produk; rating/ulasan masih kosong sampai tabel reviews dibuat.
+function toProductDetail(p: StoredProduct): ProductDetail {
+  return {
+    id: p.id,
+    name: p.name,
+    originalPrice: p.originalPrice,
+    promoPrice: p.promoPrice,
+    imageUrl: p.imageUrl,
+    category: p.category,
+    badge: p.badge,
+    images: [p.imageUrl],
+    rating: 0,
+    reviewCount: 0,
+    description: p.description?.trim() || 'Belum ada deskripsi untuk produk ini.',
+    reviews: [],
+  }
+}
 
 // Halaman detail satu produk berdasarkan id pada URL (/produk/[id]).
 // Di Next.js 16, `params` berupa Promise sehingga perlu di-await.
@@ -27,9 +48,11 @@ export default async function ProductDetailPage({
 }) {
   const { id } = await params
 
-  // Ambil detail produk; tampilkan halaman 404 bila tidak ditemukan
-  // TODO: ganti dengan query Supabase setelah OMS selesai
-  const product = getProductDetail(id)
+  // Sumber utama: produk OMS dari Supabase (sembunyikan yang diarsipkan dari storefront).
+  // Fallback: produk dummy lama agar halaman contoh tetap bisa dibuka.
+  const stored = await getProductById(id)
+  const product =
+    stored && !stored.archived ? toProductDetail(stored) : getProductDetail(id)
   if (!product) notFound()
 
   const bundle = getBundleSuggestion(product)
