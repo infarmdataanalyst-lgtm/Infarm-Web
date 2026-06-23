@@ -154,6 +154,28 @@ export async function updateProduct(
   return data ? rowToStored(data as ProductRow) : null
 }
 
+// === Stok ===
+
+// Mengembalikan stok produk ke "tersedia" saat pesanan dibatalkan: stock += quantity.
+// Hanya berlaku untuk produk yang ADA di DB (produk OMS); item dummy/tak dikenal dilewati.
+// Catatan: idealnya stok dikurangi saat checkout (alokasi). Selama alokasi belum ada,
+// fungsi ini menambah kembali jumlah yang dibatalkan sebagai simulasi pelepasan stok.
+export async function restoreStock(
+  items: { productId: string; quantity: number }[],
+): Promise<void> {
+  const supabase = createAdminClient()
+  for (const { productId, quantity } of items) {
+    if (!quantity || quantity <= 0) continue
+    const product = await getProductById(productId)
+    if (!product) continue // produk dummy / tidak ada di DB → lewati dengan aman
+    const { error } = await supabase
+      .from('products')
+      .update({ stock: product.stock + quantity })
+      .eq('id', productId)
+    if (error) console.error('Gagal mengembalikan stok produk:', error.message)
+  }
+}
+
 // === Hapus ===
 
 // Menghapus produk berdasarkan id. true bila terhapus, false bila tidak ditemukan.

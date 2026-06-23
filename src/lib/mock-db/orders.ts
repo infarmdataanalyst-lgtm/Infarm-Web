@@ -128,3 +128,27 @@ export async function saveOrder(newOrder: CreateOrderInput): Promise<Order> {
 
   return rowToOrder(data as OrderRow)
 }
+
+// === Ubah status ===
+
+// Memperbarui status alur pesanan (mis. menjadi 'Dibatalkan' saat pembeli membatalkan).
+// Mengembalikan order terbaru, atau null bila order tidak ditemukan.
+export async function updateOrderStatus(
+  orderId: string,
+  status: OrderFulfillmentStatus,
+): Promise<Order | null> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('orders')
+    .update({ status })
+    .eq('order_id', orderId)
+    .select('*')
+    .maybeSingle()
+
+  if (error) {
+    console.error('Gagal memperbarui status pesanan di Supabase:', error.message)
+    return null
+  }
+
+  return data ? rowToOrder(data as OrderRow) : null
+}

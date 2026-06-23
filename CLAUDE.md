@@ -12,18 +12,25 @@ Semua produk dan informasi yang tampil di ecommerce bersumber dari inputan admin
 Ecommerce hanya menyediakan tampilan (storefront) — tidak ada input produk dari sisi publik.
 
 **Status saat ini (prototyping):**
-Storefront dan kerangka OMS **sudah dibangun** dan saling terhubung lewat API Routes internal.
-Sumber data masih **mock berbasis file** (bukan database eksternal):
+Storefront dan OMS **sudah dibangun** dan saling terhubung lewat API Routes internal.
+Lapisan data inti **sudah memakai Supabase** (PostgreSQL):
 
-- Produk hasil input OMS → disimpan ke `src/data/products.json` via `src/lib/mock-db/`
-- Data tampilan lain (detail produk, review, order, checkout) → masih `src/lib/data/dummy-*.ts`
+- **Produk, order, review** → disimpan di Supabase, diakses lewat `src/lib/mock-db/*`
+  (fungsi-fungsi ini sekarang query Supabase via `createAdminClient`, bukan file lagi)
+- **Data tampilan pelengkap** (detail produk, checkout, dummy katalog) → masih
+  `src/lib/data/dummy-*.ts` (lihat catatan di bawah)
 
-Integrasi **Supabase, Xendit, dan Mengantar belum diimplementasi** — masih roadmap.
-Setelah lapisan data real siap, isi `src/lib/mock-db/` akan diganti query Supabase
-**tanpa mengubah signature fungsi** (lihat catatan isolasi di `src/lib/mock-db/products.ts`).
+> **Penting:** karena data layer sudah Supabase, app **butuh `.env.local`** berisi kredensial
+> Supabase untuk berjalan di lokal (lihat bagian Environment Variables). Tanpa itu muncul
+> error `supabaseUrl is required.` / `Module not found: @supabase/ssr`.
 
-> Bagian Supabase / Xendit / Mengantar di bawah adalah **target arsitektur**, bukan kondisi sekarang.
-> Tandai jelas mana yang sudah ada vs masih rencana saat menulis kode.
+Integrasi **Xendit (pembayaran)** dan **Mengantar (logistik)** **belum diimplementasi** — masih roadmap.
+Bagian Xendit / Mengantar di bawah adalah **target arsitektur**, bukan kondisi sekarang.
+Tandai jelas mana yang sudah ada vs masih rencana saat menulis kode.
+
+> Catatan penamaan: folder `src/lib/mock-db/` namanya warisan dari fase mock file-based,
+> tapi **isinya kini Supabase**. Pola isolasinya tetap: pemanggil (API Route / Server Component)
+> tidak tahu sumber datanya — hanya signature fungsi yang penting.
 
 ---
 
@@ -47,6 +54,11 @@ Setelah lapisan data real siap, isi `src/lib/mock-db/` akan diganti query Supaba
 - **Rencana:** helper baca keranjang dari Server Component (`cookies()` dari `next/headers`)
   akan ditaruh di `src/lib/cart.ts` — belum dibuat.
 
+**Catatan sinkronisasi "Beli Langsung" vs "Checkout":**
+- Halaman `/checkout` membaca cookie **`infarm_checkout`** (bukan `infarm_cart`).
+- Setiap aksi yang menuju checkout (tombol Checkout di keranjang **maupun** "Beli Langsung"
+  di detail produk) WAJIB memanggil `setCheckoutItems(...)` dulu agar produk yang tampil benar.
+
 ---
 
 ## Tech Stack
@@ -56,12 +68,12 @@ Setelah lapisan data real siap, isi `src/lib/mock-db/` akan diganti query Supaba
 - **Frontend**: React 19.2, Tailwind CSS v4 (PostCSS, `@tailwindcss/postcss`)
 - **Ikon**: `lucide-react`
 - **Chart (OMS dashboard)**: `recharts`
-- **Data layer (sekarang)**: mock file-based (`src/data/*.json` + `src/lib/data/dummy-*.ts`)
+- **Database**: Supabase (PostgreSQL) — `@supabase/ssr` + `@supabase/supabase-js` **sudah terpasang**
 - **Backend**: Next.js API Routes (Route Handlers di `src/app/api/`)
 - **Package Manager**: npm
 
 ### Roadmap integrasi (belum terpasang)
-- **Database & Auth**: Supabase (PostgreSQL, Auth, Storage, Edge Functions)
+- **Auth admin real**: Supabase Auth (client sudah ada, login OMS belum terhubung)
 - **Payment Gateway**: Xendit
 - **Logistik / Pengiriman**: Mengantar
 - **Deployment**: Vercel
@@ -105,30 +117,33 @@ Seluruh kode aplikasi berada di bawah `src/`.
 ```
 src/
 ├── app/                          # Next.js App Router
-│   ├── (store)/                  # Route group: halaman publik ecommerce
+│   ├── (store)/                  # Route group: halaman publik ber-AppBar
 │   │   ├── layout.tsx
-│   │   ├── page.tsx              # Homepage
+│   │   ├── page.tsx              # Homepage (search bar autocomplete)
 │   │   ├── products/page.tsx     # Katalog produk
 │   │   └── produk/[id]/page.tsx  # Detail produk
 │   ├── keranjang/page.tsx        # Halaman keranjang (data dari cookie)
 │   ├── checkout/
 │   │   ├── page.tsx              # Guest checkout
-│   │   └── success/page.tsx      # Halaman sukses
+│   │   └── success/page.tsx      # Order Confirmed (+ tombol batalkan pesanan)
+│   ├── order-cancellation/page.tsx  # Pembatalan pesanan Guest (token-protected)
 │   ├── review/                   # Form review produk (+ /submitted)
 │   ├── track/page.tsx            # Lacak pesanan
 │   ├── oms/                      # OMS / back office
 │   │   ├── login/page.tsx
 │   │   └── dashboard/            # dashboard, products (+upload), orders, reviews
-│   ├── api/                      # Route Handlers
+│   ├── api/                      # Route Handlers (runtime nodejs)
 │   │   ├── products/             # create | update | delete | list
-│   │   └── orders/               # create | list
+│   │   ├── orders/               # create | list | get | cancel (GET+PATCH)
+│   │   └── reviews/              # create | list | reply | visibility
 │   ├── layout.tsx                # Root layout (font, metadata)
 │   └── globals.css               # Tailwind v4 + @config tailwind.config.ts
 ├── components/
-│   ├── home/                     # Komponen homepage
+│   ├── home/                     # Homepage (HeroSearchBar, dll)
 │   ├── product/                  # Kartu & detail produk
 │   ├── cart/                     # Komponen keranjang
 │   ├── checkout/                 # Form & modal checkout
+│   ├── order-cancellation/       # OrderCancellationView (client)
 │   ├── review/                   # Komponen review
 │   ├── track/                    # Komponen pelacakan
 │   ├── oms/                      # Sidebar, header, chart OMS
@@ -136,19 +151,21 @@ src/
 ├── lib/
 │   ├── cart-client.ts            # Helper keranjang sisi-klien (cookie base64)
 │   ├── format.ts                 # Util format (mis. rupiah)
-│   ├── mock-db/                  # Mock DB file-based (products, orders) — server only
-│   └── data/                     # Dummy data tampilan (dummy-*.ts)
-├── data/
-│   └── products.json             # Persistensi produk hasil input OMS (mock-db)
+│   ├── order-token.ts            # Token HMAC tautan pembatalan (server-only)
+│   ├── supabase/                 # Client Supabase: server.ts (admin/SSR) + browser.ts
+│   ├── mock-db/                  # Akses data Supabase: products, orders, reviews (server only)
+│   └── data/                     # Dummy data tampilan pelengkap (dummy-*.ts)
+├── hooks/                        # use-debounce.ts, dll
 └── types/                        # product.ts, cart.ts, order.ts
 
-# Root: next.config.ts, tailwind.config.ts, eslint.config.mjs,
-#       postcss.config.mjs, tsconfig.json, AGENTS.md, CLAUDE.md
+# Root: next.config.ts, tailwind.config.ts, eslint.config.mjs, postcss.config.mjs,
+#       tsconfig.json, AGENTS.md, CLAUDE.md, .env.local (tidak di-commit)
+# supabase/: migrations/ (SQL, sumber kebenaran skema) + README.md (cara apply via Dashboard)
 ```
 
 > Folder berikut **belum ada** dan baru dibuat saat integrasi terkait dikerjakan:
-> `src/lib/supabase/`, `src/lib/xendit/`, `src/lib/mengantar/`, `src/app/api/webhooks/`,
-> `supabase/`, `proxy.ts`, `src/lib/cart.ts`, `src/lib/fetcher.ts`.
+> `src/lib/xendit/`, `src/lib/mengantar/`, `src/app/api/webhooks/`, `proxy.ts`,
+> `src/lib/cart.ts`, `src/lib/fetcher.ts`.
 
 ---
 
@@ -200,16 +217,20 @@ Tulis komentar untuk memudahkan maintenance. Ikuti aturan berikut:
 
 ## Data & State
 
-### Produk (saat ini)
-- Produk hasil input OMS dibaca/ditulis lewat `src/lib/mock-db/products.ts`
-  (file `src/data/products.json`) — **server only** karena memakai `node:fs`
-- Akses produk dari UI lewat API Routes: `GET /api/products/list`, dan
-  `create` / `update` / `delete` dari OMS
-- Data tampilan lain masih dummy di `src/lib/data/dummy-*.ts`
-- **Jangan** hubungkan ke Supabase dulu — ganti hanya isi fungsi di `src/lib/mock-db/`
-  saat migrasi, signature tetap sama
-- Beri komentar `// TODO: ganti dengan query Supabase setelah lapisan data real siap`
-  pada fungsi yang masih mock
+### Produk, Order, Review (Supabase)
+- Semua akses data lewat fungsi di `src/lib/mock-db/{products,orders,reviews}.ts`
+  — **server only** karena memakai `createAdminClient()` (service_role, menembus RLS)
+- UI mengakses lewat API Routes, mis. `GET /api/products/list`,
+  `GET /api/orders/get`, `PATCH /api/orders/cancel`, `POST /api/reviews/create`
+- Skema tabel = migration di `supabase/migrations/` (snake_case di DB ↔ camelCase di app,
+  dipetakan oleh fungsi `rowTo*` di tiap file mock-db)
+- **Jangan** memanggil `createAdminClient()` dari komponen `'use client'` — server only
+
+### Dummy data tampilan (masih dipakai)
+- `src/lib/data/dummy-*.ts` masih jadi sumber untuk: katalog dummy yang digabung di storefront,
+  detail produk (`dummy-product-details`), serta fallback ringkasan checkout
+- Halaman yang me-resolve produk dari cookie (keranjang/checkout) menggabungkan **produk Supabase
+  (via API) + dummy** agar produk OMS maupun dummy sama-sama tampil
 
 ### Keranjang (cookie-based)
 - Semua operasi keranjang via helper di `src/lib/cart-client.ts`
@@ -221,13 +242,30 @@ Tulis komentar untuk memudahkan maintenance. Ikuti aturan berikut:
 
 ---
 
-## Roadmap Integrasi (target arsitektur — belum diimplementasi)
+## Supabase (sudah terpasang)
 
-### Supabase (Database & Auth)
-- Server client: `src/lib/supabase/server.ts`; browser client: `src/lib/supabase/browser.ts`
-- Row Level Security (RLS) **wajib aktif** di semua tabel
-- Semua perubahan skema via **migration file** di `supabase/migrations/`
-- Regenerate types setelah migrasi: `supabase gen types typescript --local > src/types/supabase.ts`
+- **Client**: server `src/lib/supabase/server.ts` (`createClient` anon/SSR + `createAdminClient`
+  service_role); browser `src/lib/supabase/browser.ts`
+- **Row Level Security (RLS) wajib aktif** di semua tabel. Tabel `orders` (berisi data pribadi)
+  dikunci dari publik → semua baca/tulis lewat server (`createAdminClient`)
+- **Skema** dikelola lewat **migration file** di `supabase/migrations/` (sumber kebenaran).
+  CLI belum dipasang di mesin ini → migration dijalankan **manual via Dashboard → SQL Editor**
+  (lihat `supabase/README.md`), berurutan sesuai timestamp
+- Regenerate types (saat CLI tersedia): `supabase gen types typescript --local > src/types/supabase.ts`
+
+## Pembatalan Pesanan Guest (token-protected)
+
+- Karena guest tidak login, tautan pembatalan diamankan dengan **token HMAC** dari `orderId`
+  (`src/lib/order-token.ts`, server-only). `generateCancelToken` dipakai saat menyusun tautan
+  di halaman Order Confirmed; `verifyCancelToken` dicek di API
+- Endpoint `src/app/api/orders/cancel/route.ts`:
+  - `GET ?id=&token=` → verifikasi token, kembalikan detail order (tanpa data pribadi)
+  - `PATCH` → verifikasi token + validasi status di server, set status `Dibatalkan`,
+    lalu `restoreStock` (lepas stok kembali). Status yang boleh dibatalkan: `Menunggu Pembayaran`,
+    `Diproses`. Status `Dikirim`/`Selesai` ditolak (terkunci)
+- Halaman `src/app/order-cancellation/page.tsx` (server tipis) → `OrderCancellationView` (client)
+
+## Roadmap Integrasi (target arsitektur — belum diimplementasi)
 
 ### Xendit (Payment Gateway)
 - Semua logika pembayaran di `src/lib/xendit/`
@@ -244,24 +282,25 @@ Tulis komentar untuk memudahkan maintenance. Ikuti aturan berikut:
 ## Domain: Ecommerce & OMS
 
 ### Ecommerce (Storefront)
-- [x] Halaman beranda (homepage)
+- [x] Halaman beranda (homepage) — dengan search bar autocomplete
 - [x] Halaman katalog produk (`/products`)
 - [x] Halaman detail produk (`/produk/[id]`)
 - [x] Halaman keranjang (`/keranjang`) — data dari cookie
 - [x] Halaman guest checkout (`/checkout` + `/checkout/success`)
 - [x] Halaman review produk (`/review`)
 - [x] Halaman lacak pesanan (`/track`)
+- [x] Halaman pembatalan pesanan Guest (`/order-cancellation`) — token-protected
 - [ ] Integrasi Xendit (pembayaran) — masih UI/mock
 - [ ] Integrasi Mengantar (pengiriman & tracking) — masih UI/mock
 
-### OMS (Back Office) — kerangka sudah ada, data masih mock
+### OMS (Back Office)
 - [x] Halaman login OMS (`/oms/login`) — belum terhubung auth real
 - [x] Dashboard OMS (`/oms/dashboard`)
-- [x] Manajemen produk (list, upload/create, update, delete) via API + mock-db
+- [x] Manajemen produk (list, upload/create, update, delete) via API + Supabase
 - [x] Manajemen order (`/oms/dashboard/orders`)
-- [x] Manajemen review (`/oms/dashboard/reviews`)
+- [x] Manajemen review (`/oms/dashboard/reviews`) — create/list/reply/visibility
 - [ ] Autentikasi admin real (Supabase Auth)
-- [ ] Manajemen inventori / stok real
+- [ ] Manajemen inventori / stok real (alokasi stok saat checkout)
 
 ---
 
@@ -275,15 +314,19 @@ Tulis komentar untuk memudahkan maintenance. Ikuti aturan berikut:
 
 ---
 
-## Deployment (Vercel)
+## Environment Variables
 
-- Preview deploy otomatis dari setiap PR; production dari branch utama
-- Environment variables di Vercel dashboard (jangan di-commit). Saat integrasi siap:
+`.env.local` **wajib ada** untuk menjalankan app di lokal (Supabase sudah aktif).
+Jangan di-commit (sudah diabaikan `.gitignore`). Di production, set lewat Vercel dashboard.
 
 ```
+# Sudah dipakai sekarang (Supabase)
 NEXT_PUBLIC_SUPABASE_URL
 NEXT_PUBLIC_SUPABASE_ANON_KEY
-SUPABASE_SERVICE_ROLE_KEY      # server-only
+SUPABASE_SERVICE_ROLE_KEY      # server-only (dipakai mock-db via createAdminClient)
+ORDER_CANCEL_SECRET            # server-only, opsional (HMAC token pembatalan; ada fallback dev)
+
+# Roadmap (belum dipakai)
 XENDIT_SECRET_KEY              # server-only
 XENDIT_WEBHOOK_TOKEN           # server-only
 MENGANTAR_API_KEY              # server-only
@@ -295,8 +338,11 @@ MENGANTAR_API_KEY              # server-only
 
 - **Jangan expose** `SUPABASE_SERVICE_ROLE_KEY`, `XENDIT_SECRET_KEY`, atau `MENGANTAR_API_KEY` di frontend
 - Semua logic sensitif (pricing, stock update, payment) harus di Server Components, API Routes, atau Edge Functions
-- Mock-db (`node:fs`) hanya boleh dipanggil dari server (API Route / Server Component), jangan dari komponen klien
-- Validasi input di sisi server, bukan hanya frontend
+- `createAdminClient()` (service_role, menembus RLS) hanya dari server (API Route / Server Component) —
+  jangan dari komponen klien. Browser pakai anon key + RLS
+- Validasi input & **status order** di sisi server, bukan hanya frontend
+  (mis. pembatalan: status dicek ulang di `PATCH /api/orders/cancel`, bukan percaya UI)
+- Tautan aksi guest (pembatalan) wajib diverifikasi token (`verifyCancelToken`) sebelum diproses
 - Verifikasi webhook signature Xendit sebelum memproses event apapun (saat integrasi)
 - Cookie keranjang tidak boleh menyimpan data sensitif — hanya ID produk, quantity, price
 
@@ -327,6 +373,9 @@ Semua halaman wajib menggunakan palet warna berikut. Jangan menggunakan warna di
 - Section banner (value proposition, footer): background `#46B33C`, teks `#FFFFFF`
 - Card fitur di dalam section hijau: background `#96D296`
 - **Jangan** menggunakan warna biru, ungu, atau warna brand lain tanpa konfirmasi
+- **Pengecualian fungsional** (sudah disepakati): aksi destruktif memakai `rose` (mis. tombol
+  "Batalkan Pesanan"), tombol sekunder netral `slate-100`, banner peringatan `orange`, dan
+  badge status order (amber/emerald/rose). Tetap hindari biru/ungu.
 
 ### Token Brand (sudah dikonfigurasi)
 
@@ -354,11 +403,11 @@ Gunakan class `bg-brand-primary`, `text-brand-primary`, `bg-brand-light`, `bg-br
 
 ## Flowchart Sistem Ecommerce (target end-to-end)
 
-Alur lengkap sistem sebagai acuan saat membangun fitur. Bagian Xendit/Mengantar/Supabase
-masih roadmap — sekarang dijalankan dengan mock.
+Alur lengkap sistem sebagai acuan saat membangun fitur. Data produk/order/review sudah Supabase;
+bagian Xendit/Mengantar masih roadmap (dijalankan dengan mock).
 
 ### Alur Browsing & Keranjang
-1. User membuka web → data produk diambil dari sumber produk (`GET /api/products/list`, kini mock-db)
+1. User membuka web → data produk diambil via `GET /api/products/list` (Supabase, digabung dummy)
 2. Server menyiapkan tampilan halaman (Server Component)
 3. User klik "Tambah ke Keranjang" → disimpan ke cookie (`infarm_cart`) via `cart-client.ts`
 4. Angka keranjang di navbar update (+1) tanpa reload (custom event)
@@ -366,9 +415,10 @@ masih roadmap — sekarang dijalankan dengan mock.
 6. Halaman keranjang tampilkan total item + kalkulasi total harga
 
 ### Alur Checkout & Pembayaran
-7. User klik "Checkout" → item terpilih disimpan ke cookie `infarm_checkout`
+7. User klik "Checkout" / "Beli Langsung" → item terpilih disimpan ke cookie `infarm_checkout`
+   (keduanya WAJIB `setCheckoutItems` agar produk di checkout benar)
 8. Halaman `/checkout` tampilkan form: Email, No. HP, Alamat, Metode Pembayaran, Logistik
-9. User isi form → klik "Order Sekarang"
+9. User isi form → klik "Order Sekarang" → order tersimpan ke Supabase (`POST /api/orders/create`)
 10. Backend **buat invoice** → hubungi Xendit API untuk generate link pembayaran *(roadmap)*
 11. Xendit kirim balik URL invoice *(roadmap)*
 12. User di-redirect ke halaman pembayaran Xendit *(roadmap)*
@@ -376,17 +426,19 @@ masih roadmap — sekarang dijalankan dengan mock.
 
 ### Alur Post-Payment (Webhook) — roadmap
 14. Xendit kirim notifikasi ke webhook (`/api/webhooks/xendit`)
-15. Backend verifikasi signature → insert ke tabel `orders` + update stok produk
+15. Backend verifikasi signature → update tabel `orders` + update stok produk
 16. Kirim data ke API Mengantar untuk proses booking kurir
 17. Mengantar kirim balik no. resi / booking ID resmi
 18. Update tabel order dengan no. resi
 19. **Hapus cookie keranjang** (`infarm_cart` + `infarm_checkout`)
 20. Kirim email otomatis ke user berisi no. pesanan & link pelacakan
-21. User kembali ke web → tampil halaman "Pembayaran Sukses" (`/checkout/success`)
-22. User bisa tracking pesanan via no. resi (`/track`)
+21. User kembali ke web → tampil halaman "Order Confirmed" (`/checkout/success`)
+22. User bisa tracking pesanan via no. resi (`/track`), atau **membatalkan** lewat
+    `/order-cancellation?id=&token=` selama status masih `Menunggu Pembayaran`/`Diproses`
 
 ### Catatan Implementasi Penting
 - Langkah 3 & 7: operasi cookie via `src/lib/cart-client.ts`
+- Langkah 9 & 22: data order via `src/lib/mock-db/orders.ts` (Supabase)
 - Langkah 10-12: logika Xendit di `src/lib/xendit/`, jangan di frontend *(roadmap)*
 - Langkah 14-20: semua terjadi di `src/app/api/webhooks/xendit/route.ts` *(roadmap)*
 - Langkah 16-17: logika Mengantar di `src/lib/mengantar/` *(roadmap)*

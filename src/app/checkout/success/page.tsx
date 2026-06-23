@@ -5,8 +5,9 @@
 
 import Link from 'next/link'
 import Image from 'next/image'
-import { X, Leaf, Clock, MapPin, Star } from 'lucide-react'
+import { X, Leaf, Clock, MapPin, Star, Ban } from 'lucide-react'
 import { readOrders } from '@/lib/mock-db/orders'
+import { generateCancelToken } from '@/lib/order-token'
 import { formatRupiah } from '@/lib/format'
 import type { Order } from '@/types/order'
 
@@ -62,6 +63,8 @@ export default async function CheckoutSuccessPage({
   }
   const data = order ?? FALLBACK_ORDER
   const invoiceLabel = data.orderId.startsWith('#') ? data.orderId : `#${data.orderId}`
+  // Token keamanan untuk tautan pembatalan (guest tidak login → tautan dilindungi token)
+  const cancelToken = generateCancelToken(data.orderId)
 
   return (
     <div className="flex min-h-screen justify-center bg-brand-surface">
@@ -173,6 +176,14 @@ export default async function CheckoutSuccessPage({
             >
               <Star className="h-4 w-4" />
               Beri Ulasan Produk
+            </Link>
+            {/* Pembatalan pesanan (Guest) — tautan dibawa dengan token keamanan */}
+            <Link
+              href={`/order-cancellation?id=${encodeURIComponent(data.orderId)}&token=${cancelToken}`}
+              className="flex items-center justify-center gap-2 rounded-xl border border-white/40 bg-white/5 py-3 text-sm font-semibold text-white transition hover:bg-white/15"
+            >
+              <Ban className="h-4 w-4" />
+              Batalkan Pesanan
             </Link>
             <Link
               href="/"
