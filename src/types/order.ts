@@ -32,6 +32,7 @@ export type Order = {
   orderId: string
   customerName: string
   customerPhone?: string
+  customerEmail?: string // untuk kirim konfirmasi pesanan ke buyer
   date: string // ISO date string, mis. '2026-06-15T14:20:00.000Z'
   items: OrderItem[]
   totalAmount: number
@@ -47,6 +48,7 @@ export type CreateOrderInput = {
   orderId: string
   customerName: string
   customerPhone?: string
+  customerEmail?: string
   date: string
   items: OrderItem[]
   totalAmount: number

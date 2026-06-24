@@ -26,6 +26,7 @@ type OrderRow = {
   order_id: string
   customer_name: string
   customer_phone: string | null
+  customer_email: string | null
   order_date: string
   items: OrderItem[] // kolom jsonb
   total_amount: number
@@ -49,6 +50,7 @@ function rowToOrder(row: OrderRow): Order {
     paymentStatus: row.payment_status,
   }
   if (row.customer_phone) order.customerPhone = row.customer_phone
+  if (row.customer_email) order.customerEmail = row.customer_email
   if (row.status) order.status = row.status
   if (row.courier || row.service) {
     order.logistics = { courier: row.courier ?? '', service: row.service ?? '' }
@@ -104,23 +106,32 @@ export async function saveOrder(newOrder: CreateOrderInput): Promise<Order> {
     newOrder.status ?? (paymentStatus === 'Lunas' ? 'Diproses' : 'Menunggu Pembayaran')
 
   const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from('orders')
-    .insert({
-      order_id: newOrder.orderId,
-      customer_name: newOrder.customerName,
-      customer_phone: newOrder.customerPhone ?? null,
-      order_date: newOrder.date,
-      items: newOrder.items,
-      total_amount: newOrder.totalAmount,
-      payment_status: paymentStatus,
-      status,
-      courier: newOrder.logistics?.courier ?? null,
-      service: newOrder.logistics?.service ?? null,
-      tracking_number: newOrder.trackingNumber ?? null,
-    })
-    .select('*')
-    .single()
+  const row = {
+    order_id: newOrder.orderId,
+    customer_name: newOrder.customerName,
+    customer_phone: newOrder.customerPhone ?? null,
+    customer_email: newOrder.customerEmail ?? null,
+    order_date: newOrder.date,
+    items: newOrder.items,
+    total_amount: newOrder.totalAmount,
+    payment_status: paymentStatus,
+    status,
+    courier: newOrder.logistics?.courier ?? null,
+    service: newOrder.logistics?.service ?? null,
+    tracking_number: newOrder.trackingNumber ?? null,
+  }
+
+  let { data, error } = await supabase.from('orders').insert(row).select('*').single()
+
+  // Jaring pengaman: bila kolom customer_email belum ada (migration belum dijalankan),
+  // simpan ulang tanpa email agar checkout tetap jalan. Email tersimpan setelah migration diterapkan.
+  // PostgREST melaporkan kolom hilang sebagai 'PGRST204'; '42703' = error kolom level Postgres.
+  // TODO: hapus fallback ini setelah migration add_orders_customer_email diterapkan ke DB.
+  if (error?.code === 'PGRST204' || error?.code === '42703') {
+    const rowWithoutEmail: Record<string, unknown> = { ...row }
+    delete rowWithoutEmail.customer_email
+    ;({ data, error } = await supabase.from('orders').insert(rowWithoutEmail).select('*').single())
+  }
 
   if (error || !data) {
     throw new Error(`Gagal menyimpan pesanan: ${error?.message ?? 'tidak diketahui'}`)

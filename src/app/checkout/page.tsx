@@ -4,18 +4,22 @@
 // Halaman Checkout. Di luar route group (store) karena punya header hijau sendiri (CheckoutHeader).
 // Orchestrator: menyimpan semua state (modal, kurir, asuransi, pembayaran) & menghitung total reaktif.
 
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useRouter } from 'next/navigation'
 import type { Product } from '@/types/product'
 import CheckoutHeader from '@/components/checkout/CheckoutHeader'
 import CheckoutProductSummary from '@/components/checkout/CheckoutProductSummary'
-import AddressForm, { type AddressFormState } from '@/components/checkout/AddressForm'
+import AddressForm, {
+  type AddressFormState,
+  type AddressFormHandle,
+} from '@/components/checkout/AddressForm'
 import OptionRow from '@/components/checkout/OptionRow'
 import OrderSummary from '@/components/checkout/OrderSummary'
 import CheckoutBottomBar from '@/components/checkout/CheckoutBottomBar'
 import DeliveryModal from '@/components/checkout/DeliveryModal'
 import PaymentModal from '@/components/checkout/PaymentModal'
 import { formatRupiah } from '@/lib/format'
+import { validateAddress } from '@/lib/checkout-validation'
 import { dummyProducts } from '@/lib/data/dummy-products'
 import {
   subscribeCheckout,
@@ -23,7 +27,6 @@ import {
   getServerCheckoutSnapshot,
 } from '@/lib/cart-client'
 import {
-  dummyAddress,
   DUMMY_ORDER_ITEMS,
   DELIVERY_OPTIONS,
   PAYMENT_METHODS,
@@ -40,15 +43,28 @@ export default function CheckoutPage() {
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false)
   const [isPaying, setIsPaying] = useState(false) // mencegah double submit saat memproses bayar
 
-  // === Alamat pengiriman: diangkat dari AddressForm agar nama/telepon yang diketik dipakai saat order ===
+  // === Alamat pengiriman: diangkat dari AddressForm agar nama/telepon/email/alamat & destination_id dipakai saat order ===
+  // Seluruh field kosong di awal (tidak ada prefill default).
   const [address, setAddress] = useState<AddressFormState>({
-    recipientName: dummyAddress.recipientName,
-    phone: dummyAddress.phone,
+    recipientName: '',
+    phone: '',
+    email: '',
+    destination_id: '',
+    provinceName: '',
+    cityName: '',
+    districtName: '',
+    subdistrictName: '',
+    postalCode: '',
     street: '',
-    village: '',
-    district: '',
-    cityPostal: '',
   })
+
+  // Ref ke AddressForm untuk menampilkan error & scroll saat submit ditolak
+  const addressFormRef = useRef<AddressFormHandle>(null)
+  // Pesan toast singkat (mis. saat tombol ditekan tapi alamat belum lengkap)
+  const [toast, setToast] = useState('')
+
+  // Apakah seluruh field alamat valid → menentukan status tombol bayar
+  const isAddressValid = useMemo(() => validateAddress(address).valid, [address])
 
   // === State pilihan user ===
   const [selectedCourierId, setSelectedCourierId] = useState('jne') // default: rekomendasi
@@ -123,10 +139,26 @@ export default function CheckoutPage() {
   const shipping = selectedCourier.price + (insuranceEnabled ? INSURANCE_FEE : 0)
   const total = subtotal + shipping - ORDER_DISCOUNT
 
+  // Sembunyikan toast otomatis setelah beberapa detik
+  useEffect(() => {
+    if (!toast) return
+    const timer = setTimeout(() => setToast(''), 3000)
+    return () => clearTimeout(timer)
+  }, [toast])
+
   // Proses bayar (mode prototipe): simpan order ke mock DB lalu arahkan ke halaman sukses.
   // TODO: ganti simulasi ini dengan buat invoice via lib/xendit & redirect ke halaman Xendit.
   async function handlePay() {
     if (isPaying) return
+
+    // Lapisan kedua selain styling tombol: validasi alamat sebelum request apapun dikirim.
+    // Bila belum valid, tampilkan error di tiap field + scroll ke yang pertama + toast.
+    const valid = addressFormRef.current?.revealErrors() ?? validateAddress(address).valid
+    if (!valid) {
+      setToast('Lengkapi alamat pengiriman terlebih dahulu')
+      return
+    }
+
     setIsPaying(true)
 
     // ID invoice unik sederhana untuk prototipe
@@ -141,8 +173,10 @@ export default function CheckoutPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           orderId,
-          customerName: address.recipientName.trim() || dummyAddress.recipientName,
-          customerPhone: address.phone.trim() || dummyAddress.phone,
+          // Nilai sudah divalidasi sebelum sampai sini (telepon = angka bersih, email = lowercase)
+          customerName: address.recipientName.trim(),
+          customerPhone: address.phone,
+          customerEmail: address.email,
           date: new Date().toISOString(),
           items: orderItems.map((item) => ({
             productId: item.id,
@@ -173,7 +207,7 @@ export default function CheckoutPage() {
         <CheckoutProductSummary items={orderItems} />
 
         {/* 3 — Form input alamat pengiriman */}
-        <AddressForm defaultAddress={dummyAddress} onChange={setAddress} />
+        <AddressForm ref={addressFormRef} onChange={setAddress} />
 
         {/* 4 — Pilihan pengiriman (klik → buka modal) */}
         <OptionRow
@@ -200,8 +234,17 @@ export default function CheckoutPage() {
         />
       </main>
 
+      {/* Toast singkat (mis. alamat belum lengkap saat menekan Bayar) */}
+      {toast && (
+        <div className="fixed inset-x-0 bottom-20 z-40 flex justify-center px-4" role="status">
+          <p className="rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white shadow-lg">
+            {toast}
+          </p>
+        </div>
+      )}
+
       {/* Bilah bayar bawah (sticky) */}
-      <CheckoutBottomBar total={total} onPay={handlePay} isPaying={isPaying} />
+      <CheckoutBottomBar total={total} onPay={handlePay} isPaying={isPaying} canPay={isAddressValid} />
 
       {/* === Modal Pengiriman === */}
       <DeliveryModal

@@ -16,6 +16,7 @@ function isValidPayload(body: unknown): body is CreateOrderInput {
   return (
     typeof b.orderId === 'string' &&
     typeof b.customerName === 'string' &&
+    (b.customerEmail === undefined || typeof b.customerEmail === 'string') &&
     typeof b.date === 'string' &&
     typeof b.totalAmount === 'number' &&
     Array.isArray(b.items) &&
