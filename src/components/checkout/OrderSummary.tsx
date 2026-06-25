@@ -5,6 +5,7 @@
 import { formatRupiah } from '@/lib/format'
 
 // Menampilkan rincian biaya pesanan beserta total akhir.
+// shipping = null bila kurir belum dipilih → tampilkan ajakan memilih kurir.
 export default function OrderSummary({
   subtotal,
   shipping,
@@ -12,7 +13,7 @@ export default function OrderSummary({
   total,
 }: {
   subtotal: number
-  shipping: number
+  shipping: number | null
   discount: number
   total: number
 }) {
@@ -22,7 +23,15 @@ export default function OrderSummary({
 
       <dl className="space-y-2 text-sm">
         <Row label="Subtotal" value={formatRupiah(subtotal)} />
-        <Row label="Biaya Pengiriman" value={formatRupiah(shipping)} />
+        {shipping === null ? (
+          <Row
+            label="Ongkos Kirim"
+            value="Pilih kurir terlebih dahulu"
+            valueClassName="text-zinc-400"
+          />
+        ) : (
+          <Row label="Ongkos Kirim" value={formatRupiah(shipping)} />
+        )}
         {/* Diskon ditampilkan hijau dengan tanda minus */}
         <Row label="Diskon" value={`- ${formatRupiah(discount)}`} valueClassName="text-brand-primary" />
 

@@ -16,10 +16,10 @@ import AddressForm, {
 import OptionRow from '@/components/checkout/OptionRow'
 import OrderSummary from '@/components/checkout/OrderSummary'
 import CheckoutBottomBar from '@/components/checkout/CheckoutBottomBar'
-import DeliveryModal from '@/components/checkout/DeliveryModal'
+import ShippingOptions from '@/components/checkout/ShippingOptions'
 import PaymentModal from '@/components/checkout/PaymentModal'
-import { formatRupiah } from '@/lib/format'
 import { validateAddress } from '@/lib/checkout-validation'
+import { type ShippingCourier } from '@/lib/mengantar'
 import { dummyProducts } from '@/lib/data/dummy-products'
 import {
   subscribeCheckout,
@@ -28,18 +28,18 @@ import {
 } from '@/lib/cart-client'
 import {
   DUMMY_ORDER_ITEMS,
-  DELIVERY_OPTIONS,
   PAYMENT_METHODS,
-  INSURANCE_FEE,
   ORDER_DISCOUNT,
   type CheckoutItem,
 } from '@/lib/data/dummy-checkout'
+
+// Asumsi berat: data produk belum punya field berat → pakai 1 kg per item (minimal 1 kg).
+const WEIGHT_PER_ITEM_KG = 1
 
 export default function CheckoutPage() {
   const router = useRouter()
 
   // === State tampilan modal ===
-  const [isDeliveryModalOpen, setIsDeliveryModalOpen] = useState(false)
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false)
   const [isPaying, setIsPaying] = useState(false) // mencegah double submit saat memproses bayar
 
@@ -60,15 +60,22 @@ export default function CheckoutPage() {
 
   // Ref ke AddressForm untuk menampilkan error & scroll saat submit ditolak
   const addressFormRef = useRef<AddressFormHandle>(null)
-  // Pesan toast singkat (mis. saat tombol ditekan tapi alamat belum lengkap)
+  // Pesan toast singkat (mis. saat tombol ditekan tapi alamat/kurir belum lengkap)
   const [toast, setToast] = useState('')
 
   // Apakah seluruh field alamat valid → menentukan status tombol bayar
   const isAddressValid = useMemo(() => validateAddress(address).valid, [address])
 
+  // === Kurir terpilih (selected_courier) hasil cek ongkir ===
+  const [selectedCourier, setSelectedCourier] = useState<ShippingCourier | null>(null)
+
+  // Saat alamat berubah/di-reset (destination_id berganti), reset pilihan kurir → cek ongkir ulang.
+  function handleAddressChange(next: AddressFormState) {
+    if (next.destination_id !== address.destination_id) setSelectedCourier(null)
+    setAddress(next)
+  }
+
   // === State pilihan user ===
-  const [selectedCourierId, setSelectedCourierId] = useState('jne') // default: rekomendasi
-  const [insuranceEnabled, setInsuranceEnabled] = useState(true) // asuransi aktif default
   const [selectedPaymentId, setSelectedPaymentId] = useState('mandiri')
 
   // === Item yang dibeli: dari pilihan keranjang (cookie checkout), reaktif & aman SSR ===
@@ -129,15 +136,22 @@ export default function CheckoutPage() {
     [orderItems],
   )
 
+  // Total berat (kg) untuk cek ongkir — minimal 1 kg
+  const shippingWeight = useMemo(
+    () => Math.max(1, orderItems.reduce((sum, item) => sum + item.quantity, 0) * WEIGHT_PER_ITEM_KG),
+    [orderItems],
+  )
+
   // === Turunan pilihan ===
-  const selectedCourier =
-    DELIVERY_OPTIONS.find((o) => o.id === selectedCourierId) ?? DELIVERY_OPTIONS[0]
   const selectedPayment =
     PAYMENT_METHODS.find((m) => m.id === selectedPaymentId) ?? PAYMENT_METHODS[0]
 
-  // === Kalkulasi biaya (reaktif terhadap kurir & asuransi) ===
-  const shipping = selectedCourier.price + (insuranceEnabled ? INSURANCE_FEE : 0)
-  const total = subtotal + shipping - ORDER_DISCOUNT
+  // === Kalkulasi biaya: ongkir dari kurir terpilih (null bila belum pilih) ===
+  const shipping = selectedCourier ? selectedCourier.price : null
+  const total = subtotal + (selectedCourier?.price ?? 0) - ORDER_DISCOUNT
+
+  // Tombol bayar aktif hanya bila alamat valid DAN kurir sudah dipilih
+  const canPay = isAddressValid && selectedCourier !== null
 
   // Sembunyikan toast otomatis setelah beberapa detik
   useEffect(() => {
@@ -159,13 +173,16 @@ export default function CheckoutPage() {
       return
     }
 
+    // Kurir wajib dipilih sebelum bayar (lapisan kedua selain styling tombol)
+    if (!selectedCourier) {
+      setToast('Pilih kurir pengiriman terlebih dahulu')
+      return
+    }
+
     setIsPaying(true)
 
     // ID invoice unik sederhana untuk prototipe
     const orderId = `INV-${Date.now().toString().slice(-8)}`
-
-    // Pecah string kurir ('JNE Reguler') → courier + service untuk tipe Order
-    const [courier, ...serviceParts] = selectedCourier.courier.split(' ')
 
     try {
       await fetch('/api/orders/create', {
@@ -186,7 +203,7 @@ export default function CheckoutPage() {
           })),
           totalAmount: total,
           paymentStatus: 'Lunas',
-          logistics: { courier, service: serviceParts.join(' ') || 'Reguler' },
+          logistics: { courier: selectedCourier.name, service: selectedCourier.estimatedDate },
         }),
       })
     } catch {
@@ -207,14 +224,14 @@ export default function CheckoutPage() {
         <CheckoutProductSummary items={orderItems} />
 
         {/* 3 — Form input alamat pengiriman */}
-        <AddressForm ref={addressFormRef} onChange={setAddress} />
+        <AddressForm ref={addressFormRef} onChange={handleAddressChange} />
 
-        {/* 4 — Pilihan pengiriman (klik → buka modal) */}
-        <OptionRow
-          icon={<TruckIcon />}
-          title="Metode Pengiriman"
-          value={`${selectedCourier.courier} · ${formatRupiah(selectedCourier.price)}`}
-          onClick={() => setIsDeliveryModalOpen(true)}
+        {/* 4 — Pilihan kurir & ongkir (bottom sheet) berdasarkan alamat terpilih */}
+        <ShippingOptions
+          destinationId={address.destination_id}
+          weight={shippingWeight}
+          selected={selectedCourier}
+          onSelect={setSelectedCourier}
         />
 
         {/* 4 — Pilihan pembayaran (klik → buka modal) */}
@@ -244,18 +261,7 @@ export default function CheckoutPage() {
       )}
 
       {/* Bilah bayar bawah (sticky) */}
-      <CheckoutBottomBar total={total} onPay={handlePay} isPaying={isPaying} canPay={isAddressValid} />
-
-      {/* === Modal Pengiriman === */}
-      <DeliveryModal
-        open={isDeliveryModalOpen}
-        onClose={() => setIsDeliveryModalOpen(false)}
-        options={DELIVERY_OPTIONS}
-        selectedId={selectedCourierId}
-        onSelect={setSelectedCourierId}
-        insuranceEnabled={insuranceEnabled}
-        onToggleInsurance={setInsuranceEnabled}
-      />
+      <CheckoutBottomBar total={total} onPay={handlePay} isPaying={isPaying} canPay={canPay} />
 
       {/* === Modal Pembayaran === */}
       <PaymentModal
@@ -270,17 +276,6 @@ export default function CheckoutPage() {
 }
 
 // === Ikon inline ===
-
-function TruckIcon() {
-  return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <rect x="1" y="3" width="15" height="13" rx="1" />
-      <path d="M16 8h4l3 3v5h-7z" />
-      <circle cx="5.5" cy="18.5" r="2" />
-      <circle cx="18.5" cy="18.5" r="2" />
-    </svg>
-  )
-}
 
 function WalletIcon() {
   return (
