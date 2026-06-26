@@ -13,6 +13,7 @@ import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard,
   Package,
+  Boxes,
   ShoppingCart,
   Star,
   HelpCircle,
@@ -31,6 +32,7 @@ type NavItem = {
 const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', href: '/oms/dashboard', icon: LayoutDashboard },
   { label: 'Produk', href: '/oms/dashboard/products', icon: Package },
+  { label: 'Paket & Combo', href: '/oms/dashboard/paket-combo', icon: Boxes },
   { label: 'Pesanan', href: '/oms/dashboard/orders', icon: ShoppingCart },
   { label: 'Ulasan', href: '/oms/dashboard/reviews', icon: Star },
 ]
