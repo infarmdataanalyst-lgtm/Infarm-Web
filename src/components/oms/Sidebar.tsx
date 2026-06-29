@@ -14,6 +14,7 @@ import {
   LayoutDashboard,
   Package,
   Boxes,
+  Megaphone,
   ShoppingCart,
   Star,
   HelpCircle,
@@ -33,6 +34,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', href: '/oms/dashboard', icon: LayoutDashboard },
   { label: 'Produk', href: '/oms/dashboard/products', icon: Package },
   { label: 'Paket & Combo', href: '/oms/dashboard/paket-combo', icon: Boxes },
+  { label: 'Promosi', href: '/oms/dashboard/promosi', icon: Megaphone },
   { label: 'Pesanan', href: '/oms/dashboard/orders', icon: ShoppingCart },
   { label: 'Ulasan', href: '/oms/dashboard/reviews', icon: Star },
 ]
