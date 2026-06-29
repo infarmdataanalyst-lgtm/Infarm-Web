@@ -24,8 +24,10 @@ Lapisan data inti **sudah memakai Supabase** (PostgreSQL):
 > Supabase untuk berjalan di lokal (lihat bagian Environment Variables). Tanpa itu muncul
 > error `supabaseUrl is required.` / `Module not found: @supabase/ssr`.
 
-Integrasi **Xendit (pembayaran)** dan **Mengantar (logistik)** **belum diimplementasi** — masih roadmap.
-Bagian Xendit / Mengantar di bawah adalah **target arsitektur**, bukan kondisi sekarang.
+Integrasi **Mengantar (logistik)** **sudah terpasang sebagian**: pencarian alamat tujuan dan
+**cek ongkir otomatis** di halaman checkout sudah jalan (lihat bagian "Mengantar (Logistik)").
+Tracking/booking resi masih roadmap. Integrasi **Xendit (pembayaran)** **belum diimplementasi** —
+masih roadmap; bagian Xendit di bawah adalah **target arsitektur**, bukan kondisi sekarang.
 Tandai jelas mana yang sudah ada vs masih rencana saat menulis kode.
 
 > Catatan penamaan: folder `src/lib/mock-db/` namanya warisan dari fase mock file-based,
@@ -72,10 +74,13 @@ Tandai jelas mana yang sudah ada vs masih rencana saat menulis kode.
 - **Backend**: Next.js API Routes (Route Handlers di `src/app/api/`)
 - **Package Manager**: npm
 
+### Integrasi yang sudah terpasang (sebagian)
+- **Logistik / Pengiriman**: Mengantar — **search alamat + cek ongkir di checkout sudah jalan**
+  (client-side via `src/lib/mengantar.ts`). Tracking/booking kurir masih roadmap.
+
 ### Roadmap integrasi (belum terpasang)
 - **Auth admin real**: Supabase Auth (client sudah ada, login OMS belum terhubung)
 - **Payment Gateway**: Xendit
-- **Logistik / Pengiriman**: Mengantar
 - **Deployment**: Vercel
 - **Version Control**: GitHub
 
@@ -129,20 +134,23 @@ src/
 │   ├── order-cancellation/page.tsx  # Pembatalan pesanan Guest (token-protected)
 │   ├── review/                   # Form review produk (+ /submitted)
 │   ├── track/page.tsx            # Lacak pesanan
+│   ├── dev/email-preview/        # Preview template email (route handler, isi placeholder data contoh)
 │   ├── oms/                      # OMS / back office
 │   │   ├── login/page.tsx
 │   │   └── dashboard/            # dashboard, products (+upload), orders, reviews
 │   ├── api/                      # Route Handlers (runtime nodejs)
 │   │   ├── products/             # create | update | delete | list
 │   │   ├── orders/               # create | list | get | cancel (GET+PATCH)
-│   │   └── reviews/              # create | list | reply | visibility
+│   │   ├── reviews/              # create | list | reply | visibility
+│   │   └── mengantar/address/search  # Proxy search alamat Mengantar (wilayah.id CORS-blocked → proxied)
 │   ├── layout.tsx                # Root layout (font, metadata)
 │   └── globals.css               # Tailwind v4 + @config tailwind.config.ts
 ├── components/
 │   ├── home/                     # Homepage (HeroSearchBar, dll)
 │   ├── product/                  # Kartu & detail produk
 │   ├── cart/                     # Komponen keranjang
-│   ├── checkout/                 # Form & modal checkout
+│   ├── checkout/                 # AddressForm, AddressSearchCombobox, ShippingOptions (bottom sheet
+│   │                             #   cek ongkir), PaymentModal, BottomSheet, OrderSummary, dll
 │   ├── order-cancellation/       # OrderCancellationView (client)
 │   ├── review/                   # Komponen review
 │   ├── track/                    # Komponen pelacakan
@@ -151,21 +159,27 @@ src/
 ├── lib/
 │   ├── cart-client.ts            # Helper keranjang sisi-klien (cookie base64)
 │   ├── format.ts                 # Util format (mis. rupiah)
+│   ├── phone.ts                  # Validasi & normalisasi no. telepon ID (checkout)
+│   ├── email.ts                  # Validasi & normalisasi email (checkout)
+│   ├── checkout-validation.ts    # Validasi field alamat → status tombol "Bayar Sekarang"
+│   ├── mengantar.ts              # Client: search alamat (via proxy) + cek ongkir (fetch langsung)
 │   ├── order-token.ts            # Token HMAC tautan pembatalan (server-only)
 │   ├── supabase/                 # Client Supabase: server.ts (admin/SSR) + browser.ts
 │   ├── mock-db/                  # Akses data Supabase: products, orders, reviews (server only)
 │   └── data/                     # Dummy data tampilan pelengkap (dummy-*.ts)
+├── emails/                       # Template HTML email (order-confirmation.html) — placeholder {{...}}
 ├── hooks/                        # use-debounce.ts, dll
 └── types/                        # product.ts, cart.ts, order.ts
 
 # Root: next.config.ts, tailwind.config.ts, eslint.config.mjs, postcss.config.mjs,
 #       tsconfig.json, AGENTS.md, CLAUDE.md, .env.local (tidak di-commit)
+# public/images/email/: aset gambar email (mis. logo-infarm.png) — lihat README di folder tsb
 # supabase/: migrations/ (SQL, sumber kebenaran skema) + README.md (cara apply via Dashboard)
 ```
 
 > Folder berikut **belum ada** dan baru dibuat saat integrasi terkait dikerjakan:
-> `src/lib/xendit/`, `src/lib/mengantar/`, `src/app/api/webhooks/`, `proxy.ts`,
-> `src/lib/cart.ts`, `src/lib/fetcher.ts`.
+> `src/lib/xendit/`, `src/app/api/webhooks/`, `proxy.ts`, `src/lib/cart.ts`, `src/lib/fetcher.ts`.
+> Catatan: logika Mengantar memakai **file** `src/lib/mengantar.ts` (bukan folder `src/lib/mengantar/`).
 
 ---
 
@@ -265,6 +279,53 @@ Tulis komentar untuk memudahkan maintenance. Ikuti aturan berikut:
     `Diproses`. Status `Dikirim`/`Selesai` ditolak (terkunci)
 - Halaman `src/app/order-cancellation/page.tsx` (server tipis) → `OrderCancellationView` (client)
 
+## Mengantar (Logistik) — sudah terpasang sebagian
+
+Semua helper client ada di **`src/lib/mengantar.ts`** (file, bukan folder). Endpoint Mengantar
+bersifat publik (tanpa API key) → dipanggil dari client, KECUALI search alamat yang diproksi karena CORS.
+
+- **Search alamat** (`searchAddress`): UI di `AddressSearchCombobox` (debounce 500ms, min 3 karakter).
+  Host alamat (wilayah) **tidak mengirim header CORS** → request diproksi lewat route handler internal
+  `src/app/api/mengantar/address/search/route.ts` (BUKAN server action). `_id` kelurahan terpilih
+  disimpan sebagai **`destination_id`** di state form alamat (dipakai cek ongkir).
+- **Cek ongkir** (`fetchShippingEstimate`): endpoint estimasi **mengizinkan CORS (`*`)** → di-fetch
+  **langsung dari client**. Origin toko dari env **`NEXT_PUBLIC_MENGANTAR_ORIGIN_ID`** (jangan hardcode).
+  Param: `origin_id`, `destination_id`, `weight` (kg). Response = object per-kurir; ambil
+  `estimatedSpecialPrice` (ongkir) & `estimatedDate` (estimasi), **sembunyikan** kurir `unsupported: true`,
+  urutkan termurah→termahal.
+- **UI cek ongkir**: `ShippingOptions` (tombol trigger → bottom sheet `BottomSheet`, pola seperti
+  `PaymentModal`): skeleton saat loading, pesan + tombol retry saat gagal, "Belum ada kurir tersedia
+  ke alamat tujuan" bila semua unsupported. Kurir terpilih disimpan ke state `selected_courier`,
+  ongkir ditambahkan ke total. Tombol "Bayar Sekarang" baru aktif setelah kurir dipilih.
+- **Roadmap (belum ada)**: booking kurir + tracking resi otomatis (via webhook pembayaran).
+
+## Validasi Form Checkout (client-side)
+
+Section Alamat Pengiriman divalidasi di client sebelum request order dikirim. Logika terpusat di
+`src/lib/checkout-validation.ts` (`validateAddress`) + helper `phone.ts` & `email.ts`:
+
+- **Nama**: min 3 karakter. **Alamat lengkap**: min 10 karakter.
+- **Telepon** (`phone.ts`): hanya angka (non-digit diblok saat mengetik via onKeyDown/onChange),
+  wajib diawali `08`, panjang 10–12 digit. Disimpan sebagai angka bersih `08xxxxxxxxx`.
+- **Email** (`email.ts`): validasi format (regex), disimpan **lowercase** (normalisasi).
+- **Alamat**: wajib dipilih dari search Mengantar (`destination_id` tidak boleh kosong).
+- **Kurir**: wajib dipilih (`selected_courier`).
+- Tombol "Bayar Sekarang": disabled-visual + **guard di handler** (bukan hanya atribut `disabled`).
+  Saat ditekan tapi belum lengkap → toast + auto-scroll ke field pertama yang invalid + border merah.
+
+## Email Konfirmasi Pesanan
+
+- Template HTML: **`src/emails/order-confirmation.html`** — table-based + inline CSS (kompatibel
+  Gmail/Outlook/Mail iOS), fluid `max-width:600px; margin:0 auto`, palet brand (`#46b33c`).
+- Placeholder backend: `{{logo_url}}`, `{{order_id}}`, `{{item_list}}`, `{{total_price}}`,
+  `{{tracking_url}}`, `{{cancel_url}}`. **Email wajib URL absolut** (path relatif hanya untuk preview).
+- Aset gambar email di **`public/images/email/`** (mis. `logo-infarm.png`; lihat README folder tsb).
+- Preview lokal: **`/dev/email-preview`** (route handler membaca file template + isi placeholder
+  dengan data contoh). Hanya untuk development.
+- Kolom **`customer_email`** (TEXT) sudah ada di tabel `orders`
+  (migration `supabase/migrations/20260624120000_add_orders_customer_email.sql`). `saveOrder` punya
+  fallback aman bila kolom belum di-migrate (cek kode error `PGRST204`/`42703`).
+
 ## Roadmap Integrasi (target arsitektur — belum diimplementasi)
 
 ### Xendit (Payment Gateway)
@@ -272,10 +333,6 @@ Tulis komentar untuk memudahkan maintenance. Ikuti aturan berikut:
 - Webhook diterima di `src/app/api/webhooks/xendit/route.ts`
 - Verifikasi webhook signature sebelum memproses event apapun
 - **Jangan expose** Xendit secret key di frontend
-
-### Mengantar (Logistik)
-- Semua logika pengiriman di `src/lib/mengantar/`
-- Kalkulasi ongkos kirim dan tracking order via API Mengantar
 
 ---
 
@@ -290,8 +347,11 @@ Tulis komentar untuk memudahkan maintenance. Ikuti aturan berikut:
 - [x] Halaman review produk (`/review`)
 - [x] Halaman lacak pesanan (`/track`)
 - [x] Halaman pembatalan pesanan Guest (`/order-cancellation`) — token-protected
+- [x] Search alamat + **cek ongkir** Mengantar di checkout (client; ongkir masuk ke total)
+- [x] Validasi form checkout (nama/telepon/email/alamat/kurir) + gating tombol "Bayar Sekarang"
+- [x] Template email konfirmasi pesanan (`src/emails/`, preview di `/dev/email-preview`)
 - [ ] Integrasi Xendit (pembayaran) — masih UI/mock
-- [ ] Integrasi Mengantar (pengiriman & tracking) — masih UI/mock
+- [ ] Mengantar: booking kurir & tracking resi otomatis — masih roadmap
 
 ### OMS (Back Office)
 - [x] Halaman login OMS (`/oms/login`) — belum terhubung auth real
@@ -323,14 +383,21 @@ Jangan di-commit (sudah diabaikan `.gitignore`). Di production, set lewat Vercel
 # Sudah dipakai sekarang (Supabase)
 NEXT_PUBLIC_SUPABASE_URL
 NEXT_PUBLIC_SUPABASE_ANON_KEY
-SUPABASE_SERVICE_ROLE_KEY      # server-only (dipakai mock-db via createAdminClient)
-ORDER_CANCEL_SECRET            # server-only, opsional (HMAC token pembatalan; ada fallback dev)
+SUPABASE_SERVICE_ROLE_KEY        # server-only (dipakai mock-db via createAdminClient)
+ORDER_CANCEL_SECRET              # server-only, opsional (HMAC token pembatalan; ada fallback dev)
+
+# Sudah dipakai sekarang (Mengantar — cek ongkir)
+NEXT_PUBLIC_MENGANTAR_ORIGIN_ID  # PUBLIC/client; _id kelurahan toko (asal pengiriman). WAJIB di-set
+                                 # di Vercel juga (var NEXT_PUBLIC_* di-inline saat build → perlu redeploy)
 
 # Roadmap (belum dipakai)
-XENDIT_SECRET_KEY              # server-only
-XENDIT_WEBHOOK_TOKEN           # server-only
-MENGANTAR_API_KEY              # server-only
+XENDIT_SECRET_KEY                # server-only
+XENDIT_WEBHOOK_TOKEN             # server-only
+MENGANTAR_API_KEY                # server-only (untuk booking/tracking nanti; cek ongkir tak butuh key)
 ```
+
+> Cara dapat `NEXT_PUBLIC_MENGANTAR_ORIGIN_ID`: panggil endpoint search alamat Mengantar dengan
+> nama kelurahan toko, ambil `_id` yang cocok. Jangan hardcode di kode.
 
 ---
 
@@ -404,7 +471,8 @@ Gunakan class `bg-brand-primary`, `text-brand-primary`, `bg-brand-light`, `bg-br
 ## Flowchart Sistem Ecommerce (target end-to-end)
 
 Alur lengkap sistem sebagai acuan saat membangun fitur. Data produk/order/review sudah Supabase;
-bagian Xendit/Mengantar masih roadmap (dijalankan dengan mock).
+search alamat + **cek ongkir Mengantar sudah real**; bagian Xendit (pembayaran) & booking/tracking
+resi masih roadmap (dijalankan dengan mock).
 
 ### Alur Browsing & Keranjang
 1. User membuka web → data produk diambil via `GET /api/products/list` (Supabase, digabung dummy)
@@ -417,8 +485,10 @@ bagian Xendit/Mengantar masih roadmap (dijalankan dengan mock).
 ### Alur Checkout & Pembayaran
 7. User klik "Checkout" / "Beli Langsung" → item terpilih disimpan ke cookie `infarm_checkout`
    (keduanya WAJIB `setCheckoutItems` agar produk di checkout benar)
-8. Halaman `/checkout` tampilkan form: Email, No. HP, Alamat, Metode Pembayaran, Logistik
-9. User isi form → klik "Order Sekarang" → order tersimpan ke Supabase (`POST /api/orders/create`)
+8. Halaman `/checkout`: form Nama, No. HP, Email, Alamat (search Mengantar → `destination_id`),
+   lalu **cek ongkir otomatis** (pilih kurir → `selected_courier`, ongkir masuk total), Metode
+   Pembayaran. Semua field & kurir divalidasi client; tombol "Bayar Sekarang" aktif hanya bila valid.
+9. User isi form → klik "Bayar Sekarang" → order (termasuk email) tersimpan ke Supabase (`POST /api/orders/create`)
 10. Backend **buat invoice** → hubungi Xendit API untuk generate link pembayaran *(roadmap)*
 11. Xendit kirim balik URL invoice *(roadmap)*
 12. User di-redirect ke halaman pembayaran Xendit *(roadmap)*
@@ -438,8 +508,10 @@ bagian Xendit/Mengantar masih roadmap (dijalankan dengan mock).
 
 ### Catatan Implementasi Penting
 - Langkah 3 & 7: operasi cookie via `src/lib/cart-client.ts`
+- Langkah 8: cek ongkir Mengantar via `src/lib/mengantar.ts` (`fetchShippingEstimate`), UI `ShippingOptions` *(sudah real)*
 - Langkah 9 & 22: data order via `src/lib/mock-db/orders.ts` (Supabase)
 - Langkah 10-12: logika Xendit di `src/lib/xendit/`, jangan di frontend *(roadmap)*
 - Langkah 14-20: semua terjadi di `src/app/api/webhooks/xendit/route.ts` *(roadmap)*
-- Langkah 16-17: logika Mengantar di `src/lib/mengantar/` *(roadmap)*
+- Langkah 16-17: booking/tracking kurir Mengantar (pakai `MENGANTAR_API_KEY`) *(roadmap)*
 - Langkah 19: pastikan cookie dihapus **hanya setelah** webhook dikonfirmasi sukses, bukan setelah redirect
+- Langkah 20: template email ada di `src/emails/order-confirmation.html` (preview `/dev/email-preview`); pengiriman email otomatis *(roadmap)*
