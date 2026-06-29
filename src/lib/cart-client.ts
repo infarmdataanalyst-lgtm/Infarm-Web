@@ -3,12 +3,14 @@
 // Dipakai oleh interaksi tombol (mis. "+ Keranjang") yang berjalan di komponen 'use client'.
 // Catatan: pembacaan keranjang dari Server Component nanti memakai cookies() di lib/cart.ts.
 
-import type { CartItem } from '@/types/cart'
+import type { CartItem, CheckoutPromoSnapshot } from '@/types/cart'
 
 // === Konstanta cookie ===
 const CART_COOKIE_NAME = 'infarm_cart'
 // Snapshot item yang dipilih user di keranjang untuk dibawa ke halaman checkout
 const CHECKOUT_COOKIE_NAME = 'infarm_checkout'
+// Snapshot promo/combo tercapai yang dibawa ke checkout (untuk diteruskan ke order nanti)
+const CHECKOUT_PROMO_COOKIE_NAME = 'infarm_checkout_promo'
 const CART_COOKIE_MAX_AGE = 60 * 60 * 24 * 7 // 7 hari (dalam detik)
 
 // Event global agar UI lain (mis. badge jumlah di navbar) bisa ikut update tanpa reload
@@ -91,6 +93,29 @@ export function addToCart(item: CartItem): CartItem[] {
   return cart
 }
 
+// Menambahkan paket/combo ke keranjang. Untuk tiap produk combo:
+// - bila belum ada di keranjang → ditambahkan dengan quantity & harga (alokasi) combo
+// - bila sudah ada → quantity DISESUAIKAN dengan quantity combo (bukan diakumulasi) + harga combo
+// Semua item ditandai comboId agar bisa dibedakan saat checkout. Mengembalikan keranjang terbaru.
+export function addComboToCart(
+  comboId: string,
+  items: { productId: string; quantity: number; price: number }[],
+): CartItem[] {
+  const cart = getCart()
+  for (const it of items) {
+    const existing = cart.find((c) => c.productId === it.productId)
+    if (existing) {
+      existing.quantity = it.quantity
+      existing.price = it.price
+      existing.comboId = comboId
+    } else {
+      cart.push({ productId: it.productId, quantity: it.quantity, price: it.price, comboId })
+    }
+  }
+  writeCart(cart)
+  return cart
+}
+
 // Mengubah jumlah (quantity) satu produk di keranjang. Jumlah < 1 akan menghapus item.
 // Mengembalikan keranjang terbaru.
 export function updateQuantity(productId: string, quantity: number): CartItem[] {
@@ -136,6 +161,27 @@ export function getCheckoutItems(): CartItem[] {
   return decodeItems(readRawCookie(CHECKOUT_COOKIE_NAME))
 }
 
+// === Snapshot promo/combo untuk checkout ===
+
+// Menyimpan ringkasan promo/combo yang tercapai saat menuju checkout (untuk diteruskan ke order nanti).
+export function setCheckoutPromo(snapshot: CheckoutPromoSnapshot): void {
+  if (typeof document === 'undefined') return
+  writeCookie(CHECKOUT_PROMO_COOKIE_NAME, snapshot)
+}
+
+// Membaca snapshot promo checkout. null bila belum ada.
+export function getCheckoutPromo(): CheckoutPromoSnapshot | null {
+  if (typeof document === 'undefined') return null
+  const raw = readRawCookie(CHECKOUT_PROMO_COOKIE_NAME)
+  if (!raw) return null
+  try {
+    const bytes = Uint8Array.from(atob(raw), (c) => c.charCodeAt(0))
+    return JSON.parse(new TextDecoder().decode(bytes)) as CheckoutPromoSnapshot
+  } catch {
+    return null
+  }
+}
+
 // Store useSyncExternalStore untuk item checkout (dibaca reaktif di halaman /checkout)
 let checkoutSnapshotCache: CartItem[] | null = null
 
@@ -167,10 +213,10 @@ function readRawCookie(name: string): string | null {
   return match ? match.split('=').slice(1).join('=') : null
 }
 
-// Menulis array item ke cookie sebagai base64 (string UTF-8 → bytes → biner → base64)
+// Menulis nilai JSON ke cookie sebagai base64 (string UTF-8 → bytes → biner → base64)
 // agar nilai JSON aman dari masalah parsing cookie di sebagian browser.
-function writeCookie(name: string, items: CartItem[]): void {
-  const bytes = new TextEncoder().encode(JSON.stringify(items))
+function writeCookie(name: string, value: unknown): void {
+  const bytes = new TextEncoder().encode(JSON.stringify(value))
   const binary = Array.from(bytes, (b) => String.fromCharCode(b)).join('')
   document.cookie = `${name}=${btoa(binary)}; path=/; max-age=${CART_COOKIE_MAX_AGE}; SameSite=Lax`
 }

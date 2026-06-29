@@ -4,12 +4,9 @@
 // Server Component — produk OMS dibaca dari Supabase; produk dummy lama dipakai sebagai fallback.
 
 import { notFound } from 'next/navigation'
-import {
-  getProductDetail,
-  getBundleSuggestion,
-  getRecentlyViewed,
-} from '@/lib/data/dummy-product-details'
-import { getProductById } from '@/lib/mock-db/products'
+import { getProductDetail, getRecentlyViewed } from '@/lib/data/dummy-product-details'
+import { getProductById, readProducts } from '@/lib/mock-db/products'
+import { readCombos } from '@/lib/mock-db/combos'
 import { getReviewsByProduct, getProductRatingSummary } from '@/lib/mock-db/reviews'
 import type { StoredProduct, ProductDetail, ProductReview } from '@/types/product'
 import ProductImageSlider from '@/components/product/ProductImageSlider'
@@ -69,7 +66,21 @@ export default async function ProductDetailPage({
   }
   if (!product) notFound()
 
-  const bundle = getBundleSuggestion(product)
+  // Paket combo REAL (Supabase) yang aktif, memuat produk ini, & semua produknya masih ada stok.
+  const [allCombos, allProducts] = await Promise.all([readCombos(), readProducts()])
+  const stockById: Record<string, number> = {}
+  const imageById: Record<string, string> = {}
+  for (const p of allProducts) {
+    stockById[p.id] = p.stock
+    imageById[p.id] = p.imageUrl
+  }
+  const productCombos = allCombos.filter(
+    (c) =>
+      c.isActive &&
+      c.items.some((it) => it.productId === product.id) &&
+      c.items.every((it) => (stockById[it.productId] ?? 0) > 0),
+  )
+
   const recentlyViewed = getRecentlyViewed(id)
 
   return (
@@ -81,8 +92,8 @@ export default async function ProductDetailPage({
       {/* 3 — Informasi utama: nama, harga, rating */}
       <ProductInfo product={product} />
 
-      {/* 4 — Rekomendasi paket kombo hemat (clickable) */}
-      {bundle && <BundleOffer bundle={bundle} />}
+      {/* 4 — Rekomendasi paket kombo hemat (real dari Supabase, clickable) */}
+      <BundleOffer combos={productCombos} imageById={imageById} />
 
       {/* 5 — Deskripsi / spesifikasi produk */}
       <ProductDescription description={product.description} />

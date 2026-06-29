@@ -47,12 +47,15 @@ Tandai jelas mana yang sudah ada vs masih rencana saat menulis kode.
 **Implementasi cookie keranjang (kondisi sekarang):**
 - Operasi keranjang dijalankan **sisi-klien** lewat `src/lib/cart-client.ts`
   (`document.cookie`, komponen `'use client'`, reaktif via `useSyncExternalStore`)
-- Dua cookie dipakai:
+- Tiga cookie dipakai:
   - `infarm_cart` — isi keranjang
   - `infarm_checkout` — snapshot item terpilih yang dibawa ke halaman `/checkout`
+  - `infarm_checkout_promo` — snapshot promo/combo tercapai saat menuju checkout
+    (tipe `CheckoutPromoSnapshot`, ditulis `setCheckoutPromo`; untuk diteruskan ke order nanti)
 - Nilai cookie di-encode **base64** dari JSON (`btoa`/`atob`) agar aman dari masalah parsing
-- Struktur data: array of `{ productId, quantity, price }` (tipe `CartItem` di `src/types/cart.ts`)
-- Jangan simpan data sensitif di cookie (hanya ID produk, quantity, price)
+- Struktur item: `{ productId, quantity, price, comboId? }` (tipe `CartItem` di `src/types/cart.ts`).
+  `comboId` terisi bila item ditambahkan sebagai bagian paket/combo dari keranjang.
+- Jangan simpan data sensitif di cookie (hanya ID produk, quantity, price, comboId)
 - **Rencana:** helper baca keranjang dari Server Component (`cookies()` dari `next/headers`)
   akan ditaruh di `src/lib/cart.ts` — belum dibuat.
 
@@ -137,39 +140,45 @@ src/
 │   ├── dev/email-preview/        # Preview template email (route handler, isi placeholder data contoh)
 │   ├── oms/                      # OMS / back office
 │   │   ├── login/page.tsx
-│   │   └── dashboard/            # dashboard, products (+upload), orders, reviews
+│   │   └── dashboard/            # dashboard, products (+upload), orders, reviews,
+│   │       │                     #   paket-combo (+baru, [id]/edit), promosi (+baru, [id]/edit)
 │   ├── api/                      # Route Handlers (runtime nodejs)
 │   │   ├── products/             # create | update | delete | list
 │   │   ├── orders/               # create | list | get | cancel (GET+PATCH)
 │   │   ├── reviews/              # create | list | reply | visibility
+│   │   ├── combos/              # create | update | delete | toggle | list | active (storefront)
+│   │   ├── promotions/          # create | update | delete | toggle | list | active (storefront)
 │   │   └── mengantar/address/search  # Proxy search alamat Mengantar (wilayah.id CORS-blocked → proxied)
 │   ├── layout.tsx                # Root layout (font, metadata)
 │   └── globals.css               # Tailwind v4 + @config tailwind.config.ts
 ├── components/
 │   ├── home/                     # Homepage (HeroSearchBar, dll)
 │   ├── product/                  # Kartu & detail produk
-│   ├── cart/                     # Komponen keranjang
+│   ├── cart/                     # Keranjang: CartPromoList, CartComboList, CartPaymentSummary, dll
 │   ├── checkout/                 # AddressForm, AddressSearchCombobox, ShippingOptions (bottom sheet
 │   │                             #   cek ongkir), PaymentModal, BottomSheet, OrderSummary, dll
 │   ├── order-cancellation/       # OrderCancellationView (client)
 │   ├── review/                   # Komponen review
 │   ├── track/                    # Komponen pelacakan
-│   ├── oms/                      # Sidebar, header, chart OMS
+│   ├── oms/                      # Sidebar, header, chart, ComboForm, PromotionForm
 │   └── ui/                       # Komponen UI generik (AppBar, dll)
 ├── lib/
-│   ├── cart-client.ts            # Helper keranjang sisi-klien (cookie base64)
+│   ├── cart-client.ts            # Helper keranjang sisi-klien (cookie base64) + addComboToCart + snapshot promo
+│   ├── promo-cart.ts             # Helper murni: progres/hadiah promo + relevansi & alokasi harga combo (keranjang)
 │   ├── format.ts                 # Util format (mis. rupiah)
 │   ├── phone.ts                  # Validasi & normalisasi no. telepon ID (checkout)
 │   ├── email.ts                  # Validasi & normalisasi email (checkout)
 │   ├── checkout-validation.ts    # Validasi field alamat → status tombol "Bayar Sekarang"
+│   ├── combo-validation.ts       # Validasi server payload combo
+│   ├── promotion-validation.ts   # Validasi server payload promo
 │   ├── mengantar.ts              # Client: search alamat (via proxy) + cek ongkir (fetch langsung)
 │   ├── order-token.ts            # Token HMAC tautan pembatalan (server-only)
 │   ├── supabase/                 # Client Supabase: server.ts (admin/SSR) + browser.ts
-│   ├── mock-db/                  # Akses data Supabase: products, orders, reviews (server only)
+│   ├── mock-db/                  # Akses data Supabase: products, orders, reviews, combos, promotions (server only)
 │   └── data/                     # Dummy data tampilan pelengkap (dummy-*.ts)
 ├── emails/                       # Template HTML email (order-confirmation.html) — placeholder {{...}}
 ├── hooks/                        # use-debounce.ts, dll
-└── types/                        # product.ts, cart.ts, order.ts
+└── types/                        # product.ts, cart.ts, order.ts, combo.ts, promotion.ts
 
 # Root: next.config.ts, tailwind.config.ts, eslint.config.mjs, postcss.config.mjs,
 #       tsconfig.json, AGENTS.md, CLAUDE.md, .env.local (tidak di-commit)
@@ -326,6 +335,47 @@ Section Alamat Pengiriman divalidasi di client sebelum request order dikirim. Lo
   (migration `supabase/migrations/20260624120000_add_orders_customer_email.sql`). `saveOrder` punya
   fallback aman bila kolom belum di-migrate (cek kode error `PGRST204`/`42703`).
 
+## Paket & Combo dan Promosi (OMS + Storefront)
+
+Dua fitur OMS yang sudah Supabase + tampil real di storefront keranjang. Pola data sama seperti
+produk/order: tipe di `src/types/*`, akses di `src/lib/mock-db/*` (server-only via `createAdminClient`),
+validasi server di `src/lib/*-validation.ts`, UI lewat API Routes (BUKAN server action).
+
+### Paket & Combo
+- **Tabel**: `product_combos` + `product_combo_items` (FK `combo_id` ON DELETE CASCADE).
+  Item menyimpan **snapshot** `name`/`unit_price` (tanpa FK ke products). Harga normal TIDAK
+  disimpan — dihitung dari `calcNormalPrice(items)` (`src/types/combo.ts`).
+- **OMS**: `/oms/dashboard/paket-combo` (daftar), `.../baru`, `.../[id]/edit` (form bersama `ComboForm`).
+  Data via `src/lib/mock-db/combos.ts` + API `/api/combos/{create,update,delete,toggle,list}`.
+
+### Promosi
+- **Tabel**: `promotions` (kolom: `type`, `min_purchase`, `free_product_id`/`free_product_name`
+  [snapshot], `discount_value`, `start_at`/`end_at`, `progress_message`, `is_active`).
+  `type` ∈ `free_shipping | free_product | discount_nominal | discount_percent`.
+  Status **Kedaluwarsa TIDAK disimpan** — dihitung dari `end_at` (`isPromotionExpired`).
+- **OMS**: `/oms/dashboard/promosi` (daftar + filter Aktif/Nonaktif/Kedaluwarsa, badge "Stok Habis"
+  bila produk hadiah free_product stoknya 0), `.../baru`, `.../[id]/edit` (form bersama `PromotionForm`,
+  detail hadiah kondisional + preview pesan `{sisa}`). Data via `src/lib/mock-db/promotions.ts` +
+  API `/api/promotions/{create,update,delete,toggle,list}`.
+
+### Tampil di keranjang (storefront)
+- Endpoint **publik server-filtered**: `GET /api/promotions/active` (hanya `is_active` & belum
+  kedaluwarsa, urut `min_purchase` ASC) dan `GET /api/combos/active` (hanya `is_active`).
+  Query Supabase tetap server-only di route handler → tidak ter-expose ke client.
+- Logika promo/combo keranjang murni di `src/lib/promo-cart.ts`:
+  - `computePromoProgress` (progress bar + pesan `{sisa}` → rupiah; tercapai → pesan sukses)
+  - `computePromoRewards` (agregasi hadiah tercapai: free_shipping → ongkir GRATIS,
+    discount_nominal/percent → kurangi total, free_product → produk hadiah)
+  - `selectRelevantCombos` (combo aktif, semua produk stok > 0, minimal 1 produk di keranjang,
+    bukan yang semua produknya sudah di keranjang; urut relevansi, maks 3)
+  - `allocateComboPrices` (bagi `combo_price` ke tiap produk; total ≈ harga combo)
+- UI: `CartPromoList`, `CartComboList`, `CartPaymentSummary`. Tombol "Tambah Paket ke Keranjang"
+  memakai `addComboToCart` (`cart-client.ts`) — produk yang sudah ada quantity-nya DISESUAIKAN,
+  harga = harga combo, item ditandai `comboId`.
+- Saat menuju checkout, snapshot promo/combo disimpan ke cookie `infarm_checkout_promo`
+  (`setCheckoutPromo`, tipe `CheckoutPromoSnapshot`) untuk diteruskan ke order nanti *(wiring ke
+  tabel orders masih roadmap)*.
+
 ## Roadmap Integrasi (target arsitektur — belum diimplementasi)
 
 ### Xendit (Payment Gateway)
@@ -343,6 +393,7 @@ Section Alamat Pengiriman divalidasi di client sebelum request order dikirim. Lo
 - [x] Halaman katalog produk (`/products`)
 - [x] Halaman detail produk (`/produk/[id]`)
 - [x] Halaman keranjang (`/keranjang`) — data dari cookie
+- [x] Promo & paket combo REAL di keranjang (dari Supabase via `/api/{promotions,combos}/active`)
 - [x] Halaman guest checkout (`/checkout` + `/checkout/success`)
 - [x] Halaman review produk (`/review`)
 - [x] Halaman lacak pesanan (`/track`)
@@ -359,6 +410,8 @@ Section Alamat Pengiriman divalidasi di client sebelum request order dikirim. Lo
 - [x] Manajemen produk (list, upload/create, update, delete) via API + Supabase
 - [x] Manajemen order (`/oms/dashboard/orders`)
 - [x] Manajemen review (`/oms/dashboard/reviews`) — create/list/reply/visibility
+- [x] Manajemen Paket & Combo (`/oms/dashboard/paket-combo`) — create/list/update/delete/toggle
+- [x] Manajemen Promosi (`/oms/dashboard/promosi`) — create/list/update/delete/toggle
 - [ ] Autentikasi admin real (Supabase Auth)
 - [ ] Manajemen inventori / stok real (alokasi stok saat checkout)
 
@@ -480,11 +533,12 @@ resi masih roadmap (dijalankan dengan mock).
 3. User klik "Tambah ke Keranjang" → disimpan ke cookie (`infarm_cart`) via `cart-client.ts`
 4. Angka keranjang di navbar update (+1) tanpa reload (custom event)
 5. User akses `/keranjang` → render item berdasarkan ID di cookie
-6. Halaman keranjang tampilkan total item + kalkulasi total harga
+6. Keranjang tampilkan: progres promo aktif (`/api/promotions/active`), rekomendasi combo relevan
+   (`/api/combos/active`), dan ringkasan pembayaran (subtotal − diskon promo, ongkir GRATIS bila tercapai)
 
 ### Alur Checkout & Pembayaran
 7. User klik "Checkout" / "Beli Langsung" → item terpilih disimpan ke cookie `infarm_checkout`
-   (keduanya WAJIB `setCheckoutItems` agar produk di checkout benar)
+   (keduanya WAJIB `setCheckoutItems`); snapshot promo/combo tercapai → `infarm_checkout_promo`
 8. Halaman `/checkout`: form Nama, No. HP, Email, Alamat (search Mengantar → `destination_id`),
    lalu **cek ongkir otomatis** (pilih kurir → `selected_courier`, ongkir masuk total), Metode
    Pembayaran. Semua field & kurir divalidasi client; tombol "Bayar Sekarang" aktif hanya bila valid.
