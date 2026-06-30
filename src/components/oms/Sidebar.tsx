@@ -9,7 +9,7 @@
 import { useEffect } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import {
   LayoutDashboard,
   Package,
@@ -18,10 +18,12 @@ import {
   ShoppingCart,
   Star,
   HelpCircle,
+  LogOut,
   X,
   type LucideIcon,
 } from 'lucide-react'
 import { useSidebar } from './SidebarContext'
+import { clearOmsSession } from '@/lib/oms-auth'
 
 // === Definisi Menu Navigasi ===
 type NavItem = {
@@ -101,11 +103,19 @@ export default function Sidebar() {
 
 // === Isi sidebar (dipakai bersama oleh versi desktop & drawer mobile) ===
 function SidebarContent({ pathname }: { pathname: string }) {
+  const router = useRouter()
+
   // Menentukan item aktif: cocok persis, atau pathname berada di bawah href tersebut.
   // Dashboard (/oms/dashboard) hanya aktif saat persis, agar tidak ikut menyala di sub-rute.
   function isActive(href: string): boolean {
     if (href === '/oms/dashboard') return pathname === href
     return pathname === href || pathname.startsWith(`${href}/`)
+  }
+
+  // Logout: hapus cookie sesi lalu kembali ke login (replace agar tak bisa "back" ke dashboard).
+  function handleLogout() {
+    clearOmsSession()
+    router.replace('/oms/login')
   }
 
   return (
@@ -149,8 +159,8 @@ function SidebarContent({ pathname }: { pathname: string }) {
         })}
       </nav>
 
-      {/* === Pusat Bantuan (bawah) === */}
-      <div className="border-t border-emerald-900 p-3">
+      {/* === Pusat Bantuan + Keluar (bawah) === */}
+      <div className="space-y-1 border-t border-emerald-900 p-3">
         <Link
           href="/oms/dashboard/help"
           className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-emerald-200/80 transition-colors hover:bg-emerald-900 hover:text-white"
@@ -158,6 +168,14 @@ function SidebarContent({ pathname }: { pathname: string }) {
           <HelpCircle className="h-5 w-5 flex-none" />
           Pusat Bantuan
         </Link>
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-emerald-200/80 transition-colors hover:bg-emerald-900 hover:text-white"
+        >
+          <LogOut className="h-5 w-5 flex-none" />
+          Keluar
+        </button>
       </div>
     </>
   )

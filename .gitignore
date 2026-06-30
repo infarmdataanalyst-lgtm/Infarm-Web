@@ -44,5 +44,6 @@ next-env.d.ts
 src/data/orders.json
 src/data/products.json
 
-# skill lokal Claude Code (khusus mesin ini, tidak dibagikan ke repo)
+# skill + setting lokal Claude Code (khusus mesin ini, tidak dibagikan ke repo)
 .claude/skills/
+.claude/settings.local.json

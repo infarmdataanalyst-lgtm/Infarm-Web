@@ -91,8 +91,8 @@ Tandai jelas mana yang sudah ada vs masih rencana saat menulis kode.
 
 - **Wajib baca dulu**: `AGENTS.md` di root + dokumentasi di `node_modules/next/dist/docs/`
   sebelum menyentuh routing, caching, atau network boundary
-- **Middleware dihapus** — gunakan `proxy.ts` di root project, bukan `middleware.ts`
-  (belum ada di project ini; buat bila perlu network boundary)
+- **Middleware dihapus** — gunakan `proxy.ts`, bukan `middleware.ts`. **Sudah ada** di
+  `src/proxy.ts` (sejajar `app/`): guard area `/oms/dashboard/*` (lihat "Auth Guard OMS")
 - **Cache Components** — gunakan `use cache` dan PPR, bukan `revalidate` lama
 - **Turbopack aktif by default** — tidak perlu flag `--turbo`
 
@@ -187,7 +187,8 @@ src/
 ```
 
 > Folder berikut **belum ada** dan baru dibuat saat integrasi terkait dikerjakan:
-> `src/lib/xendit/`, `src/app/api/webhooks/`, `proxy.ts`, `src/lib/cart.ts`, `src/lib/fetcher.ts`.
+> `src/lib/xendit/`, `src/app/api/webhooks/`, `src/lib/cart.ts`, `src/lib/fetcher.ts`.
+> (`src/proxy.ts` **sudah ada** — guard auth OMS.)
 > Catatan: logika Mengantar memakai **file** `src/lib/mengantar.ts` (bukan folder `src/lib/mengantar/`).
 
 ---
@@ -275,6 +276,21 @@ Tulis komentar untuk memudahkan maintenance. Ikuti aturan berikut:
   CLI belum dipasang di mesin ini → migration dijalankan **manual via Dashboard → SQL Editor**
   (lihat `supabase/README.md`), berurutan sesuai timestamp
 - Regenerate types (saat CLI tersedia): `supabase gen types typescript --local > src/types/supabase.ts`
+
+## Auth Guard OMS (sementara, cookie-based)
+
+Akses `/oms/dashboard/*` dilindungi guard di **`src/proxy.ts`** (Next.js 16 Proxy, pengganti
+middleware). **Bukan auth real** — penanda sesi sementara sampai Supabase Auth dipasang.
+
+- **Cookie penanda**: `oms_session` (helper terpusat di `src/lib/oms-auth.ts`:
+  `OMS_SESSION_COOKIE`, `setOmsSession`/`clearOmsSession` [client], `sanitizeOmsRedirect`).
+- **Guard** (`proxy.ts`, `matcher: '/oms/dashboard/:path*'`): tanpa cookie → `307` ke
+  `/oms/login?redirect=<tujuan asli>`. Halaman `/oms/login` tidak ikut diproteksi.
+- **Redirect-after-login**: login sukses → `setOmsSession(rememberMe)` + baca `?redirect`,
+  divalidasi `sanitizeOmsRedirect` (cegah open redirect — hanya path `/oms/dashboard*`),
+  lalu `router.replace(target)`.
+- **Logout**: tombol "Keluar" di `Sidebar` → `clearOmsSession()` + `router.replace('/oms/login')`.
+- **Roadmap**: ganti cookie penanda ini dengan sesi Supabase Auth (cek sesi di `proxy.ts`).
 
 ## Pembatalan Pesanan Guest (token-protected)
 
@@ -405,7 +421,7 @@ validasi server di `src/lib/*-validation.ts`, UI lewat API Routes (BUKAN server 
 - [ ] Mengantar: booking kurir & tracking resi otomatis — masih roadmap
 
 ### OMS (Back Office)
-- [x] Halaman login OMS (`/oms/login`) — belum terhubung auth real
+- [x] Halaman login OMS (`/oms/login`) — auth dummy + guard cookie (`proxy.ts`), Supabase Auth menyusul
 - [x] Dashboard OMS (`/oms/dashboard`)
 - [x] Manajemen produk (list, upload/create, update, delete) via API + Supabase
 - [x] Manajemen order (`/oms/dashboard/orders`)
