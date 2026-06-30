@@ -43,3 +43,6 @@ next-env.d.ts
 # mock database lokal (rapid prototyping) — jangan ikut ke Git/Vercel
 src/data/orders.json
 src/data/products.json
+
+# skill lokal Claude Code (khusus mesin ini, tidak dibagikan ke repo)
+.claude/skills/
