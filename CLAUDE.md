@@ -80,6 +80,8 @@ Tandai jelas mana yang sudah ada vs masih rencana saat menulis kode.
 ### Integrasi yang sudah terpasang (sebagian)
 - **Logistik / Pengiriman**: Mengantar — **search alamat + cek ongkir di checkout sudah jalan**
   (client-side via `src/lib/mengantar.ts`). Tracking/booking kurir masih roadmap.
+- **Analytics**: Google Analytics 4 via `@next/third-parties` — `<GoogleAnalytics>` di
+  `src/app/layout.tsx` (render kondisional bila `NEXT_PUBLIC_GA_ID` terisi).
 
 ### Roadmap integrasi (belum terpasang)
 - **Auth admin real**: Supabase Auth (client sudah ada, login OMS belum terhubung)
@@ -458,6 +460,11 @@ ORDER_CANCEL_SECRET              # server-only, opsional (HMAC token pembatalan;
 # Sudah dipakai sekarang (Mengantar — cek ongkir)
 NEXT_PUBLIC_MENGANTAR_ORIGIN_ID  # PUBLIC/client; _id kelurahan toko (asal pengiriman). WAJIB di-set
                                  # di Vercel juga (var NEXT_PUBLIC_* di-inline saat build → perlu redeploy)
+
+# Sudah dipakai sekarang (Google Analytics 4)
+NEXT_PUBLIC_GA_ID                # PUBLIC/client; Measurement ID GA4 (format G-XXXXXXXXXX). Dipasang di
+                                 # src/app/layout.tsx via <GoogleAnalytics> (@next/third-parties). Render
+                                 # kondisional — GA hanya jalan bila terisi. Set di Vercel juga + redeploy.
 
 # Roadmap (belum dipakai)
 XENDIT_SECRET_KEY                # server-only
