@@ -19,7 +19,7 @@ import StickyBuyBar from '@/components/product/StickyBuyBar'
 import CartToast from '@/components/product/CartToast'
 
 // Membangun ProductDetail dari produk Supabase (StoredProduct) + ulasan & rating real.
-// Galeri memakai satu foto produk (multi-foto menyusul saat ada Supabase Storage).
+// Galeri memakai kolom images (maks 9); fallback ke foto utama bila galeri kosong.
 function toProductDetail(
   p: StoredProduct,
   reviews: ProductReview[],
@@ -33,7 +33,7 @@ function toProductDetail(
     imageUrl: p.imageUrl,
     category: p.category,
     badge: p.badge,
-    images: [p.imageUrl],
+    images: p.images.length > 0 ? p.images.slice(0, 9) : [p.imageUrl],
     rating: summary.rating,
     reviewCount: summary.reviewCount,
     description: p.description?.trim() || 'Belum ada deskripsi untuk produk ini.',
@@ -85,28 +85,45 @@ export default async function ProductDetailPage({
 
   return (
     // pt-14: ruang untuk AppBar fixed (h-14). pb-24: ruang agar konten tak tertutup bilah aksi bawah.
-    <main className="flex flex-1 flex-col gap-2 bg-brand-surface pt-14 pb-24">
-      {/* 2 — Slider foto produk (maks 9) + indikator dots */}
-      <ProductImageSlider images={product.images} alt={product.name} />
+    <main className="flex flex-1 flex-col bg-brand-surface pt-14 pb-24">
+      {/* Container terpusat: full-bleed di mobile, dibatasi lebar di desktop */}
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-2 lg:gap-4 lg:px-6 lg:py-4">
+        {/* Bagian atas: 2 kolom sejajar di desktop (foto kiri, info kanan),
+            stack vertikal di mobile (foto+thumbnail di atas, info di bawah) */}
+        <div className="flex flex-col gap-2 lg:grid lg:grid-cols-2 lg:items-start lg:gap-6">
+          {/* 2 — Slider foto produk (maks 9) + thumbnail + dots */}
+          <div className="lg:sticky lg:top-16 lg:overflow-hidden lg:rounded-xl">
+            <ProductImageSlider images={product.images} alt={product.name} />
+          </div>
 
-      {/* 3 — Informasi utama: nama, harga, rating */}
-      <ProductInfo product={product} />
+          {/* 3 — Informasi utama + deskripsi: mengisi kolom kanan di desktop */}
+          <div className="flex flex-col gap-2">
+            <div className="lg:overflow-hidden lg:rounded-xl">
+              <ProductInfo product={product} />
+            </div>
+            {/* 5 — Deskripsi / spesifikasi produk (di bawah info, kolom kanan desktop) */}
+            <div className="lg:overflow-hidden lg:rounded-xl">
+              <ProductDescription description={product.description} />
+            </div>
+          </div>
+        </div>
 
-      {/* 4 — Rekomendasi paket kombo hemat (real dari Supabase, clickable) */}
-      <BundleOffer combos={productCombos} imageById={imageById} />
+        {/* Bagian bawah: tetap tumpuk vertikal di semua ukuran layar */}
+        <div className="flex flex-col gap-2 lg:gap-4">
+          {/* 4 — Rekomendasi paket kombo hemat (real dari Supabase, clickable) */}
+          <BundleOffer combos={productCombos} imageById={imageById} />
 
-      {/* 5 — Deskripsi / spesifikasi produk */}
-      <ProductDescription description={product.description} />
+          {/* 6 — "Kamu Sempat Lihat Ini" */}
+          <RecentlyViewed products={recentlyViewed} />
 
-      {/* 6 — "Kamu Sempat Lihat Ini" */}
-      <RecentlyViewed products={recentlyViewed} />
-
-      {/* 7 — Ulasan pembeli: skor ringkas, filter, daftar komentar */}
-      <ProductReviews
-        rating={product.rating}
-        reviewCount={product.reviewCount}
-        reviews={product.reviews}
-      />
+          {/* 7 — Ulasan pembeli: skor ringkas, filter, daftar komentar */}
+          <ProductReviews
+            rating={product.rating}
+            reviewCount={product.reviewCount}
+            reviews={product.reviews}
+          />
+        </div>
+      </div>
 
       {/* 8 + 9 — Bilah aksi bawah (sticky) + logika simpan ke cookie keranjang */}
       <StickyBuyBar productId={product.id} price={product.promoPrice} />

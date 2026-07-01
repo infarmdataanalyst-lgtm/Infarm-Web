@@ -27,7 +27,12 @@ function isValidPayload(body: unknown): body is CreateProductInput {
     typeof b.price === 'number' &&
     b.price >= 0 &&
     typeof b.stock === 'number' &&
-    b.stock >= 0
+    b.stock >= 0 &&
+    // images opsional: bila ada wajib array string maksimal 9
+    (b.images === undefined ||
+      (Array.isArray(b.images) &&
+        b.images.length <= 9 &&
+        b.images.every((s) => typeof s === 'string')))
   )
 }
 

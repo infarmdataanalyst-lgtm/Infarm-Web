@@ -18,8 +18,11 @@ export default function ProductInfo({ product }: { product: ProductDetail }) {
 
   return (
     <section className="bg-white px-4 py-4">
+      {/* === Nama produk === */}
+      <h1 className="text-base font-medium leading-snug text-zinc-800">{name}</h1>
+
       {/* === Harga === */}
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+      <div className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1">
         {/* Harga jual efektif (promoPrice) — paling menonjol */}
         <span className="text-2xl font-bold text-red-500">{formatRupiah(promoPrice)}</span>
         {/* Harga asli (coret) */}
@@ -33,9 +36,6 @@ export default function ProductInfo({ product }: { product: ProductDetail }) {
           </span>
         )}
       </div>
-
-      {/* === Nama produk === */}
-      <h1 className="mt-2 text-base font-medium leading-snug text-zinc-800">{name}</h1>
 
       {/* === Rating ringkas: bintang + angka rata-rata + jumlah ulasan === */}
       <div className="mt-2 flex items-center gap-2">

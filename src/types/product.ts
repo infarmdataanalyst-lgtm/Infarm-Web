@@ -26,6 +26,7 @@ export type StoredProduct = Product & {
   sku: string
   stock: number
   description?: string
+  images: string[] // galeri foto (maks 9); images[0] = foto utama (mirror imageUrl)
   archived?: boolean // true = tetap tersimpan di OMS tapi disembunyikan dari ecommerce
   createdAt: string // ISO date, untuk urutan terbaru
 }
@@ -39,7 +40,8 @@ export type CreateProductInput = {
   price: number
   stock: number
   description?: string
-  imageUrl?: string
+  imageUrl?: string // foto utama; bila kosong diambil dari images[0]
+  images?: string[] // galeri foto (maks 9), data URL base64 atau URL
 }
 
 // Satu ulasan pembeli untuk halaman detail produk

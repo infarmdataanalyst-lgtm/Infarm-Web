@@ -23,7 +23,8 @@ type Product = {
   slug: ProductCategory | '' // slug kategori (untuk form edit)
   price: number
   stock: number
-  image: string
+  image: string // foto utama (thumbnail tabel) = images[0]
+  images?: string[] // galeri foto (maks 9)
   persisted: boolean // true bila tersimpan di mock DB (bisa diedit/dihapus permanen)
   archived: boolean // true = disembunyikan dari ecommerce, tetap ada di OMS
 }
@@ -35,11 +36,12 @@ type EditForm = {
   slug: ProductCategory | ''
   price: number | ''
   stock: number | ''
-  image: string
+  images: string[] // galeri foto (maks 9); images[0] = foto utama
 }
 
 const LOW_STOCK_THRESHOLD = 10 // di bawah angka ini dianggap stok menipis
 const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB per foto
+const MAX_IMAGES = 9 // maksimal foto per produk (sesuai slider detail produk)
 
 // Pilihan rentang waktu untuk kolom "Terjual". days=null berarti sepanjang waktu.
 const SALES_RANGES: { label: string; days: number | null }[] = [
@@ -69,6 +71,7 @@ function mapStored(p: StoredProduct): Product {
     price: p.promoPrice,
     stock: p.stock,
     image: p.imageUrl,
+    images: p.images,
     persisted: true,
     archived: p.archived ?? false,
   }
@@ -150,13 +153,20 @@ export default function ProductsPage() {
   function openEdit(product: Product) {
     setEditTarget(product)
     setEditError(null)
+    // Galeri untuk diedit: pakai images bila ada, fallback ke foto utama tunggal
+    const gallery =
+      product.images && product.images.length > 0
+        ? product.images
+        : product.image
+          ? [product.image]
+          : []
     setForm({
       name: product.name,
       sku: product.sku,
       slug: product.slug,
       price: product.price,
       stock: product.stock,
-      image: product.image,
+      images: gallery,
     })
   }
 
@@ -166,22 +176,43 @@ export default function ProductsPage() {
     setEditError(null)
   }
 
-  // Membaca foto baru yang dipilih → preview (data URL)
+  // Menambahkan satu/lebih foto ke galeri (data URL), dibatasi maks 9
   function handleEditImage(fileList: FileList | null) {
-    const file = fileList?.[0]
-    if (!file) return
-    if (!file.type.startsWith('image/')) {
-      setEditError('File yang dipilih bukan gambar.')
+    if (!fileList || !form) return
+    const available = MAX_IMAGES - form.images.length
+    if (available <= 0) {
+      setEditError(`Maksimal ${MAX_IMAGES} foto.`)
       return
     }
-    if (file.size > MAX_FILE_SIZE) {
-      setEditError('Ukuran foto melebihi 5MB.')
-      return
-    }
-    setEditError(null)
-    const reader = new FileReader()
-    reader.onload = () => setForm((f) => (f ? { ...f, image: reader.result as string } : f))
-    reader.readAsDataURL(file)
+    // Ambil sebanyak slot tersisa; sisanya diabaikan
+    Array.from(fileList)
+      .slice(0, available)
+      .forEach((file) => {
+        if (!file.type.startsWith('image/')) {
+          setEditError('File yang dipilih bukan gambar.')
+          return
+        }
+        if (file.size > MAX_FILE_SIZE) {
+          setEditError('Ukuran foto melebihi 5MB.')
+          return
+        }
+        setEditError(null)
+        const reader = new FileReader()
+        reader.onload = () =>
+          setForm((f) =>
+            f
+              ? f.images.length >= MAX_IMAGES
+                ? f
+                : { ...f, images: [...f.images, reader.result as string] }
+              : f,
+          )
+        reader.readAsDataURL(file)
+      })
+  }
+
+  // Menghapus satu foto dari galeri berdasarkan indeks
+  function removeEditImage(index: number) {
+    setForm((f) => (f ? { ...f, images: f.images.filter((_, i) => i !== index) } : f))
   }
 
   async function handleSaveEdit() {
@@ -212,7 +243,8 @@ export default function ProductsPage() {
             category: form.slug,
             price,
             stock,
-            imageUrl: form.image,
+            imageUrl: form.images[0],
+            images: form.images,
           }),
         })
         if (!res.ok) throw new Error()
@@ -237,7 +269,8 @@ export default function ProductsPage() {
                 categoryLabel: getCategoryLabel(form.slug) ?? p.categoryLabel,
                 price,
                 stock,
-                image: form.image,
+                image: form.images[0] ?? p.image,
+                images: form.images,
               }
             : p,
         ),
@@ -454,15 +487,52 @@ export default function ProductsPage() {
               {editTarget.persisted ? 'Perubahan disimpan permanen & tampil di ecommerce.' : 'Produk contoh — perubahan hanya sementara di layar.'}
             </p>
 
-            {/* Foto */}
-            <div className="mt-4 flex items-center gap-4">
-              <div className="relative h-20 w-20 flex-none overflow-hidden rounded-lg border border-gray-200 bg-gray-100">
-                <Image src={form.image} alt={form.name} fill unoptimized sizes="80px" className="object-cover" />
-              </div>
-              <label className="cursor-pointer rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-600 transition hover:bg-gray-50">
-                Ganti Foto
-                <input type="file" accept="image/*" className="hidden" onChange={(e) => { handleEditImage(e.target.files); e.target.value = '' }} />
+            {/* Galeri foto (maks 9). Foto pertama = foto utama. */}
+            <div className="mt-4">
+              <label className="mb-1.5 block text-sm font-medium text-gray-700">
+                Foto Produk <span className="font-normal text-gray-400">(maks {MAX_IMAGES}, foto pertama = utama)</span>
               </label>
+              <div className="grid grid-cols-4 gap-3 sm:grid-cols-5">
+                {form.images.map((src, index) => (
+                  <div
+                    key={index}
+                    className="group relative aspect-square overflow-hidden rounded-lg border border-gray-200 bg-gray-100"
+                  >
+                    <Image src={src} alt={`Foto ${index + 1}`} fill unoptimized sizes="80px" className="object-cover" />
+                    {/* Penanda foto utama */}
+                    {index === 0 && (
+                      <span className="absolute left-1 top-1 rounded-full bg-emerald-600 px-1.5 py-0.5 text-[9px] font-semibold text-white">
+                        Utama
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => removeEditImage(index)}
+                      aria-label={`Hapus foto ${index + 1}`}
+                      className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-gray-900/60 text-xs leading-none text-white opacity-0 transition group-hover:opacity-100"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+                {/* Tombol tambah foto (muncul selama < 9 foto) */}
+                {form.images.length < MAX_IMAGES && (
+                  <label className="flex aspect-square cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 bg-gray-50 text-gray-400 transition hover:border-emerald-400 hover:bg-emerald-50/40">
+                    <span className="text-2xl leading-none">+</span>
+                    <span className="mt-0.5 text-[10px] font-medium">Tambah</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => {
+                        handleEditImage(e.target.files)
+                        e.target.value = ''
+                      }}
+                    />
+                  </label>
+                )}
+              </div>
             </div>
 
             {/* Nama & SKU */}
