@@ -41,6 +41,14 @@ type EditForm = {
 const LOW_STOCK_THRESHOLD = 10 // di bawah angka ini dianggap stok menipis
 const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB per foto
 
+// Pilihan rentang waktu untuk kolom "Terjual". days=null berarti sepanjang waktu.
+const SALES_RANGES: { label: string; days: number | null }[] = [
+  { label: '7 Hari', days: 7 },
+  { label: '30 Hari', days: 30 },
+  { label: '90 Hari', days: 90 },
+  { label: 'Semua', days: null },
+]
+
 // === Dummy Data Produk (contoh bawaan, tidak tersimpan di DB) ===
 const INITIAL_PRODUCTS: Product[] = [
   { id: 'PRD-001', name: 'Benih Cabai Rawit Unggul', sku: 'BNH-CBR-01', categoryLabel: 'Benih Premium', slug: 'benih-premium', price: 18000, stock: 124, image: '/images/product-placeholder.png', persisted: false, archived: false },
@@ -89,6 +97,10 @@ export default function ProductsPage() {
   const [deleteTarget, setDeleteTarget] = useState<Product | null>(null)
   const [deleting, setDeleting] = useState(false)
 
+  // Data terjual per produk (peta productId → unit terjual) + rentang waktu terpilih
+  const [soldCounts, setSoldCounts] = useState<Record<string, number>>({})
+  const [rangeDays, setRangeDays] = useState<number | null>(30) // default 30 hari terakhir
+
   // Ambil produk hasil input OMS (mock DB) lalu tampilkan di depan daftar dummy
   useEffect(() => {
     let active = true
@@ -103,6 +115,27 @@ export default function ProductsPage() {
       active = false
     }
   }, [])
+
+  // Ambil jumlah terjual per produk sesuai rentang waktu terpilih
+  useEffect(() => {
+    let active = true
+    const params = new URLSearchParams()
+    // days=null → sepanjang waktu (tanpa filter from)
+    if (rangeDays != null) {
+      const from = new Date(Date.now() - rangeDays * 86_400_000).toISOString()
+      params.set('from', from)
+    }
+    fetch(`/api/products/sales-count?${params.toString()}`)
+      .then((res) => res.json())
+      .then((data: { counts?: Record<string, number> }) => {
+        if (!active) return
+        setSoldCounts(data.counts ?? {})
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [rangeDays])
 
   // === Ringkasan stok ===
   const summary = useMemo(() => {
@@ -289,8 +322,29 @@ export default function ProductsPage() {
           <SummaryCard label="Stok Habis" value={`${summary.outOfStock} Produk`} valueClass="text-red-600" accentClass="bg-red-50 text-red-600" icon={<EmptyIcon />} />
         </section>
 
+        {/* === Filter Rentang Penjualan (kolom Terjual) === */}
+        <div className="mt-6 flex flex-wrap items-center gap-2">
+          <span className="text-sm font-medium text-gray-600">Terjual dalam:</span>
+          <div className="inline-flex rounded-lg border border-gray-200 bg-white p-0.5">
+            {SALES_RANGES.map((range) => (
+              <button
+                key={range.label}
+                type="button"
+                onClick={() => setRangeDays(range.days)}
+                className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                  rangeDays === range.days
+                    ? 'bg-emerald-700 text-white'
+                    : 'text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                {range.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* === Tabel Produk === */}
-        <section className="mt-6 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+        <section className="mt-4 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead className="border-b border-gray-200 bg-gray-50 text-xs font-semibold uppercase tracking-wide text-gray-500">
@@ -300,6 +354,7 @@ export default function ProductsPage() {
                   <th className="px-5 py-3.5">Kategori</th>
                   <th className="px-5 py-3.5">Harga</th>
                   <th className="px-5 py-3.5">Sisa Stok</th>
+                  <th className="px-5 py-3.5">Terjual</th>
                   <th className="px-5 py-3.5 text-right">Aksi</th>
                 </tr>
               </thead>
@@ -343,6 +398,13 @@ export default function ProductsPage() {
                           </button>
                         )}
                       </div>
+                    </td>
+                    {/* Terjual dalam rentang waktu terpilih */}
+                    <td className={`px-5 py-4 ${product.archived ? 'opacity-60' : ''}`}>
+                      <span className="font-semibold text-gray-900">
+                        {(soldCounts[product.id] ?? 0).toLocaleString('id-ID')}
+                      </span>
+                      <span className="ml-1 text-xs text-gray-400">pcs</span>
                     </td>
                     {/* Aksi: Edit + Arsip + Hapus */}
                     <td className="px-5 py-4">
