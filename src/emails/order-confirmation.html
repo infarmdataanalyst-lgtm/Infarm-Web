@@ -59,16 +59,40 @@
           <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" align="center" class="container"
             style="width:100%; max-width:600px; margin:0 auto; background-color:#ffffff;">
 
-            <!-- ============ HEADER: hijau brand full-width + lengkungan bawah + logo ============ -->
-            <!-- Arc responsif via longhand radius: horizontal 50% (melar ikut lebar), vertikal 44px (kedalaman tetap).
-                 Catatan: Outlook desktop mengabaikan border-radius → tampil persegi (fallback wajar). -->
+            <!-- ============ HEADER: pita / ribbon hijau brand + logo ============ -->
+            <!-- Bar hijau penuh + dua "ekor" segitiga hijau lebih gelap (#2f8a27) di sudut bawah
+                 kiri & kanan → kesan pita/banner. Segitiga dibuat via border-trick dan dibungkus
+                 kondisi non-MSO: Outlook desktop menampilkan bar persegi tanpa ekor (fallback wajar). -->
             <tr>
-              <td align="center" valign="middle" width="100%" bgcolor="#46b33c"
-                style="width:100%; background-color:#46b33c; padding:40px 24px 48px; text-align:center; border-bottom-left-radius:50% 44px; border-bottom-right-radius:50% 44px;">
-                <!-- Header tetap teks "Infarm" (serif putih), di tengah -->
-                <span style="font-family:'Merriweather', Georgia, 'Times New Roman', serif; font-size:32px; font-weight:700; color:#ffffff; letter-spacing:1px;">
-                  Infarm
-                </span>
+              <td align="center" style="padding:0;" bgcolor="#ffffff">
+
+                <!-- Bar utama pita -->
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td align="center" valign="middle" width="100%" bgcolor="#46b33c"
+                      style="width:100%; background-color:#46b33c; padding:38px 24px; text-align:center;">
+                      <!-- Header tetap teks "Infarm" (serif putih), di tengah -->
+                      <span style="font-family:'Merriweather', Georgia, 'Times New Roman', serif; font-size:32px; font-weight:700; color:#ffffff; letter-spacing:1px;">
+                        Infarm
+                      </span>
+                    </td>
+                  </tr>
+                </table>
+
+                <!-- Ekor pita: segitiga menghadap bawah di sudut kiri & kanan (disembunyikan di Outlook) -->
+                <!--[if !mso]><!-->
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:0; line-height:0;">
+                  <tr>
+                    <td align="left" width="50%" style="padding:0; font-size:0; line-height:0;">
+                      <div style="display:inline-block; width:0; height:0; border-left:24px solid transparent; border-right:24px solid transparent; border-top:20px solid #2f8a27; line-height:0; font-size:0;"></div>
+                    </td>
+                    <td align="right" width="50%" style="padding:0; font-size:0; line-height:0;">
+                      <div style="display:inline-block; width:0; height:0; border-left:24px solid transparent; border-right:24px solid transparent; border-top:20px solid #2f8a27; line-height:0; font-size:0;"></div>
+                    </td>
+                  </tr>
+                </table>
+                <!--<![endif]-->
+
               </td>
             </tr>
 
