@@ -1,0 +1,266 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<!--
+  src/emails/order-confirmation.html
+  Template email konfirmasi pesanan Infarm — fluid di desktop, rapi di mobile.
+  - Tabel terluar width=100%; kontainer konten width:100%; max-width:600px; margin:0 auto.
+  - Inline CSS pada elemen inti (kompatibel Gmail/Outlook/Mail iOS).
+  - Palet: background halaman putih (#ffffff), hijau brand #46b33c (header & tombol tracking).
+  - Placeholder backend: {{logo_url}}, {{order_id}}, {{item_list}}, {{total_price}}, {{tracking_url}}, {{cancel_url}}.
+-->
+<html xmlns="http://www.w3.org/1999/xhtml" lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="color-scheme" content="light only" />
+    <meta name="supported-color-schemes" content="light only" />
+    <title>Konfirmasi Pesanan Infarm</title>
+
+    <!-- Web font (didukung sebagian klien: Apple Mail, dll). Ada fallback serif/sans di tiap elemen. -->
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Merriweather:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <!--[if mso]>
+      <style type="text/css">
+        body, table, td, a { font-family: Arial, sans-serif !important; }
+      </style>
+    <![endif]-->
+
+    <!-- Progressive enhancement (banyak klien membuang <style>; layout inti tetap jalan via inline). -->
+    <style type="text/css">
+      body { margin: 0; padding: 0; width: 100% !important; background-color: #ffffff; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+      img { border: 0; line-height: 100%; outline: none; text-decoration: none; -ms-interpolation-mode: bicubic; }
+      table { border-collapse: collapse !important; }
+      a { text-decoration: none; }
+
+      @media screen and (max-width: 600px) {
+        .container { width: 100% !important; }
+        .px { padding-left: 22px !important; padding-right: 22px !important; }
+        .h1 { font-size: 22px !important; line-height: 30px !important; }
+        .btn { width: 100% !important; }
+      }
+    </style>
+  </head>
+
+  <body style="margin:0; padding:0; background-color:#ffffff;">
+    <!-- Preheader tersembunyi (teks preview di inbox) -->
+    <div style="display:none; max-height:0; overflow:hidden; mso-hide:all; font-size:1px; line-height:1px; color:#ffffff;">
+      Pesananmu sedang kami siapkan! Lacak pesanan {{order_id}} sekarang.
+    </div>
+
+    <!-- ============ Tabel terluar: fluid 100%, background putih ============ -->
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="background-color:#ffffff;">
+      <tr>
+        <td align="center" style="padding:0;">
+
+          <!-- Kontainer konten: melebar proporsional s/d 600px di desktop, mengecil di mobile, dipusatkan -->
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" align="center" class="container"
+            style="width:100%; max-width:600px; margin:0 auto; background-color:#ffffff;">
+
+            <!-- ============ HEADER: hijau brand full-width + lengkungan bawah + logo ============ -->
+            <!-- Arc responsif via longhand radius: horizontal 50% (melar ikut lebar), vertikal 44px (kedalaman tetap).
+                 Catatan: Outlook desktop mengabaikan border-radius → tampil persegi (fallback wajar). -->
+            <tr>
+              <td align="center" valign="middle" width="100%" bgcolor="#46b33c"
+                style="width:100%; background-color:#46b33c; padding:40px 24px 48px; text-align:center; border-bottom-left-radius:50% 44px; border-bottom-right-radius:50% 44px;">
+                <!-- Header tetap teks "Infarm" (serif putih), di tengah -->
+                <span style="font-family:'Merriweather', Georgia, 'Times New Roman', serif; font-size:32px; font-weight:700; color:#ffffff; letter-spacing:1px;">
+                  Infarm
+                </span>
+              </td>
+            </tr>
+
+            <!-- ============ LOGO INFARM (di tengah, tepat di bawah header) ============ -->
+            <tr>
+              <td align="center" style="padding:32px 30px 8px;">
+                <!-- Logo dibaca dari public/images/email/logo-infarm.png (lihat README folder tsb). -->
+                <img src="{{logo_url}}" width="200" alt="Infarm"
+                  style="display:block; margin:0 auto; width:200px; max-width:55%; height:auto; border:0;" />
+              </td>
+            </tr>
+
+            <!-- ============ GREETING ============ -->
+            <tr>
+              <td class="px" style="padding:16px 30px 8px;">
+                <h1 class="h1" style="margin:0; font-family:'Merriweather', Georgia, serif; font-size:26px; line-height:34px; font-weight:700; color:#2B2B2B;">
+                  Hai Sobat Infarm, pesananmu sedang kami siapkan!
+                </h1>
+              </td>
+            </tr>
+            <tr>
+              <td class="px" style="padding:8px 30px 24px;">
+                <p style="margin:0; font-family:'DM Sans', 'Helvetica Neue', Arial, sans-serif; font-size:15px; line-height:24px; color:#6B6B6B;">
+                  Terima kasih telah berbelanja di Infarm. Tim kami sedang memilihkan
+                  produk terbaik dan segar khusus untukmu, lalu mengemasnya dengan hati-hati
+                  sebelum dikirim ke alamatmu.
+                </p>
+              </td>
+            </tr>
+
+            <!-- ============ NOMOR PESANAN (kotak beige, border dashed) ============ -->
+            <tr>
+              <td class="px" style="padding:0 30px 28px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+                  style="background-color:#F2EFE4; border:1px dashed #C9C2A8; border-radius:12px;">
+                  <tr>
+                    <td align="center" style="padding:16px 20px;">
+                      <span style="font-family:'DM Sans', Arial, sans-serif; font-size:13px; color:#8A8266;">Nomor Pesanan</span><br />
+                      <span style="font-family:'Merriweather', Georgia, serif; font-size:20px; font-weight:700; color:#46b33c; letter-spacing:0.5px;">
+                        #{{order_id}}
+                      </span>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <!-- ============ TOMBOL TRACKING (bulletproof button) ============ -->
+            <tr>
+              <td align="center" class="px" style="padding:0 30px 32px;">
+                <!--[if mso]>
+                  <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word"
+                    href="{{tracking_url}}" style="height:50px; v-text-anchor:middle; width:540px;" arcsize="50%" stroke="f" fillcolor="#46b33c">
+                    <w:anchorlock/>
+                    <center style="color:#ffffff; font-family:Arial,sans-serif; font-size:16px; font-weight:bold;">Lacak Pesanan Kamu</center>
+                  </v:roundrect>
+                <![endif]-->
+                <!--[if !mso]><!-->
+                <a href="{{tracking_url}}" class="btn" target="_blank"
+                  style="display:inline-block; width:100%; max-width:540px; box-sizing:border-box; background-color:#46b33c; color:#ffffff; font-family:'DM Sans', Arial, sans-serif; font-size:16px; font-weight:700; line-height:50px; text-align:center; text-decoration:none; border-radius:25px;">
+                  Lacak Pesanan Kamu
+                </a>
+                <!--<![endif]-->
+              </td>
+            </tr>
+
+            <!-- ============ RINGKASAN PESANAN ============ -->
+            <tr>
+              <td class="px" style="padding:0 30px 8px;">
+                <p style="margin:0 0 12px; font-family:'Merriweather', Georgia, serif; font-size:16px; font-weight:700; color:#2B2B2B;">
+                  Ringkasan Pesanan
+                </p>
+
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+                  style="font-family:'DM Sans', Arial, sans-serif; font-size:14px; color:#3A3A3A;">
+
+                  <!-- {{item_list}} di-render backend menjadi baris-baris produk.
+                       Contoh satu baris:
+                       <tr>
+                         <td style="padding:8px 0; color:#3A3A3A;">1x Pupuk Nutrisi Cair</td>
+                         <td align="right" style="padding:8px 0; color:#3A3A3A;">Rp25.000</td>
+                       </tr>
+                  -->
+                  {{item_list}}
+
+                  <!-- Garis pemisah -->
+                  <tr>
+                    <td colspan="2" style="padding:6px 0;">
+                      <div style="border-top:1px dashed #DEDEDE; font-size:0; line-height:0;">&nbsp;</div>
+                    </td>
+                  </tr>
+
+                  <!-- Total Terbayar -->
+                  <tr>
+                    <td style="padding:8px 0; font-size:15px; font-weight:700; color:#2B2B2B;">Total Terbayar</td>
+                    <td align="right" style="padding:8px 0; font-family:'Merriweather', Georgia, serif; font-size:18px; font-weight:700; color:#46b33c;">
+                      {{total_price}}
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <!-- Spacer -->
+            <tr><td style="padding:8px 0;">&nbsp;</td></tr>
+
+            <!-- ============ SEKSI PEMBATALAN (latar abu-abu sangat muda) ============ -->
+            <tr>
+              <td style="padding:0;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#F7F7F5" style="background-color:#F7F7F5;">
+                  <tr>
+                    <td class="px" align="center" style="padding:26px 30px;">
+                      <p style="margin:0 0 4px; font-family:'Merriweather', Georgia, serif; font-size:16px; font-weight:700; color:#2B2B2B;">
+                        Salah memilih produk, atau berubah pikiran?
+                      </p>
+                      <p style="margin:0 0 18px; font-family:'DM Sans', Arial, sans-serif; font-size:14px; line-height:22px; color:#7A7A7A;">
+                        Kamu masih bisa membatalkan pesanan ini selama belum masuk tahap pengemasan.
+                      </p>
+
+                      <!--[if mso]>
+                        <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word"
+                          href="{{cancel_url}}" style="height:46px; v-text-anchor:middle; width:240px;" arcsize="50%" stroke="f" fillcolor="#D63D4D">
+                          <w:anchorlock/>
+                          <center style="color:#ffffff; font-family:Arial,sans-serif; font-size:15px; font-weight:bold;">Batalkan Pesanan Ini</center>
+                        </v:roundrect>
+                      <![endif]-->
+                      <!--[if !mso]><!-->
+                      <a href="{{cancel_url}}" target="_blank"
+                        style="display:inline-block; background-color:#D63D4D; color:#ffffff; font-family:'DM Sans', Arial, sans-serif; font-size:15px; font-weight:700; line-height:46px; padding:0 28px; text-align:center; text-decoration:none; border-radius:23px;">
+                        Batalkan Pesanan Ini
+                      </a>
+                      <!--<![endif]-->
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <!-- ============ FOOTER ============ -->
+            <tr>
+              <td class="px" align="center" style="padding:28px 30px 8px;">
+                <p style="margin:0; font-family:'DM Sans', Arial, sans-serif; font-size:12px; line-height:18px; color:#9A9A9A;">
+                  *Pembatalan pesanan hanya dapat dilakukan selama pesanan belum masuk tahap
+                  pengemasan atau penyerahan ke kurir. Setelah itu, pesanan tidak dapat dibatalkan secara mandiri.
+                </p>
+              </td>
+            </tr>
+
+            <!-- Ikon sosial media -->
+            <tr>
+              <td align="center" style="padding:14px 30px 4px;">
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <!-- TODO: ganti src ikon dengan aset asli (PNG 36x36). -->
+                    <td style="padding:0 8px;">
+                      <a href="https://infarm.id" target="_blank">
+                        <img src="https://placehold.co/36x36/46b33c/ffffff?text=W" width="36" height="36" alt="Website" style="display:block; border-radius:50%;" />
+                      </a>
+                    </td>
+                    <td style="padding:0 8px;">
+                      <a href="https://wa.me/" target="_blank">
+                        <img src="https://placehold.co/36x36/46b33c/ffffff?text=C" width="36" height="36" alt="Chat" style="display:block; border-radius:50%;" />
+                      </a>
+                    </td>
+                    <td style="padding:0 8px;">
+                      <a href="mailto:halo@infarm.id" target="_blank">
+                        <img src="https://placehold.co/36x36/46b33c/ffffff?text=@" width="36" height="36" alt="Email" style="display:block; border-radius:50%;" />
+                      </a>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <!-- Alamat & hak cipta -->
+            <tr>
+              <td align="center" style="padding:12px 30px 32px;">
+                <p style="margin:0 0 4px; font-family:'DM Sans', Arial, sans-serif; font-size:12px; line-height:18px; color:#9A9A9A;">
+                  Infarm &middot; Surabaya, Jawa Timur, Indonesia
+                </p>
+                <p style="margin:0; font-family:'DM Sans', Arial, sans-serif; font-size:12px; line-height:18px; color:#B5B5B5;">
+                  &copy; 2024 Infarm. Seluruh hak cipta dilindungi.
+                </p>
+              </td>
+            </tr>
+
+          </table>
+          <!-- /Kontainer -->
+
+        </td>
+      </tr>
+    </table>
+    <!-- /Tabel terluar -->
+  </body>
+</html>
