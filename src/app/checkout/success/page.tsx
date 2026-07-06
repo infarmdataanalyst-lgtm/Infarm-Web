@@ -6,7 +6,7 @@
 import Link from 'next/link'
 import Image from 'next/image'
 import { X, Leaf, Clock, MapPin, Star, Ban } from 'lucide-react'
-import { readOrders } from '@/lib/mock-db/orders'
+import { getOrderByOrderId } from '@/lib/mock-db/orders'
 import { generateCancelToken } from '@/lib/order-token'
 import { formatRupiah } from '@/lib/format'
 import type { Order } from '@/types/order'
@@ -49,17 +49,16 @@ function estimasiTiba(iso: string): string {
 export default async function CheckoutSuccessPage({
   searchParams,
 }: {
-  searchParams: Promise<{ order?: string }>
+  searchParams: Promise<{ invoice?: string; order?: string }>
 }) {
-  const { order: orderParam } = await searchParams
+  // Utamakan ?invoice= (baru); ?order= tetap didukung untuk tautan lama
+  const { invoice, order: orderParam } = await searchParams
+  const key = invoice ?? orderParam
 
-  // Cari order asli dari mock DB; fallback ke contoh bila tidak ketemu
-  let order: Order | undefined
-  if (orderParam) {
-    const orders = await readOrders()
-    order = orders.find(
-      (o) => o.orderId === orderParam || `#${o.orderId}` === orderParam,
-    )
+  // Ambil order asli dari Supabase berdasarkan nomor_invoice; fallback ke contoh bila tak ketemu
+  let order: Order | null = null
+  if (key) {
+    order = await getOrderByOrderId(key.replace(/^#/, ''))
   }
   const data = order ?? FALLBACK_ORDER
   const invoiceLabel = data.orderId.startsWith('#') ? data.orderId : `#${data.orderId}`

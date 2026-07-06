@@ -145,6 +145,19 @@ function writeCart(cart: CartItem[]): void {
   window.dispatchEvent(new CustomEvent(CART_UPDATED_EVENT))
 }
 
+// Mengosongkan keranjang + snapshot checkout & promo (dipanggil setelah order berhasil dibuat).
+// Menghapus ketiga cookie lalu memberi tahu UI (badge navbar, halaman checkout) agar ikut kosong.
+export function clearCart(): void {
+  if (typeof document === 'undefined') return
+  for (const name of [CART_COOKIE_NAME, CHECKOUT_COOKIE_NAME, CHECKOUT_PROMO_COOKIE_NAME]) {
+    document.cookie = `${name}=; path=/; max-age=0; SameSite=Lax`
+  }
+  snapshotCache = null
+  // checkoutSnapshotCache diinvalidasi oleh handler subscribeCheckout saat event di-dispatch
+  window.dispatchEvent(new CustomEvent(CART_UPDATED_EVENT))
+  window.dispatchEvent(new CustomEvent(CHECKOUT_UPDATED_EVENT))
+}
+
 // === Item Checkout (snapshot pilihan dari keranjang) ===
 
 // Menyimpan item yang dipilih user di keranjang ke cookie checkout, dipakai halaman /checkout.
