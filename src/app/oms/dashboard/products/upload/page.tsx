@@ -2,28 +2,37 @@
 
 // src/app/oms/dashboard/products/upload/page.tsx
 // Halaman Upload Produk Baru OMS Infarm.
-// Menyimpan produk ke mock DB via POST /api/products/create → langsung tampil di ecommerce.
-// Sidebar disediakan otomatis oleh layout /oms/dashboard.
-// TODO: ganti POST mock DB dengan insert Supabase setelah OMS dibangun.
+// Menyimpan produk ke Supabase via POST /api/products/create → langsung tampil di ecommerce.
+// Validasi manual (pola project, tanpa lib) via src/lib/product-validation.ts.
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import { ChevronRight, UploadCloud, Check, X } from 'lucide-react'
 import OmsHeader from '@/components/oms/OmsHeader'
 import { PRODUCT_CATEGORIES } from '@/lib/data/categories'
+import { formatRupiah } from '@/lib/format'
 import type { ProductCategory } from '@/types/product'
+import {
+  validateProductForm,
+  validateImageFile,
+  validateSkuFormat,
+  PRODUCT_FIELD_ORDER,
+  MAX_PRODUCT_IMAGES,
+  ACCEPTED_IMAGE_ACCEPT,
+  DESC_MAX,
+  NAME_MAX,
+  type ProductFieldErrors,
+  type ProductFieldKey,
+} from '@/lib/product-validation'
 
-// Gambar yang diunggah, disimpan sebagai data URL (base64) untuk preview & dikirim ke mock DB
+// Gambar yang diunggah, disimpan sebagai data URL (base64) untuk preview & dikirim ke DB
 type UploadedImage = {
   id: string
   src: string // data URL base64
   name: string
 }
-
-const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB per file
-const MAX_IMAGES = 9 // maksimal foto per produk (sesuai slider detail produk)
 
 export default function UploadProductPage() {
   const router = useRouter()
@@ -40,77 +49,162 @@ export default function UploadProductPage() {
   const [images, setImages] = useState<UploadedImage[]>([])
   const [uploadNotice, setUploadNotice] = useState<string | null>(null)
 
+  // === State validasi ===
+  // touched: field yang sudah disentuh (blur) → error baru ditampilkan setelah disentuh
+  const [touched, setTouched] = useState<Partial<Record<ProductFieldKey, boolean>>>({})
+  const [skuChecking, setSkuChecking] = useState(false) // sedang cek duplikat SKU ke server
+  const [skuDuplicate, setSkuDuplicate] = useState(false) // hasil cek duplikat
+
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Membaca file gambar yang dipilih/di-drop → validasi → buat preview (data URL)
+  // === Error live (dihitung ulang tiap render dari nilai form) ===
+  const liveErrors: ProductFieldErrors = useMemo(
+    () =>
+      validateProductForm({
+        sku,
+        name,
+        category,
+        price,
+        stock,
+        description,
+        imageCount: images.length,
+      }),
+    [sku, name, category, price, stock, description, images.length],
+  )
+
+  // Error SKU gabungan: format dulu, lalu duplikat
+  const skuError = liveErrors.sku ?? (skuDuplicate ? 'SKU sudah digunakan produk lain' : undefined)
+
+  // Form valid bila tak ada error apa pun, tidak duplikat, dan tidak sedang cek SKU
+  const isFormValid =
+    Object.keys(liveErrors).length === 0 && !skuDuplicate && !skuChecking
+
+  function markTouched(field: ProductFieldKey) {
+    setTouched((t) => ({ ...t, [field]: true }))
+  }
+
+  // Tampilkan error field hanya bila sudah disentuh
+  function shownError(field: ProductFieldKey): string | undefined {
+    if (!touched[field]) return undefined
+    return field === 'sku' ? skuError : liveErrors[field]
+  }
+
+  // === Handler gambar ===
+
+  // Membaca file gambar terpilih → validasi tipe/ukuran → preview (data URL), maks 9 foto
   function handleFiles(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) return
+    markTouched('images')
     setUploadNotice(null)
 
-    // Sudah penuh → tolak semua
-    if (images.length >= MAX_IMAGES) {
-      setUploadNotice(`Maksimal ${MAX_IMAGES} foto. Hapus salah satu untuk menambah.`)
+    if (images.length >= MAX_PRODUCT_IMAGES) {
+      setUploadNotice(`Maksimal ${MAX_PRODUCT_IMAGES} gambar per produk.`)
       return
     }
 
-    const available = MAX_IMAGES - images.length // sisa slot foto
+    const available = MAX_PRODUCT_IMAGES - images.length
     let added = 0
     let capped = false
-    Array.from(fileList).forEach((file) => {
-      if (!file.type.startsWith('image/')) {
-        setUploadNotice(`"${file.name}" bukan file gambar dan dilewati.`)
-        return
+    for (const file of Array.from(fileList)) {
+      // Validasi tipe & ukuran per file
+      const fileError = validateImageFile(file)
+      if (fileError) {
+        setUploadNotice(`"${file.name}": ${fileError}`)
+        continue
       }
-      if (file.size > MAX_FILE_SIZE) {
-        setUploadNotice(`"${file.name}" melebihi 5MB dan dilewati.`)
-        return
-      }
-      // Lewati bila slot 9 foto sudah penuh
       if (added >= available) {
         capped = true
-        return
+        continue
       }
       added += 1
       const reader = new FileReader()
       reader.onload = () => {
         const src = reader.result as string
-        // Guard tambahan: jangan melebihi 9 walau ada race antar-reader
         setImages((prev) =>
-          prev.length >= MAX_IMAGES
+          prev.length >= MAX_PRODUCT_IMAGES
             ? prev
             : [...prev, { id: `${file.name}-${file.size}-${prev.length}`, src, name: file.name }],
         )
       }
       reader.readAsDataURL(file)
-    })
+    }
 
     if (added > 0) {
       setUploadNotice(
         capped
-          ? `${added} foto ditambahkan (batas ${MAX_IMAGES} foto tercapai).`
+          ? `${added} foto ditambahkan (batas ${MAX_PRODUCT_IMAGES} foto tercapai).`
           : `${added} foto berhasil ditambahkan.`,
       )
-    } else if (capped) {
-      setUploadNotice(`Maksimal ${MAX_IMAGES} foto tercapai.`)
     }
   }
 
-  // Menghapus satu gambar dari preview
   function removeImage(id: string) {
     setImages((prev) => prev.filter((img) => img.id !== id))
+    markTouched('images')
   }
 
-  // Validasi sederhana lalu kirim produk ke mock DB; sukses → kembali ke daftar produk
-  async function handleSave() {
-    setError(null)
-
-    if (!sku.trim() || !name.trim()) {
-      setError('SKU dan Nama Produk wajib diisi.')
+  // === Cek duplikat SKU (onBlur, server) ===
+  async function checkSkuDuplicate() {
+    markTouched('sku')
+    // Lewati bila format SKU belum valid (percuma query)
+    if (validateSkuFormat(sku)) {
+      setSkuDuplicate(false)
       return
     }
-    if (!category) {
-      setError('Silakan pilih kategori produk.')
+    setSkuChecking(true)
+    try {
+      const res = await fetch(`/api/products/check-sku?sku=${encodeURIComponent(sku.trim())}`)
+      const data = (await res.json()) as { exists?: boolean }
+      setSkuDuplicate(data.exists === true)
+    } catch {
+      setSkuDuplicate(false) // jangan blok bila cek gagal; DB tetap jaga UNIQUE
+    } finally {
+      setSkuChecking(false)
+    }
+  }
+
+  // === Handler input angka (blok non-digit) ===
+  function handlePriceChange(raw: string) {
+    const digits = raw.replace(/\D/g, '')
+    setPrice(digits === '' ? '' : Number(digits))
+  }
+  function handleStockChange(raw: string) {
+    const digits = raw.replace(/\D/g, '')
+    setStock(digits === '' ? '' : Number(digits))
+  }
+
+  // === Submit ===
+  async function handleSave() {
+    setError(null)
+    // Tandai semua field tersentuh agar seluruh error tampil
+    setTouched({
+      sku: true,
+      name: true,
+      category: true,
+      price: true,
+      stock: true,
+      description: true,
+      images: true,
+    })
+
+    // Validasi ulang seluruh field + status duplikat SKU
+    const errors = validateProductForm({
+      sku,
+      name,
+      category,
+      price,
+      stock,
+      description,
+      imageCount: images.length,
+    })
+
+    // Scroll ke field bermasalah pertama (termasuk duplikat SKU)
+    const firstBad =
+      PRODUCT_FIELD_ORDER.find((k) => errors[k]) ?? (skuDuplicate ? 'sku' : undefined)
+    if (firstBad || skuDuplicate) {
+      const el = document.getElementById(`pf-${firstBad ?? 'sku'}`)
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
       return
     }
 
@@ -125,15 +219,18 @@ export default function UploadProductPage() {
           category,
           price: Number(price) || 0,
           stock: Number(stock) || 0,
-          description: description.trim() || undefined,
-          // Gambar pertama = gambar utama (data URL base64); kosong → pakai placeholder
+          description: description.trim(),
           imageUrl: images[0]?.src,
-          // Seluruh galeri (maks 9) → tampil sebagai thumbnail di halaman detail produk
           images: images.map((img) => img.src),
         }),
       })
       if (!res.ok) throw new Error('save failed')
-      // Produk tersimpan → kembali ke daftar produk OMS (yang juga membaca mock DB)
+      // Sukses → kembali ke daftar produk (tandai sukses untuk toast di halaman daftar)
+      try {
+        sessionStorage.setItem('oms_product_saved', '1')
+      } catch {
+        // sessionStorage bisa gagal (mode privat) — abaikan, redirect tetap jalan
+      }
       router.push('/oms/dashboard/products')
     } catch {
       setError('Gagal menyimpan produk. Silakan coba lagi.')
@@ -172,33 +269,58 @@ export default function UploadProductPage() {
               <h3 className="text-base font-bold text-gray-900">Informasi Dasar</h3>
 
               <div className="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-2">
-                <Field label="SKU Produk">
-                  <input
-                    type="text"
-                    value={sku}
-                    onChange={(e) => setSku(e.target.value)}
-                    placeholder="Contoh: INF-SM-001"
-                    className={inputClass}
-                  />
-                </Field>
-                <Field label="Nama Produk">
-                  <input
-                    type="text"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="Contoh: Media Tanam Organik Super"
-                    className={inputClass}
-                  />
-                </Field>
+                {/* SKU */}
+                <div id="pf-sku">
+                  <Field label="SKU Produk">
+                    <input
+                      type="text"
+                      value={sku}
+                      onChange={(e) => setSku(e.target.value)}
+                      onBlur={checkSkuDuplicate}
+                      placeholder="Contoh: INF-SM-001"
+                      className={inputClass(!!shownError('sku'))}
+                      aria-invalid={!!shownError('sku')}
+                    />
+                  </Field>
+                  {skuChecking && <p className="mt-1 text-xs text-gray-400">Memeriksa SKU…</p>}
+                  <FieldError message={shownError('sku')} />
+                </div>
+
+                {/* Nama Produk */}
+                <div id="pf-name">
+                  <Field label="Nama Produk">
+                    <input
+                      type="text"
+                      value={name}
+                      maxLength={NAME_MAX}
+                      onChange={(e) => setName(e.target.value)}
+                      onBlur={() => markTouched('name')}
+                      placeholder="Contoh: Media Tanam Organik Super"
+                      className={inputClass(!!shownError('name'))}
+                      aria-invalid={!!shownError('name')}
+                    />
+                  </Field>
+                  <div className="mt-1 flex items-center justify-between">
+                    <FieldError message={shownError('name')} />
+                    <span className="ml-auto text-xs text-gray-400">
+                      {name.length}/{NAME_MAX}
+                    </span>
+                  </div>
+                </div>
               </div>
 
-              {/* Kategori — menentukan pengelompokan produk di ecommerce */}
-              <div className="mt-5">
+              {/* Kategori */}
+              <div id="pf-category" className="mt-5">
                 <Field label="Kategori Produk">
                   <select
                     value={category}
-                    onChange={(e) => setCategory(e.target.value as ProductCategory)}
-                    className={inputClass}
+                    onChange={(e) => {
+                      setCategory(e.target.value as ProductCategory)
+                      markTouched('category')
+                    }}
+                    onBlur={() => markTouched('category')}
+                    className={inputClass(!!shownError('category'))}
+                    aria-invalid={!!shownError('category')}
                   >
                     <option value="" disabled>
                       Pilih kategori…
@@ -210,58 +332,84 @@ export default function UploadProductPage() {
                     ))}
                   </select>
                 </Field>
+                <FieldError message={shownError('category')} />
               </div>
 
               <div className="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-2">
-                <Field label="Harga">
-                  <div className="relative">
-                    <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center border-r border-gray-200 px-3 text-sm font-medium text-gray-500">
-                      Rp
-                    </span>
+                {/* Harga */}
+                <div id="pf-price">
+                  <Field label="Harga">
+                    <div className="relative">
+                      <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center border-r border-gray-200 px-3 text-sm font-medium text-gray-500">
+                        Rp
+                      </span>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={price}
+                        onChange={(e) => handlePriceChange(e.target.value)}
+                        onBlur={() => markTouched('price')}
+                        placeholder="0"
+                        className={`${inputClass(!!shownError('price'))} pl-12`}
+                        aria-invalid={!!shownError('price')}
+                      />
+                    </div>
+                  </Field>
+                  {/* Preview format Rupiah saat nilai valid */}
+                  {price !== '' && !shownError('price') && (
+                    <p className="mt-1 text-xs font-medium text-emerald-700">
+                      {formatRupiah(Number(price))}
+                    </p>
+                  )}
+                  <FieldError message={shownError('price')} />
+                </div>
+
+                {/* Stok */}
+                <div id="pf-stock">
+                  <Field label="Stok Tersedia">
                     <input
-                      type="number"
-                      min={0}
-                      value={price}
-                      onChange={(e) =>
-                        setPrice(e.target.value === '' ? '' : Math.max(0, Number(e.target.value)))
-                      }
+                      type="text"
+                      inputMode="numeric"
+                      value={stock}
+                      onChange={(e) => handleStockChange(e.target.value)}
+                      onBlur={() => markTouched('stock')}
                       placeholder="0"
-                      className={`${inputClass} pl-12`}
+                      className={inputClass(!!shownError('stock'))}
+                      aria-invalid={!!shownError('stock')}
                     />
-                  </div>
-                </Field>
-                <Field label="Stok Tersedia">
-                  <input
-                    type="number"
-                    min={0}
-                    value={stock}
-                    onChange={(e) =>
-                      setStock(e.target.value === '' ? '' : Math.max(0, Number(e.target.value)))
-                    }
-                    placeholder="0"
-                    className={inputClass}
-                  />
-                </Field>
+                  </Field>
+                  <FieldError message={shownError('stock')} />
+                </div>
               </div>
 
-              <div className="mt-5">
+              {/* Deskripsi */}
+              <div id="pf-description" className="mt-5">
                 <Field label="Deskripsi Produk">
                   <textarea
                     rows={5}
                     value={description}
+                    maxLength={DESC_MAX}
                     onChange={(e) => setDescription(e.target.value)}
-                    placeholder="Jelaskan spesifikasi produk: komposisi media (sekam, kompos, cocopeat), volume kemasan, manfaat untuk pertumbuhan akar, anjuran pemakaian, serta informasi garansi mutu & kebijakan retur jika kemasan rusak saat diterima."
-                    className={`${inputClass} resize-y leading-relaxed`}
+                    onBlur={() => markTouched('description')}
+                    placeholder="Jelaskan spesifikasi produk: komposisi, volume kemasan, manfaat, anjuran pemakaian, serta garansi mutu & kebijakan retur."
+                    className={`${inputClass(!!shownError('description'))} resize-y leading-relaxed`}
+                    aria-invalid={!!shownError('description')}
                   />
                 </Field>
+                <div className="mt-1 flex items-center justify-between">
+                  <FieldError message={shownError('description')} />
+                  <span className="ml-auto text-xs text-gray-400">
+                    {description.length}/{DESC_MAX}
+                  </span>
+                </div>
               </div>
             </section>
 
             {/* --- Seksi 2: Media Produk --- */}
-            <section className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+            <section id="pf-images" className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
               <h3 className="text-base font-bold text-gray-900">Media Produk</h3>
 
-              {/* Kotak Drag & Drop — menangkap file via klik atau drop */}
+              {/* Kotak Drag & Drop */}
               <label
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={(e) => {
@@ -277,26 +425,25 @@ export default function UploadProductPage() {
                   Tarik dan lepas gambar di sini
                 </span>
                 <span className="mt-1 text-xs text-gray-400">
-                  atau klik untuk memilih file · Maksimal {MAX_IMAGES} foto · 5MB per file
+                  atau klik untuk memilih file · JPG/PNG/WEBP · Maksimal {MAX_PRODUCT_IMAGES} foto · 2MB per file
                 </span>
                 <input
                   type="file"
-                  accept="image/*"
+                  accept={ACCEPTED_IMAGE_ACCEPT}
                   multiple
                   className="hidden"
                   onChange={(e) => {
                     handleFiles(e.target.files)
-                    e.target.value = '' // reset agar file sama bisa dipilih ulang
+                    e.target.value = ''
                   }}
                 />
               </label>
 
-              {/* Notifikasi upload (berhasil / dilewati) */}
               {uploadNotice && (
                 <p className="mt-3 text-xs font-medium text-emerald-700">{uploadNotice}</p>
               )}
 
-              {/* Area Preview gambar yang benar-benar diunggah */}
+              {/* Preview gambar */}
               {images.length > 0 ? (
                 <div className="mt-4 grid grid-cols-3 gap-4 sm:grid-cols-4">
                   {images.map((img, index) => (
@@ -312,7 +459,6 @@ export default function UploadProductPage() {
                         sizes="120px"
                         className="object-cover"
                       />
-                      {/* Gambar pertama = gambar utama */}
                       {index === 0 && (
                         <span className="absolute left-1.5 top-1.5 flex items-center gap-1 rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-semibold text-white">
                           <Check className="h-3 w-3" />
@@ -335,6 +481,7 @@ export default function UploadProductPage() {
                   Belum ada gambar. Gambar pertama akan dijadikan gambar utama produk.
                 </p>
               )}
+              <FieldError message={shownError('images')} />
             </section>
           </div>
         </div>
@@ -343,7 +490,6 @@ export default function UploadProductPage() {
       {/* === Footer Sticky === */}
       <footer className="fixed inset-x-0 bottom-0 z-20 border-t border-gray-200 bg-white px-6 py-3.5 md:left-64">
         <div className="mx-auto flex max-w-3xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          {/* Pesan error / status */}
           {error ? (
             <p className="text-xs font-medium text-red-600">{error}</p>
           ) : (
@@ -362,10 +508,10 @@ export default function UploadProductPage() {
             <button
               type="button"
               onClick={handleSave}
-              disabled={saving}
-              className="rounded-lg bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-70"
+              disabled={saving || !isFormValid}
+              className="rounded-lg bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {saving ? 'Menyimpan…' : 'Simpan & Upload ke e-commerce'}
+              {saving ? 'Menyimpan…' : 'Simpan Produk'}
             </button>
           </div>
         </div>
@@ -376,23 +522,25 @@ export default function UploadProductPage() {
 
 // === Sub-komponen & Helper ===
 
-// Kelas dasar input agar konsisten di seluruh form
-const inputClass =
-  'w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100'
+// Kelas input; border merah saat error
+function inputClass(hasError: boolean): string {
+  const base =
+    'w-full rounded-lg border bg-white px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 outline-none transition focus:ring-2'
+  return hasError
+    ? `${base} border-red-400 focus:border-red-500 focus:ring-red-100`
+    : `${base} border-gray-300 focus:border-emerald-500 focus:ring-emerald-100`
+}
 
-// Wrapper label + field
-function Field({
-  label,
-  children,
-}: {
-  label: string
-  children: React.ReactNode
-}) {
+// Pesan error di bawah field (kosong bila tak ada)
+function FieldError({ message }: { message?: string }) {
+  if (!message) return null
+  return <p className="mt-1 text-xs font-medium text-red-600">{message}</p>
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="mb-1.5 block text-sm font-medium text-gray-700">
-        {label}
-      </label>
+      <label className="mb-1.5 block text-sm font-medium text-gray-700">{label}</label>
       {children}
     </div>
   )
