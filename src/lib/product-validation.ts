@@ -51,6 +51,19 @@ export function validatePrice(price: number | ''): string | undefined {
   return undefined
 }
 
+// Harga asli opsional. Bila diisi wajib > harga jual (biar coretan bermakna).
+export function validateOriginalPrice(
+  originalPrice: number | '' | undefined,
+  price: number | '',
+): string | undefined {
+  if (originalPrice === '' || originalPrice === undefined) return undefined // opsional
+  const orig = Number(originalPrice)
+  const promo = price === '' ? 0 : Number(price)
+  if (orig <= promo) return 'Harga asli harus lebih besar dari harga jual'
+  if (orig > PRICE_MAX) return 'Harga melebihi batas maksimal'
+  return undefined
+}
+
 export function validateStock(stock: number | ''): string | undefined {
   if (stock === '') return 'Stok tidak boleh kosong'
   const n = Number(stock)
@@ -90,6 +103,7 @@ export type ProductFieldKey =
   | 'name'
   | 'category'
   | 'price'
+  | 'originalPrice'
   | 'stock'
   | 'description'
   | 'images'
@@ -101,6 +115,7 @@ export type ProductFormValues = {
   name: string
   category: ProductCategory | ''
   price: number | ''
+  originalPrice?: number | ''
   stock: number | ''
   description: string
   imageCount: number
@@ -112,6 +127,7 @@ export const PRODUCT_FIELD_ORDER: ProductFieldKey[] = [
   'name',
   'category',
   'price',
+  'originalPrice',
   'stock',
   'description',
   'images',
@@ -128,6 +144,8 @@ export function validateProductForm(values: ProductFormValues): ProductFieldErro
   if (category) errors.category = category
   const price = validatePrice(values.price)
   if (price) errors.price = price
+  const originalPrice = validateOriginalPrice(values.originalPrice, values.price)
+  if (originalPrice) errors.originalPrice = originalPrice
   const stock = validateStock(values.stock)
   if (stock) errors.stock = stock
   const description = validateDescription(values.description)

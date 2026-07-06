@@ -37,11 +37,18 @@ export type CreateProductInput = {
   name: string
   sku: string
   category: ProductCategory
-  price: number
+  price: number // harga jual (dibayar buyer) → promo_price
+  originalPrice?: number // harga asli (dicoret); bila > price → tampil coretan. Kosong = tanpa diskon
   stock: number
   description?: string
   imageUrl?: string // foto utama; bila kosong diambil dari images[0]
   images?: string[] // galeri foto (maks 9), data URL base64 atau URL
+}
+
+// Apakah produk sedang diskon (harga asli > harga jual) → dasar tampil harga coret.
+// Reusable di semua tempat render produk (kartu, detail, keranjang) — jangan duplikat logic.
+export function isProductOnSale(p: { originalPrice: number; promoPrice: number }): boolean {
+  return p.originalPrice > p.promoPrice
 }
 
 // Satu ulasan pembeli untuk halaman detail produk

@@ -340,11 +340,13 @@ async function aggregateSales(
 ): Promise<Map<string, BestSellingProduct>> {
   const supabase = createAdminClient()
 
-  // 1. Ambil id order yang benar-benar terjual dalam rentang waktu
+  // 1. Ambil id order yang dihitung sebagai penjualan dalam rentang waktu.
+  // Selama Xendit belum ada, checkout langsung memotong stok (order PENDING = sudah commit),
+  // jadi hitung semua order yang BUKAN Dibatalkan (abaikan status bayar).
+  // TODO: setelah Xendit terpasang, ganti jadi .eq('status_pembayaran','PAID').
   let query = supabase
     .from('orders')
     .select('id')
-    .eq('status_pembayaran', 'PAID')
     .neq('order_status', 'CANCELLED')
   if (opts.from) query = query.gte('created_at', opts.from)
   if (opts.to) query = query.lte('created_at', opts.to)

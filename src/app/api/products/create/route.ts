@@ -10,6 +10,7 @@ import {
   validateName,
   validateSkuFormat,
   validatePrice,
+  validateOriginalPrice,
   validateStock,
   validateDescription,
   validateImages,
@@ -43,6 +44,11 @@ function validatePayload(body: unknown): { input: CreateProductInput } | { error
   const priceErr = validatePrice(typeof b.price === 'number' ? b.price : '')
   if (priceErr) return { error: priceErr }
 
+  // Harga asli opsional; bila diisi wajib > harga jual
+  const originalPrice = typeof b.originalPrice === 'number' ? b.originalPrice : undefined
+  const origErr = validateOriginalPrice(originalPrice ?? '', typeof b.price === 'number' ? b.price : '')
+  if (origErr) return { error: origErr }
+
   const stockErr = validateStock(typeof b.stock === 'number' ? b.stock : '')
   if (stockErr) return { error: stockErr }
 
@@ -64,6 +70,7 @@ function validatePayload(body: unknown): { input: CreateProductInput } | { error
       sku: (b.sku as string).trim(),
       category: b.category as ProductCategory,
       price: b.price as number,
+      originalPrice,
       stock: b.stock as number,
       description: (b.description as string).trim(),
       imageUrl: typeof b.imageUrl === 'string' ? b.imageUrl : undefined,

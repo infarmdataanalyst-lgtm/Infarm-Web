@@ -16,6 +16,7 @@ import {
   validateSkuFormat,
   validateCategory,
   validatePrice,
+  validateOriginalPrice,
   validateStock,
   validateImages,
   validateImageFile,
@@ -32,7 +33,8 @@ type Product = {
   sku: string
   categoryLabel: string // label tampilan kategori
   slug: ProductCategory | '' // slug kategori (untuk form edit)
-  price: number
+  price: number // harga jual (promoPrice)
+  originalPrice?: number // harga asli (dicoret bila > price)
   stock: number
   image: string // foto utama (thumbnail tabel) = images[0]
   images?: string[] // galeri foto (maks 9)
@@ -46,6 +48,7 @@ type EditForm = {
   sku: string
   slug: ProductCategory | ''
   price: number | ''
+  originalPrice: number | '' // harga asli (opsional)
   stock: number | ''
   images: string[] // galeri foto (maks 9); images[0] = foto utama
 }
@@ -79,6 +82,7 @@ function mapStored(p: StoredProduct): Product {
     categoryLabel: getCategoryLabel(p.category) ?? p.category,
     slug: p.category,
     price: p.promoPrice,
+    originalPrice: p.originalPrice,
     stock: p.stock,
     image: p.imageUrl,
     images: p.images,
@@ -199,6 +203,9 @@ export default function ProductsPage() {
       sku: product.sku,
       slug: product.slug,
       price: product.price,
+      // Tampilkan harga asli hanya bila memang ada diskon (asli > jual); selain itu kosong
+      originalPrice:
+        product.originalPrice && product.originalPrice > product.price ? product.originalPrice : '',
       stock: product.stock,
       images: gallery,
     })
@@ -219,6 +226,7 @@ export default function ProductsPage() {
       name: validateName(form.name),
       category: validateCategory(form.slug),
       price: validatePrice(form.price),
+      originalPrice: validateOriginalPrice(form.originalPrice, form.price),
       stock: validateStock(form.stock),
       images: validateImages(form.images.length),
     }
@@ -232,6 +240,7 @@ export default function ProductsPage() {
     !editErrors.name &&
     !editErrors.category &&
     !editErrors.price &&
+    !editErrors.originalPrice &&
     !editErrors.stock &&
     !editErrors.images
 
@@ -298,6 +307,7 @@ export default function ProductsPage() {
       editErrors.name ??
       editErrors.category ??
       editErrors.price ??
+      editErrors.originalPrice ??
       editErrors.stock ??
       editErrors.images
     if (firstError) {
@@ -308,6 +318,7 @@ export default function ProductsPage() {
     setSaving(true)
     const price = Number(form.price) || 0
     const stock = Number(form.stock) || 0
+    const originalPrice = form.originalPrice === '' ? undefined : Number(form.originalPrice)
 
     if (editTarget.persisted) {
       // Produk mock DB → simpan permanen via API
@@ -321,6 +332,7 @@ export default function ProductsPage() {
             sku: form.sku.trim(),
             category: form.slug,
             price,
+            originalPrice,
             stock,
             imageUrl: form.images[0],
             images: form.images,
@@ -347,6 +359,7 @@ export default function ProductsPage() {
                 slug: form.slug,
                 categoryLabel: getCategoryLabel(form.slug) ?? p.categoryLabel,
                 price,
+                originalPrice,
                 stock,
                 image: form.images[0] ?? p.image,
                 images: form.images,
@@ -645,9 +658,13 @@ export default function ProductsPage() {
 
             {/* Harga & Stok */}
             <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <EditField label="Harga (Rp)">
+              <EditField label="Harga Jual (Rp)">
                 <input type="text" inputMode="numeric" value={form.price} onChange={(e) => { const d = e.target.value.replace(/\D/g, ''); setForm({ ...form, price: d === '' ? '' : Number(d) }) }} className={modalInput(!!editErrors.price)} aria-invalid={!!editErrors.price} />
                 {editErrors.price && <p className="mt-1 text-xs font-medium text-red-600">{editErrors.price}</p>}
+              </EditField>
+              <EditField label="Harga Asli (opsional)">
+                <input type="text" inputMode="numeric" value={form.originalPrice} onChange={(e) => { const d = e.target.value.replace(/\D/g, ''); setForm({ ...form, originalPrice: d === '' ? '' : Number(d) }) }} placeholder="Kosong = tanpa diskon" className={modalInput(!!editErrors.originalPrice)} aria-invalid={!!editErrors.originalPrice} />
+                {editErrors.originalPrice && <p className="mt-1 text-xs font-medium text-red-600">{editErrors.originalPrice}</p>}
               </EditField>
               <EditField label="Sisa Stok (pcs)">
                 <input type="text" inputMode="numeric" value={form.stock} onChange={(e) => { const d = e.target.value.replace(/\D/g, ''); setForm({ ...form, stock: d === '' ? '' : Number(d) }) }} className={modalInput(!!editErrors.stock)} aria-invalid={!!editErrors.stock} />

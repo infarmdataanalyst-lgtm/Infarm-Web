@@ -7,7 +7,14 @@ import { formatRupiah } from '@/lib/format'
 import StarRating from '@/components/product/StarRating'
 
 // Menampilkan blok informasi utama produk di bawah slider foto.
-export default function ProductInfo({ product }: { product: ProductDetail }) {
+// soldCount = total unit terjual (dari data order); tampil di sebelah rating bila > 0.
+export default function ProductInfo({
+  product,
+  soldCount = 0,
+}: {
+  product: ProductDetail
+  soldCount?: number
+}) {
   const { name, originalPrice, promoPrice, rating, reviewCount } = product
 
   // Hitung persentase diskon untuk badge (mis. -25%)
@@ -42,6 +49,15 @@ export default function ProductInfo({ product }: { product: ProductDetail }) {
         <StarRating rating={rating} size={16} />
         <span className="text-sm font-semibold text-zinc-700">{rating.toFixed(1)}</span>
         <span className="text-sm text-zinc-400">({reviewCount} ulasan)</span>
+        {/* Jumlah terjual (dari data order) — tampil hanya bila ada penjualan */}
+        {soldCount > 0 && (
+          <>
+            <span className="text-zinc-300">·</span>
+            <span className="text-sm text-zinc-500">
+              <span className="font-semibold text-zinc-700">{soldCount.toLocaleString('id-ID')}</span> terjual
+            </span>
+          </>
+        )}
       </div>
     </section>
   )

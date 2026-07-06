@@ -8,6 +8,7 @@ import { getProductDetail, getRecentlyViewed } from '@/lib/data/dummy-product-de
 import { getProductById, readProducts } from '@/lib/mock-db/products'
 import { readCombos } from '@/lib/mock-db/combos'
 import { getReviewsByProduct, getProductRatingSummary } from '@/lib/mock-db/reviews'
+import { getSalesCountByProduct } from '@/lib/mock-db/orders'
 import type { StoredProduct, ProductDetail, ProductReview } from '@/types/product'
 import ProductImageSlider from '@/components/product/ProductImageSlider'
 import ProductInfo from '@/components/product/ProductInfo'
@@ -67,7 +68,12 @@ export default async function ProductDetailPage({
   if (!product) notFound()
 
   // Paket combo REAL (Supabase) yang aktif, memuat produk ini, & semua produknya masih ada stok.
-  const [allCombos, allProducts] = await Promise.all([readCombos(), readProducts()])
+  const [allCombos, allProducts, salesCounts] = await Promise.all([
+    readCombos(),
+    readProducts(),
+    getSalesCountByProduct(),
+  ])
+  const soldCount = salesCounts[product.id] ?? 0
   const stockById: Record<string, number> = {}
   const imageById: Record<string, string> = {}
   for (const p of allProducts) {
@@ -99,7 +105,7 @@ export default async function ProductDetailPage({
           {/* 3 — Informasi utama + deskripsi: mengisi kolom kanan di desktop */}
           <div className="flex flex-col gap-2">
             <div className="lg:overflow-hidden lg:rounded-xl">
-              <ProductInfo product={product} />
+              <ProductInfo product={product} soldCount={soldCount} />
             </div>
             {/* 5 — Deskripsi / spesifikasi produk (di bawah info, kolom kanan desktop) */}
             <div className="lg:overflow-hidden lg:rounded-xl">

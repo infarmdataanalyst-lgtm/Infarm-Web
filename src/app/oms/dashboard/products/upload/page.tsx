@@ -41,7 +41,8 @@ export default function UploadProductPage() {
   const [sku, setSku] = useState('INF-SM-001')
   const [name, setName] = useState('Media Tanam Organik Super')
   const [category, setCategory] = useState<ProductCategory | ''>('')
-  const [price, setPrice] = useState<number | ''>(35000)
+  const [price, setPrice] = useState<number | ''>(35000) // harga jual (promo)
+  const [originalPrice, setOriginalPrice] = useState<number | ''>('') // harga asli (opsional, dicoret)
   const [stock, setStock] = useState<number | ''>(120)
   const [description, setDescription] = useState('')
 
@@ -66,11 +67,12 @@ export default function UploadProductPage() {
         name,
         category,
         price,
+        originalPrice,
         stock,
         description,
         imageCount: images.length,
       }),
-    [sku, name, category, price, stock, description, images.length],
+    [sku, name, category, price, originalPrice, stock, description, images.length],
   )
 
   // Error SKU gabungan: format dulu, lalu duplikat
@@ -169,6 +171,10 @@ export default function UploadProductPage() {
     const digits = raw.replace(/\D/g, '')
     setPrice(digits === '' ? '' : Number(digits))
   }
+  function handleOriginalPriceChange(raw: string) {
+    const digits = raw.replace(/\D/g, '')
+    setOriginalPrice(digits === '' ? '' : Number(digits))
+  }
   function handleStockChange(raw: string) {
     const digits = raw.replace(/\D/g, '')
     setStock(digits === '' ? '' : Number(digits))
@@ -183,6 +189,7 @@ export default function UploadProductPage() {
       name: true,
       category: true,
       price: true,
+      originalPrice: true,
       stock: true,
       description: true,
       images: true,
@@ -194,6 +201,7 @@ export default function UploadProductPage() {
       name,
       category,
       price,
+      originalPrice,
       stock,
       description,
       imageCount: images.length,
@@ -218,6 +226,7 @@ export default function UploadProductPage() {
           sku: sku.trim(),
           category,
           price: Number(price) || 0,
+          originalPrice: originalPrice === '' ? undefined : Number(originalPrice),
           stock: Number(stock) || 0,
           description: description.trim(),
           imageUrl: images[0]?.src,
@@ -336,9 +345,9 @@ export default function UploadProductPage() {
               </div>
 
               <div className="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-2">
-                {/* Harga */}
+                {/* Harga Jual (dibayar buyer) */}
                 <div id="pf-price">
-                  <Field label="Harga">
+                  <Field label="Harga Jual">
                     <div className="relative">
                       <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center border-r border-gray-200 px-3 text-sm font-medium text-gray-500">
                         Rp
@@ -355,13 +364,37 @@ export default function UploadProductPage() {
                       />
                     </div>
                   </Field>
-                  {/* Preview format Rupiah saat nilai valid */}
                   {price !== '' && !shownError('price') && (
                     <p className="mt-1 text-xs font-medium text-emerald-700">
                       {formatRupiah(Number(price))}
                     </p>
                   )}
                   <FieldError message={shownError('price')} />
+                </div>
+
+                {/* Harga Asli (opsional; dicoret bila > harga jual) */}
+                <div id="pf-originalPrice">
+                  <Field label="Harga Asli (opsional)">
+                    <div className="relative">
+                      <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center border-r border-gray-200 px-3 text-sm font-medium text-gray-500">
+                        Rp
+                      </span>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={originalPrice}
+                        onChange={(e) => handleOriginalPriceChange(e.target.value)}
+                        onBlur={() => markTouched('originalPrice')}
+                        placeholder="Kosongkan bila tanpa diskon"
+                        className={`${inputClass(!!shownError('originalPrice'))} pl-12`}
+                        aria-invalid={!!shownError('originalPrice')}
+                      />
+                    </div>
+                  </Field>
+                  <p className="mt-1 text-xs text-gray-400">
+                    Harga sebelum diskon — tampil dicoret di ecommerce.
+                  </p>
+                  <FieldError message={shownError('originalPrice')} />
                 </div>
 
                 {/* Stok */}
