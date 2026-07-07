@@ -124,7 +124,7 @@ export default async function CheckoutSuccessPage({
               <div key={item.productId} className="flex items-center gap-3">
                 <div className="relative h-11 w-11 flex-none overflow-hidden rounded-lg border border-zinc-100 bg-zinc-50">
                   <Image
-                    src="/images/product-placeholder.png"
+                    src={item.imageUrl || '/images/product-placeholder.png'}
                     alt={item.name}
                     fill
                     unoptimized

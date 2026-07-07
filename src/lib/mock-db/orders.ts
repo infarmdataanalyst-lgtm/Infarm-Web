@@ -108,28 +108,36 @@ function generateInvoiceNumber(): string {
   return `INV-${ymd}-${rand}`
 }
 
-// Mengambil nama produk untuk sekumpulan product_id (order_items tak menyimpan nama).
-// Hanya query id ber-format UUID (produk OMS); id dummy dilewati (fallback nama generik).
-async function resolveProductNames(
+// Info produk yang di-resolve saat baca order (order_items hanya simpan id/harga/qty).
+type ResolvedProduct = { name: string; imageUrl: string }
+
+// Mengambil nama + foto produk untuk sekumpulan product_id (order_items tak menyimpannya).
+// Hanya query id ber-format UUID (produk OMS); id dummy dilewati (fallback nama/foto generik).
+async function resolveProductInfo(
   supabase: ReturnType<typeof createAdminClient>,
   productIds: string[],
-): Promise<Map<string, string>> {
+): Promise<Map<string, ResolvedProduct>> {
   const ids = [...new Set(productIds)].filter((id) => UUID_RE.test(id))
-  const map = new Map<string, string>()
+  const map = new Map<string, ResolvedProduct>()
   if (ids.length === 0) return map
-  const { data } = await supabase.from('products').select('id, name').in('id', ids)
-  for (const p of (data as { id: string; name: string }[] | null) ?? []) map.set(p.id, p.name)
+  const { data } = await supabase.from('products').select('id, name, image_url').in('id', ids)
+  for (const p of (data as { id: string; name: string; image_url: string | null }[] | null) ?? []) {
+    map.set(p.id, { name: p.name, imageUrl: p.image_url ?? '' })
+  }
   return map
 }
 
-// Mengubah baris order_items → OrderItem (nama di-resolve dari peta produk).
-function itemRowToItem(row: OrderItemRow, names: Map<string, string>): OrderItem {
-  return {
+// Mengubah baris order_items → OrderItem (nama & foto di-resolve dari peta produk).
+function itemRowToItem(row: OrderItemRow, info: Map<string, ResolvedProduct>): OrderItem {
+  const resolved = info.get(row.product_id)
+  const item: OrderItem = {
     productId: row.product_id,
-    name: names.get(row.product_id) ?? 'Produk',
+    name: resolved?.name ?? 'Produk',
     quantity: row.quantity,
     price: row.price_at_purchase,
   }
+  if (resolved?.imageUrl) item.imageUrl = resolved.imageUrl
+  return item
 }
 
 // Mengubah baris orders + item-nya menjadi Order (app-facing).
@@ -190,11 +198,11 @@ export async function readOrders(): Promise<Order[]> {
     .in('order_id', rows.map((r) => r.id))
   const itemRows = (itemData as OrderItemRow[]) ?? []
 
-  const names = await resolveProductNames(supabase, itemRows.map((r) => r.product_id))
+  const info = await resolveProductInfo(supabase, itemRows.map((r) => r.product_id))
   const itemsByOrder = new Map<string, OrderItem[]>()
   for (const ir of itemRows) {
     const list = itemsByOrder.get(ir.order_id) ?? []
-    list.push(itemRowToItem(ir, names))
+    list.push(itemRowToItem(ir, info))
     itemsByOrder.set(ir.order_id, list)
   }
 
@@ -222,9 +230,9 @@ export async function getOrderByOrderId(orderId: string): Promise<Order | null> 
     .select('order_id, product_id, quantity, price_at_purchase')
     .eq('order_id', row.id)
   const itemRows = (itemData as OrderItemRow[]) ?? []
-  const names = await resolveProductNames(supabase, itemRows.map((r) => r.product_id))
+  const info = await resolveProductInfo(supabase, itemRows.map((r) => r.product_id))
 
-  return rowToOrder(row, itemRows.map((ir) => itemRowToItem(ir, names)))
+  return rowToOrder(row, itemRows.map((ir) => itemRowToItem(ir, info)))
 }
 
 // === Tulis ===
@@ -371,7 +379,7 @@ async function aggregateSales(
   const itemRows = (itemData as Pick<OrderItemRow, 'product_id' | 'quantity' | 'price_at_purchase'>[]) ?? []
 
   // 3. Resolve nama produk lalu akumulasi per productId
-  const names = await resolveProductNames(supabase, itemRows.map((r) => r.product_id))
+  const info = await resolveProductInfo(supabase, itemRows.map((r) => r.product_id))
   const totals = new Map<string, BestSellingProduct>()
   for (const it of itemRows) {
     const prev = totals.get(it.product_id)
@@ -381,7 +389,7 @@ async function aggregateSales(
     } else {
       totals.set(it.product_id, {
         productId: it.product_id,
-        name: names.get(it.product_id) ?? 'Produk',
+        name: info.get(it.product_id)?.name ?? 'Produk',
         totalSold: it.quantity,
         totalRevenue: it.quantity * it.price_at_purchase,
       })

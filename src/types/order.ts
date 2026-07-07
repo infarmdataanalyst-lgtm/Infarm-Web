@@ -8,6 +8,7 @@
 export type OrderItem = {
   productId: string
   name: string // di-resolve dari tabel products saat baca (order_items tak menyimpan nama)
+  imageUrl?: string // di-resolve dari products.image_url saat baca (order_items tak menyimpan foto)
   quantity: number
   price: number // harga satuan saat checkout (snapshot = price_at_purchase)
 }
