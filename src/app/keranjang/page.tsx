@@ -9,9 +9,10 @@
 import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import type { CartLineItem } from '@/types/cart'
-import type { StoredProduct } from '@/types/product'
+import type { Product, StoredProduct } from '@/types/product'
 import type { Promotion } from '@/types/promotion'
 import { dummyProducts } from '@/lib/data/dummy-products'
+import { getRecentlyViewedIds } from '@/lib/recently-viewed'
 import {
   updateQuantity,
   removeFromCart,
@@ -45,12 +46,20 @@ export default function CartPage() {
   const [promos, setPromos] = useState<Promotion[]>([])
   const [loadingPromos, setLoadingPromos] = useState(true)
 
+  // Riwayat "pernah dilihat" (localStorage, sisi-klien). Kosong bila belum ada/disabled.
+  const [viewedIds, setViewedIds] = useState<string[]>([])
+
   // === Ambil produk real dari API saat halaman dibuka ===
   useEffect(() => {
     fetch('/api/products/list')
       .then((res) => res.json())
       .then((data) => setOmsProducts(data.products ?? []))
       .catch(() => setOmsProducts([]))
+  }, [])
+
+  // Baca riwayat lihat produk sekali saat mount (client only)
+  useEffect(() => {
+    setViewedIds(getRecentlyViewedIds())
   }, [])
 
   // === Ambil promo aktif (server-side filter). Gagal fetch → section promo kosong, halaman aman. ===
@@ -170,8 +179,22 @@ export default function CartPage() {
     router.push('/checkout')
   }
 
-  // Produk "baru dilihat" — contoh; TODO ganti riwayat asli
-  const recentlyViewed = dummyProducts.filter((p) => p.badge).slice(0, 2)
+  // Produk "Dilihat Sebelumnya": resolve id riwayat → data produk terbaru (OMS + dummy),
+  // buang yang diarsipkan atau sudah ada di keranjang. Urut sesuai riwayat (terbaru dulu).
+  const recentlyViewed = useMemo(() => {
+    const cartIds = new Set(cookieCart.map((i) => i.productId))
+    const byId = new Map<string, Product>()
+    for (const p of dummyProducts) byId.set(p.id, p)
+    for (const p of omsProducts) {
+      if (p.archived) byId.delete(p.id) // diarsipkan → jangan rekomendasikan
+      else byId.set(p.id, p) // data terbaru dari Supabase (harga/stok bisa berubah)
+    }
+    return viewedIds
+      .filter((id) => !cartIds.has(id)) // jangan rekomendasi barang yang sudah di keranjang
+      .map((id) => byId.get(id))
+      .filter((p): p is Product => Boolean(p))
+      .slice(0, 6)
+  }, [viewedIds, omsProducts, cookieCart])
 
   return (
     <div className="flex min-h-screen flex-col bg-brand-surface text-zinc-900">

@@ -18,6 +18,7 @@ import RecentlyViewed from '@/components/product/RecentlyViewed'
 import ProductReviews from '@/components/product/ProductReviews'
 import StickyBuyBar from '@/components/product/StickyBuyBar'
 import CartToast from '@/components/product/CartToast'
+import TrackProductView from '@/components/product/TrackProductView'
 
 // Membangun ProductDetail dari produk Supabase (StoredProduct) + ulasan & rating real.
 // Galeri memakai kolom images (maks 9); fallback ke foto utama bila galeri kosong.
@@ -133,6 +134,9 @@ export default async function ProductDetailPage({
 
       {/* 8 + 9 — Bilah aksi bawah (sticky) + logika simpan ke cookie keranjang */}
       <StickyBuyBar productId={product.id} price={product.promoPrice} />
+
+      {/* Catat produk ini ke riwayat "pernah dilihat" (localStorage, sisi-klien) */}
+      <TrackProductView productId={product.id} />
 
       {/* Toast notifikasi sukses (dipicu via event dari StickyBuyBar & BundleOffer) */}
       <CartToast />
