@@ -1,0 +1,122 @@
+# Laporan Audit Keamanan — infarm.id (Ecommerce + OMS)
+
+- **Tanggal:** 2026-07-08
+- **Cakupan:** OWASP Top 10 + kerentanan umum (auth, injeksi, XSS, data exposure, CSRF, misconfig, business logic)
+- **Sifat:** Read-only audit — tidak ada kode diubah.
+- **Catatan:** `npm audit` belum berhasil dijalankan (jaringan offline, `registry.npmjs.org ENOENT`). Scan CVE dependency perlu diulang saat online.
+
+> Status: **BELUM diperbaiki** — daftar temuan untuk ditindaklanjuti nanti.
+
+---
+
+## 🔴 KRITIS
+
+### K-1 · Semua endpoint API OMS tanpa proteksi auth
+- **Kategori:** B / F (Broken Access Control)
+- **Lokasi:** `src/proxy.ts:21-24`, seluruh `src/app/api/**`
+- **Masalah:** Guard `proxy.ts` hanya cover `matcher: '/oms/dashboard/:path*'` (halaman, bukan API). Route handler di `src/app/api/*` tak punya cek auth. Siapa pun yang tahu URL bisa panggil langsung:
+  - `POST /api/products/{create,update,delete}`
+  - `POST /api/combos/{create,update,delete,toggle}` · `POST /api/promotions/{...}`
+  - `POST /api/reviews/reply` · `/api/reviews/visibility`
+  - `GET /api/orders/list`
+  - Contoh: `products/create/route.ts:83` validasi payload tapi tidak cek pemanggil admin.
+- **Bahaya:** Hapus semua produk, buat promo diskon 100%, palsukan balasan "admin" di review.
+- **Rekomendasi:** Cek sesi admin server-side di tiap route handler mutasi (helper bersama), atau perluas boundary. Jangan andalkan proxy halaman.
+
+### K-2 · `GET /api/orders/list` bocorkan PII semua pelanggan tanpa auth
+- **Kategori:** C / F
+- **Lokasi:** `src/app/api/orders/list/route.ts:15-18`, `src/lib/mock-db/orders.ts:136` (rowToOrder)
+- **Masalah:** `GET` mengembalikan `readOrders()` = seluruh order lengkap dengan `email`, `no_telepon`, `nama_customer`, alamat penuh. Tanpa auth (lihat K-1).
+- **Bahaya:** Siapa pun bisa tarik seluruh database pelanggan (data pribadi).
+- **Rekomendasi:** Wajibkan auth admin; batasi field bila perlu.
+
+### K-3 · Harga & total dipercaya dari client (price manipulation)
+- **Kategori:** H (Business Logic)
+- **Lokasi:** `src/app/api/orders/create/route.ts:28-34`, `src/lib/mock-db/orders.ts:247-262` (saveOrder)
+- **Masalah:** `price_at_purchase: it.price` dan `p_jumlah_total: input.totalAmount` diambil mentah dari payload client. Server tidak re-fetch `products.promo_price` dari DB. Validasi `isValidPayload` hanya cek `typeof number` (`price` tak dicek `> 0`; `totalAmount >= 0` boleh 0).
+- **Bahaya:** Pembeli kirim `price: 1`, `totalAmount: 1` → bayar Rp1.
+- **Rekomendasi:** Server ambil ulang harga tiap produk dari DB, hitung ulang subtotal + ongkir + diskon server-side, abaikan harga/total dari client.
+
+### K-4 · Sesi OMS gampang dipalsukan
+- **Kategori:** B (Auth Failures)
+- **Lokasi:** `src/lib/oms-auth.ts:22-25`, `src/proxy.ts:12`
+- **Masalah:** Guard cuma cek keberadaan cookie `oms_session`, nilai hardcoded `"1"`, di-set client-side via `document.cookie` (tidak `httpOnly`, tanpa `Secure`). Tak ada tanda tangan/verifikasi.
+- **Bahaya:** Penyerang jalankan `document.cookie="oms_session=1"` → akses penuh dashboard.
+- **Rekomendasi:** Ganti ke sesi ter-tandatangani/terverifikasi server (Supabase Auth di roadmap); cookie `httpOnly` + `Secure` + `SameSite`.
+
+---
+
+## 🟠 TINGGI
+
+### T-1 · Secret token pembatalan punya fallback hardcoded
+- **Kategori:** B / Cryptographic
+- **Lokasi:** `src/lib/order-token.ts:13`
+- **Masalah:** `const SECRET = process.env.ORDER_CANCEL_SECRET ?? 'infarm-dev-cancel-secret'`. Kalau env tak di-set di production, secret jadi publik (ada di source). Mekanisme HMAC + `timingSafeEqual`-nya sendiri sudah bagus.
+- **Bahaya:** Token bisa dihitung penyerang → batalkan order siapa pun + picu `restoreStock` (manipulasi stok).
+- **Rekomendasi:** Wajibkan env (throw saat startup bila kosong di production), hapus fallback.
+
+### T-2 · Tak ada rate limit / lockout di login OMS
+- **Kategori:** B (Auth Failures)
+- **Lokasi:** `src/app/oms/login/page.tsx`
+- **Masalah:** Tak ada pembatasan percobaan login → brute force. (Dampak sekarang berkurang karena K-4 lebih parah.)
+- **Rekomendasi:** Rate limit per IP + backoff/lockout saat auth real dipasang.
+
+---
+
+## 🟡 SEDANG
+
+### S-1 · HTTP security headers kosong
+- **Kategori:** E (Security Misconfiguration)
+- **Lokasi:** `next.config.ts:3-5`
+- **Masalah:** Config kosong — tak ada `Content-Security-Policy`, `X-Frame-Options`, `Strict-Transport-Security`, `X-Content-Type-Options`, `Referrer-Policy`.
+- **Bahaya:** Clickjacking + tak ada defense-in-depth XSS.
+- **Rekomendasi:** Tambah `headers()` di next.config (X-Frame-Options: DENY, nosniff, HSTS, CSP).
+
+### S-2 · IDOR di `GET /api/orders/get`
+- **Kategori:** F / C
+- **Lokasi:** `src/app/api/orders/get/route.ts:12-32`
+- **Masalah:** Tanpa token — mengembalikan `customerName` + `items` untuk sembarang `orderId`. Nomor invoice `INV-YYYYMMDD-{4 digit}` (~9000 kombinasi/hari) bisa ditebak/dienumerasi. (Bandingkan `orders/cancel` yang wajib token — pola benar.)
+- **Bahaya:** Bocor nama pelanggan + isi belanjaan.
+- **Rekomendasi:** Wajibkan token (seperti cancel) atau hilangkan `customerName` dari respons publik.
+
+### S-3 · Diskon/promo dihitung client, tak divalidasi server
+- **Kategori:** H
+- **Lokasi:** `src/lib/promo-cart.ts`, cookie `infarm_checkout_promo`
+- **Masalah:** Progres/hadiah promo dihitung client; snapshot di cookie. Wiring ke order masih roadmap, tapi karena `totalAmount` sudah client-supplied (K-3), diskon efektif dikendalikan client sekarang.
+- **Rekomendasi:** Saat wiring promo ke order, validasi ulang promo (aktif, belum kedaluwarsa, min_purchase, nilai diskon) dari DB server-side.
+
+### S-4 · `POST /api/reviews/reply` bisa dipalsukan + review tanpa batas panjang
+- **Kategori:** A / F
+- **Lokasi:** `src/app/api/reviews/reply/route.ts:10`, `src/app/api/reviews/create/route.ts:12`
+- **Masalah:** `reply` tanpa auth (bagian K-1) → palsukan balasan "admin". `reviews/create`: `authorName`/`comment` tanpa panjang maks → spam/impersonasi. Catatan: tidak ada `dangerouslySetInnerHTML` di `src/` → teks di-render via JSX (React auto-escape) → tidak ada stored XSS.
+- **Rekomendasi:** Proteksi reply (admin-only), batasi panjang comment/authorName, tambah anti-spam.
+
+---
+
+## 🔵 RENDAH
+
+- **R-1 · Logging/monitoring minim** (OWASP #9): hanya `console.error`, tak ada audit log aksi admin/pembatalan.
+- **R-2 · npm audit belum jalan**: gagal karena offline (`registry.npmjs.org ENOENT`). Versi terlihat baru (next 16.2.7, react 19.2.4, supabase-js 2.108). **Jalankan `npm audit` saat online.**
+- **R-3 · CSRF**: semua endpoint Route Handler (bukan Server Action) terima POST JSON tanpa token CSRF. Saat auth cookie real dipasang, pertimbangkan proteksi CSRF (SameSite + cek Origin).
+- **R-4 · Proxy alamat Mengantar terbuka** (`src/app/api/mengantar/address/search/route.ts`): tanpa rate limit, bisa dipakai proxy gratis. `keyword` sudah `encodeURIComponent` + URL fixed → tak ada SSRF.
+
+---
+
+## ✅ Yang sudah benar (jangan diubah)
+
+- **Query aman:** semua via query builder Supabase (`.eq/.select/.insert/.rpc`) + RPC pakai bound params. RPC plpgsql tak pakai dynamic SQL. Tidak ada SQL injection.
+- **Stok atomik + anti-race:** `supabase/migrations/20260702120000_create_order_with_items.sql` pakai `SELECT ... FOR UPDATE` + rollback saat stok kurang. Tak bisa oversell.
+- **Tidak ada XSS:** nol `dangerouslySetInnerHTML`.
+- **Service role server-only:** `createAdminClient` tak pernah diimpor ke komponen `'use client'`; tak ada secret hardcoded selain T-1; `SERVICE_ROLE` tak ber-prefix `NEXT_PUBLIC_`.
+- **RLS aktif** di products/orders/reviews/combos/promotions; tabel `orders` terkunci (tanpa policy publik); write publik tak ada.
+- **Cancel token** HMAC + `timingSafeEqual` (timing-safe) + status divalidasi ulang server.
+
+---
+
+## Urutan prioritas perbaikan (usulan)
+
+1. **K-1 + K-2 + K-4** (satu paket: auth OMS real + proteksi semua API mutasi + `orders/list`) — sistem OMS praktis terbuka penuh.
+2. **K-3** — kerugian finansial langsung (bayar Rp1).
+3. **T-1** — set `ORDER_CANCEL_SECRET`, hapus fallback.
+4. **S-1, S-2, S-3** — headers, IDOR order, validasi promo.
+5. **T-2, S-4, R-*** — hardening.

@@ -25,7 +25,8 @@ export default function ReviewForm() {
   // Data produk yang akan diulas (dibangun dari item pesanan)
   const [products, setProducts] = useState<ReviewProduct[]>([])
   const [customerName, setCustomerName] = useState('')
-  const [status, setStatus] = useState<'loading' | 'ready' | 'notfound'>('loading')
+  // 'cancelled' → pesanan sudah dibatalkan, tidak boleh diulas
+  const [status, setStatus] = useState<'loading' | 'ready' | 'notfound' | 'cancelled'>('loading')
   const [submitting, setSubmitting] = useState(false)
 
   // State ulasan: key productId → { rating, review }
@@ -49,6 +50,12 @@ export default function ReviewForm() {
         if (!active) return
         if (!orderRes?.order) {
           setStatus('notfound')
+          return
+        }
+
+        // Pesanan yang sudah dibatalkan tidak boleh diulas (guard utama tetap di server)
+        if (orderRes.order.status === 'Dibatalkan') {
+          setStatus('cancelled')
           return
         }
 
@@ -111,6 +118,7 @@ export default function ReviewForm() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+              orderId,
               productId: p.id,
               authorName: customerName || 'Pelanggan Infarm',
               rating: reviews[p.id].rating,
@@ -154,6 +162,14 @@ export default function ReviewForm() {
           <div className="px-4 py-16 text-center">
             <p className="text-sm text-gray-500">
               Pesanan tidak ditemukan. Pastikan kamu membuka halaman ini dari pesanan yang berhasil.
+            </p>
+          </div>
+        )}
+
+        {status === 'cancelled' && (
+          <div className="px-4 py-16 text-center">
+            <p className="text-sm text-gray-500">
+              Pesanan ini sudah dibatalkan, jadi tidak dapat diberi ulasan.
             </p>
           </div>
         )}
