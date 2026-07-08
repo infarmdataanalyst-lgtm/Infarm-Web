@@ -286,20 +286,31 @@ Tulis komentar untuk memudahkan maintenance. Ikuti aturan berikut:
   (lihat `supabase/README.md`), berurutan sesuai timestamp
 - Regenerate types (saat CLI tersedia): `supabase gen types typescript --local > src/types/supabase.ts`
 
-## Auth Guard OMS (sementara, cookie-based)
+## Auth Guard OMS (cookie sesi bertanda tangan + tabel admin_users)
 
 Akses `/oms/dashboard/*` dilindungi guard di **`src/proxy.ts`** (Next.js 16 Proxy, pengganti
-middleware). **Bukan auth real** — penanda sesi sementara sampai Supabase Auth dipasang.
+middleware). Login diverifikasi ke **tabel Supabase `admin_users`** (bukan lagi dummy hardcode);
+sesi disimpan sebagai **cookie httpOnly bertanda tangan HMAC** (bukan lagi penanda `"1"` forgeable).
 
-- **Cookie penanda**: `oms_session` (helper terpusat di `src/lib/oms-auth.ts`:
-  `OMS_SESSION_COOKIE`, `setOmsSession`/`clearOmsSession` [client], `sanitizeOmsRedirect`).
-- **Guard** (`proxy.ts`, `matcher: '/oms/dashboard/:path*'`): tanpa cookie → `307` ke
-  `/oms/login?redirect=<tujuan asli>`. Halaman `/oms/login` tidak ikut diproteksi.
-- **Redirect-after-login**: login sukses → `setOmsSession(rememberMe)` + baca `?redirect`,
-  divalidasi `sanitizeOmsRedirect` (cegah open redirect — hanya path `/oms/dashboard*`),
-  lalu `router.replace(target)`.
-- **Logout**: tombol "Keluar" di `Sidebar` → `clearOmsSession()` + `router.replace('/oms/login')`.
-- **Roadmap**: ganti cookie penanda ini dengan sesi Supabase Auth (cek sesi di `proxy.ts`).
+- **Tabel `admin_users`**: `username` (unik), `password_hash` (scrypt, format `saltHex:hashHex`),
+  `name`, `is_active`. RLS aktif tanpa policy publik → akses hanya server (service_role).
+  Migration `supabase/migrations/20260708120000_init_admin_users.sql` (+ seed admin awal).
+- **Verifikasi password**: `src/lib/mock-db/admins.ts` (server-only, `node:crypto` scrypt +
+  `timingSafeEqual`). `authenticateAdmin(username, password)`.
+- **Token sesi**: `src/lib/oms-auth.ts` — `createSessionToken`/`verifySessionToken`
+  (HMAC-SHA256 via Web Crypto, jalan di edge & node), `sanitizeOmsRedirect`,
+  `OMS_SESSION_COOKIE`. Secret dari env `OMS_SESSION_SECRET` (fallback dev).
+- **Login**: `POST /api/oms/login` (runtime nodejs) — verifikasi kredensial + **rate limit**
+  in-memory (5 percobaan/menit per IP+username) → set cookie sesi `httpOnly`, `secure` (prod),
+  `SameSite=Lax`, `maxAge` (12 jam; 30 hari bila "Ingat Saya").
+- **Guard** (`proxy.ts`, `matcher: '/oms/dashboard/:path*'`): `verifySessionToken` cookie →
+  invalid/kedaluwarsa → `307` ke `/oms/login?redirect=<tujuan asli>`. `/oms/login` tak diproteksi.
+- **Logout**: tombol "Keluar" di `Sidebar` → `POST /api/oms/logout` (hapus cookie httpOnly) +
+  `router.replace('/oms/login')`.
+- **Catatan**: proxy hanya menjaga **halaman** dashboard. Route handler mutasi OMS
+  (`/api/products|combos|promotions|reviews/...`, `/api/orders/list`) **belum** dijaga per-endpoint
+  (lihat temuan K-1 di `docs/security-audit-2026-07-08.md`) — roadmap berikutnya.
+- **Roadmap**: pertimbangkan Supabase Auth penuh bila butuh multi-peran/reset password.
 
 ## Pembatalan Pesanan Guest (token-protected)
 
@@ -510,7 +521,8 @@ deskripsi 20–2000, harga 100–99.999.999, stok 0–999.999, `MAX_PRODUCT_IMAG
 - [ ] Mengantar: booking kurir & tracking resi otomatis — masih roadmap
 
 ### OMS (Back Office)
-- [x] Halaman login OMS (`/oms/login`) — auth dummy + guard cookie (`proxy.ts`), Supabase Auth menyusul
+- [x] Login OMS (`/oms/login`) — verifikasi ke tabel `admin_users` (scrypt) + cookie sesi httpOnly
+      bertanda tangan HMAC + rate limit (`proxy.ts` verifikasi tanda tangan)
 - [x] Dashboard OMS (`/oms/dashboard`)
 - [x] Manajemen produk (list, upload/create, update, delete) via API + Supabase — multi-foto (maks 9),
       harga jual/asli (coret), validasi form, kolom "Terjual" + rentang waktu
@@ -518,7 +530,8 @@ deskripsi 20–2000, harga 100–99.999.999, stok 0–999.999, `MAX_PRODUCT_IMAG
 - [x] Manajemen review (`/oms/dashboard/reviews`) — create/list/reply/visibility
 - [x] Manajemen Paket & Combo (`/oms/dashboard/paket-combo`) — create/list/update/delete/toggle
 - [x] Manajemen Promosi (`/oms/dashboard/promosi`) — create/list/update/delete/toggle
-- [ ] Autentikasi admin real (Supabase Auth)
+- [~] Autentikasi admin: sudah DB-backed (`admin_users` + scrypt + sesi HMAC httpOnly); Supabase Auth
+      penuh (multi-peran/reset password) + proteksi per-endpoint API OMS masih menyusul
 - [~] Stok berkurang atomik saat checkout (RPC `create_order_with_items`); alokasi/rilis stok penuh
       (mis. saat pembayaran gagal/expired) menyusul bareng Xendit
 
@@ -545,6 +558,8 @@ NEXT_PUBLIC_SUPABASE_URL
 NEXT_PUBLIC_SUPABASE_ANON_KEY
 SUPABASE_SERVICE_ROLE_KEY        # server-only (dipakai mock-db via createAdminClient)
 ORDER_CANCEL_SECRET              # server-only, opsional (HMAC token pembatalan; ada fallback dev)
+OMS_SESSION_SECRET               # server-only (HMAC tanda tangan cookie sesi OMS; ada fallback dev
+                                 # — WAJIB di-set di production, jangan pakai fallback)
 
 # Sudah dipakai sekarang (Mengantar — cek ongkir)
 NEXT_PUBLIC_MENGANTAR_ORIGIN_ID  # PUBLIC/client; _id kelurahan toko (asal pengiriman). WAJIB di-set

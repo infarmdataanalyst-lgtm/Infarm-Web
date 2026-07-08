@@ -5,13 +5,15 @@
 
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
-import { OMS_SESSION_COOKIE } from '@/lib/oms-auth'
+import { OMS_SESSION_COOKIE, verifySessionToken } from '@/lib/oms-auth'
 
-export function proxy(request: NextRequest) {
-  // Sudah punya sesi → lanjutkan request seperti biasa.
-  if (request.cookies.has(OMS_SESSION_COOKIE)) return NextResponse.next()
+export async function proxy(request: NextRequest) {
+  // Verifikasi TANDA TANGAN token sesi (bukan sekadar keberadaan cookie) — cookie tak bisa dipalsukan.
+  const token = request.cookies.get(OMS_SESSION_COOKIE)?.value
+  const adminId = await verifySessionToken(token)
+  if (adminId) return NextResponse.next()
 
-  // Belum login → arahkan ke login, bawa tujuan awal (path + query) untuk redirect-after-login.
+  // Belum login / token invalid / kedaluwarsa → arahkan ke login, bawa tujuan awal untuk redirect-after-login.
   const loginUrl = new URL('/oms/login', request.url)
   const { pathname, search } = request.nextUrl
   loginUrl.searchParams.set('redirect', `${pathname}${search}`)

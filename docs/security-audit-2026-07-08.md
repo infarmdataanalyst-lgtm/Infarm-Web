@@ -5,7 +5,11 @@
 - **Sifat:** Read-only audit — tidak ada kode diubah.
 - **Catatan:** `npm audit` belum berhasil dijalankan (jaringan offline, `registry.npmjs.org ENOENT`). Scan CVE dependency perlu diulang saat online.
 
-> Status: **BELUM diperbaiki** — daftar temuan untuk ditindaklanjuti nanti.
+> Status: **sebagian besar BELUM diperbaiki** — daftar temuan untuk ditindaklanjuti nanti.
+>
+> **Progres:**
+> - 2026-07-08 — **S-4 sebagian diperbaiki**: `reviews/create` kini terikat ke pesanan asli + verifikasi produk, dan menolak review pesanan berstatus `Dibatalkan`.
+> - 2026-07-08 — **K-4 diperbaiki** & **T-2 sebagian**: login OMS DB-backed (`admin_users` + scrypt), cookie sesi HMAC httpOnly diverifikasi di `proxy.ts`, + rate limit login. **K-1 belum** (endpoint mutasi OMS masih perlu guard per-endpoint — infra sesi sudah siap dipakai).
 
 ---
 
@@ -22,6 +26,7 @@
   - Contoh: `products/create/route.ts:83` validasi payload tapi tidak cek pemanggil admin.
 - **Bahaya:** Hapus semua produk, buat promo diskon 100%, palsukan balasan "admin" di review.
 - **Rekomendasi:** Cek sesi admin server-side di tiap route handler mutasi (helper bersama), atau perluas boundary. Jangan andalkan proxy halaman.
+- **Catatan (2026-07-08):** Infrastruktur sesi terverifikasi kini tersedia — `verifySessionToken` (`src/lib/oms-auth.ts`) bisa dipanggil dari tiap route handler untuk memblokir pemanggil non-admin. Tinggal diterapkan per-endpoint (belum dikerjakan).
 
 ### K-2 · `GET /api/orders/list` bocorkan PII semua pelanggan tanpa auth
 - **Kategori:** C / F
@@ -39,10 +44,12 @@
 
 ### K-4 · Sesi OMS gampang dipalsukan
 - **Kategori:** B (Auth Failures)
-- **Lokasi:** `src/lib/oms-auth.ts:22-25`, `src/proxy.ts:12`
+- **Status:** ✅ DIPERBAIKI (2026-07-08)
+- **Lokasi:** `src/lib/oms-auth.ts`, `src/proxy.ts`, `src/app/api/oms/login/route.ts`
 - **Masalah:** Guard cuma cek keberadaan cookie `oms_session`, nilai hardcoded `"1"`, di-set client-side via `document.cookie` (tidak `httpOnly`, tanpa `Secure`). Tak ada tanda tangan/verifikasi.
 - **Bahaya:** Penyerang jalankan `document.cookie="oms_session=1"` → akses penuh dashboard.
-- **Rekomendasi:** Ganti ke sesi ter-tandatangani/terverifikasi server (Supabase Auth di roadmap); cookie `httpOnly` + `Secure` + `SameSite`.
+- **Perbaikan:** Login DB-backed (tabel `admin_users` + verifikasi scrypt). Cookie sesi kini token **HMAC-SHA256 bertanda tangan**, di-set **server-side** `httpOnly` + `Secure` (prod) + `SameSite=Lax` + kedaluwarsa. `proxy.ts` **memverifikasi tanda tangan** (`verifySessionToken`), bukan sekadar keberadaan cookie → cookie tak bisa dipalsukan tanpa `OMS_SESSION_SECRET`.
+- **Sisa:** Set `OMS_SESSION_SECRET` di production (jangan pakai fallback dev). Ganti password seed default.
 
 ---
 
@@ -57,9 +64,11 @@
 
 ### T-2 · Tak ada rate limit / lockout di login OMS
 - **Kategori:** B (Auth Failures)
-- **Lokasi:** `src/app/oms/login/page.tsx`
-- **Masalah:** Tak ada pembatasan percobaan login → brute force. (Dampak sekarang berkurang karena K-4 lebih parah.)
-- **Rekomendasi:** Rate limit per IP + backoff/lockout saat auth real dipasang.
+- **Status:** 🟡 SEBAGIAN diperbaiki (2026-07-08)
+- **Lokasi:** `src/app/api/oms/login/route.ts`
+- **Masalah:** Tak ada pembatasan percobaan login → brute force.
+- **Perbaikan:** Rate limit in-memory di `/api/oms/login` (5 percobaan/menit per IP+username → `429`).
+- **Sisa:** In-memory = per-instance (tak konsisten di multi-instance/serverless). Untuk production pertimbangkan rate limit terpusat (mis. tabel Supabase / Upstash / edge). Belum ada lockout jangka panjang.
 
 ---
 
@@ -87,9 +96,16 @@
 
 ### S-4 · `POST /api/reviews/reply` bisa dipalsukan + review tanpa batas panjang
 - **Kategori:** A / F
+- **Status:** 🟡 SEBAGIAN diperbaiki (2026-07-08)
 - **Lokasi:** `src/app/api/reviews/reply/route.ts:10`, `src/app/api/reviews/create/route.ts:12`
-- **Masalah:** `reply` tanpa auth (bagian K-1) → palsukan balasan "admin". `reviews/create`: `authorName`/`comment` tanpa panjang maks → spam/impersonasi. Catatan: tidak ada `dangerouslySetInnerHTML` di `src/` → teks di-render via JSX (React auto-escape) → tidak ada stored XSS.
-- **Rekomendasi:** Proteksi reply (admin-only), batasi panjang comment/authorName, tambah anti-spam.
+- **Masalah:** `reply` tanpa auth (bagian K-1) → palsukan balasan "admin". `reviews/create`: dulu tak terikat ke pesanan (review palsu untuk produk apa pun) + `authorName`/`comment` tanpa panjang maks → spam/impersonasi. Catatan: tidak ada `dangerouslySetInnerHTML` di `src/` → teks di-render via JSX (React auto-escape) → tidak ada stored XSS.
+- **Sub-checklist:**
+  - [x] `reviews/create` terikat ke pesanan asli (wajib `orderId`, verifikasi order ada + `productId` bagian dari `order.items`) — cegah review produk yang tak dibeli.
+  - [x] Tolak review pesanan berstatus `Dibatalkan` (server-side, otoritatif) — sekaligus menutup bug review pesanan batal.
+  - [ ] Proteksi `reviews/reply` (admin-only) — masih terbuka (tergantung K-1).
+  - [ ] Batasi panjang `authorName`/`comment` + anti-spam.
+  - [ ] (Opsional) Ikat review dengan token seperti pembatalan (`order-token.ts`) agar hanya pemilik pesanan bisa mengulas.
+- **Rekomendasi:** Selesaikan sisa checklist di atas.
 
 ---
 
