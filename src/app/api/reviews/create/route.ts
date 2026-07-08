@@ -3,7 +3,7 @@
 
 import { NextResponse } from 'next/server'
 import { revalidatePath } from 'next/cache'
-import { createReview } from '@/lib/mock-db/reviews'
+import { createReview, DuplicateReviewError } from '@/lib/mock-db/reviews'
 import type { CreateReviewInput } from '@/lib/mock-db/reviews'
 import { getOrderByOrderId } from '@/lib/mock-db/orders'
 
@@ -51,7 +51,8 @@ export async function POST(request: Request) {
   // === Verifikasi pesanan di server (otoritatif) ===
   // Ambil pesanan asli lalu tolak bila: tidak ada, sudah dibatalkan, atau produk yang
   // diulas bukan bagian dari pesanan tsb. Cegah ulasan pesanan batal / produk yang tak dibeli.
-  const order = await getOrderByOrderId(body.orderId.replace(/^#/, ''))
+  const invoice = body.orderId.replace(/^#/, '')
+  const order = await getOrderByOrderId(invoice)
   if (!order) {
     return NextResponse.json({ error: 'Pesanan tidak ditemukan.' }, { status: 404 })
   }
@@ -69,12 +70,16 @@ export async function POST(request: Request) {
   }
 
   try {
-    const id = await createReview(body)
+    const id = await createReview({ ...body, orderInvoice: invoice })
     // Segarkan halaman detail produk agar ulasan baru langsung tampil
     revalidatePath(`/produk/${body.productId}`)
     return NextResponse.json({ success: true, id }, { status: 201 })
   } catch (err) {
-    // Penyebab umum: product_id tidak ada di tabel products (pelanggaran foreign key)
+    // Produk pada pesanan ini sudah pernah diulas → tolak duplikat
+    if (err instanceof DuplicateReviewError) {
+      return NextResponse.json({ error: err.message }, { status: 409 })
+    }
+    // Penyebab umum lain: product_id tidak ada di tabel products (pelanggaran foreign key)
     const message = err instanceof Error ? err.message : 'Gagal menyimpan ulasan.'
     return NextResponse.json({ error: message }, { status: 500 })
   }

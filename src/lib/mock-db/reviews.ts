@@ -39,6 +39,15 @@ export type CreateReviewInput = {
   comment: string
   category?: string
   imageUrls?: string[]
+  orderInvoice?: string // nomor_invoice pesanan asal — untuk cegah ulasan ganda (order+produk)
+}
+
+// Dilempar saat produk pada suatu pesanan sudah pernah diulas (pelanggaran unique constraint).
+export class DuplicateReviewError extends Error {
+  constructor() {
+    super('Produk ini sudah pernah kamu ulas untuk pesanan tersebut.')
+    this.name = 'DuplicateReviewError'
+  }
 }
 
 // Bentuk ulasan untuk halaman Manajemen Ulasan OMS (sudah termasuk info produk)
@@ -107,26 +116,52 @@ export async function getProductRatingSummary(
 // === Tulis (form publik) ===
 
 // Menyimpan ulasan baru. Mengembalikan id ulasan yang dibuat.
+// Melempar DuplicateReviewError bila (order_invoice, product_id) sudah ada (unique violation).
 export async function createReview(input: CreateReviewInput): Promise<string> {
   const supabase = createAdminClient()
-  const { data, error } = await supabase
+
+  const base = {
+    product_id: input.productId,
+    author_name: input.authorName,
+    rating: input.rating,
+    comment: input.comment,
+    category: input.category ?? null,
+    image_urls: input.imageUrls ?? [],
+  }
+
+  let { data, error } = await supabase
     .from('reviews')
-    .insert({
-      product_id: input.productId,
-      author_name: input.authorName,
-      rating: input.rating,
-      comment: input.comment,
-      category: input.category ?? null,
-      image_urls: input.imageUrls ?? [],
-    })
+    .insert({ ...base, order_invoice: input.orderInvoice ?? null })
     .select('id')
     .single()
 
+  // Fallback aman bila kolom order_invoice belum di-migrate (kode error kolom tak dikenal)
+  if (error && (error.code === 'PGRST204' || error.code === '42703')) {
+    ;({ data, error } = await supabase.from('reviews').insert(base).select('id').single())
+  }
+
+  // Unique violation (order+produk sudah diulas) → duplikat
+  if (error?.code === '23505') {
+    throw new DuplicateReviewError()
+  }
   if (error || !data) {
     throw new Error(`Gagal menyimpan ulasan: ${error?.message ?? 'tidak diketahui'}`)
   }
 
   return data.id as string
+}
+
+// Daftar product_id yang SUDAH diulas untuk sebuah pesanan (dipakai form review agar
+// produk yang sudah diulas tidak bisa diulas lagi). Array kosong bila belum ada / error.
+export async function getReviewedProductIds(orderInvoice: string): Promise<string[]> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('reviews')
+    .select('product_id')
+    .eq('order_invoice', orderInvoice)
+
+  if (error || !data) return []
+  return (data as { product_id: string }[]).map((r) => r.product_id)
 }
 
 // === Baca & moderasi (OMS) ===

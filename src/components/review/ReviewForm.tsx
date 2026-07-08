@@ -26,7 +26,8 @@ export default function ReviewForm() {
   const [products, setProducts] = useState<ReviewProduct[]>([])
   const [customerName, setCustomerName] = useState('')
   // 'cancelled' → pesanan sudah dibatalkan, tidak boleh diulas
-  const [status, setStatus] = useState<'loading' | 'ready' | 'notfound' | 'cancelled'>('loading')
+  // 'done' → semua produk pada pesanan sudah diulas sebelumnya
+  const [status, setStatus] = useState<'loading' | 'ready' | 'notfound' | 'cancelled' | 'done'>('loading')
   const [submitting, setSubmitting] = useState(false)
   // Pesan error saat kirim ulasan gagal (mis. pesanan dibatalkan / produk bukan bagian pesanan)
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -47,8 +48,12 @@ export default function ReviewForm() {
         r.ok ? r.json() : null,
       ),
       fetch('/api/products/list').then((r) => (r.ok ? r.json() : { products: [] })),
+      // Produk yang SUDAH diulas untuk pesanan ini → jangan tawarkan lagi (cegah ulasan ganda)
+      fetch(`/api/reviews/reviewed?orderId=${encodeURIComponent(orderId)}`).then((r) =>
+        r.ok ? r.json() : { reviewedProductIds: [] },
+      ),
     ])
-      .then(([orderRes, productRes]) => {
+      .then(([orderRes, productRes, reviewedRes]) => {
         if (!active) return
         if (!orderRes?.order) {
           setStatus('notfound')
@@ -67,17 +72,28 @@ export default function ReviewForm() {
           imageById.set(p.id, p.imageUrl)
         }
 
+        // Buang produk yang sudah diulas sebelumnya untuk pesanan ini
+        const reviewedIds = new Set<string>((reviewedRes?.reviewedProductIds ?? []) as string[])
         const items = orderRes.order.items as OrderItem[]
-        const built: ReviewProduct[] = items.map((item) => ({
-          id: item.productId,
-          name: item.name,
-          variant: '', // pesanan belum menyimpan varian
-          imageUrl: imageById.get(item.productId) || PLACEHOLDER_IMAGE,
-          price: item.price,
-        }))
+        const built: ReviewProduct[] = items
+          .filter((item) => !reviewedIds.has(item.productId))
+          .map((item) => ({
+            id: item.productId,
+            name: item.name,
+            variant: '', // pesanan belum menyimpan varian
+            imageUrl: imageById.get(item.productId) || PLACEHOLDER_IMAGE,
+            price: item.price,
+          }))
+
+        setCustomerName(orderRes.order.customerName ?? '')
+
+        // Semua produk pada pesanan sudah diulas → tidak ada yang perlu ditampilkan
+        if (built.length === 0) {
+          setStatus('done')
+          return
+        }
 
         setProducts(built)
-        setCustomerName(orderRes.order.customerName ?? '')
         setReviews(Object.fromEntries(built.map((p) => [p.id, { rating: 0, review: '' }])))
         setStatus('ready')
       })
@@ -185,6 +201,14 @@ export default function ReviewForm() {
           <div className="px-4 py-16 text-center">
             <p className="text-sm text-gray-500">
               Pesanan ini sudah dibatalkan, jadi tidak dapat diberi ulasan.
+            </p>
+          </div>
+        )}
+
+        {status === 'done' && (
+          <div className="px-4 py-16 text-center">
+            <p className="text-sm text-gray-500">
+              Semua produk pada pesanan ini sudah kamu ulas. Terima kasih atas masukanmu!
             </p>
           </div>
         )}
