@@ -134,9 +134,11 @@ export async function createReview(input: CreateReviewInput): Promise<string> {
 // Mengambil seluruh ulasan beserta info produk (join) untuk dashboard OMS, terbaru dulu.
 export async function listReviewsForOms(): Promise<OmsReviewData[]> {
   const supabase = createAdminClient()
+  // Sebut FK eksplisit (products!reviews_product_id_fkey) karena ada >1 relasi reviews→products
+  // di skema — tanpa ini embed ambigu & query gagal (OMS jadi kosong).
   const { data, error } = await supabase
     .from('reviews')
-    .select('*, products(name, sku, image_url)')
+    .select('*, products!reviews_product_id_fkey(name, sku, image_url)')
     .order('created_at', { ascending: false })
 
   if (error) {
