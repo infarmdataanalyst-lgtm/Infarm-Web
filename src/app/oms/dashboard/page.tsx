@@ -69,9 +69,11 @@ export default async function DashboardPage() {
   // 5 pesanan terbaru untuk widget "Pesanan Terbaru" (data disimpan newest-first)
   const recentOrders = orders.slice(0, 5)
 
-  // Pendapatan = jumlah total pesanan yang sudah Lunas
+  // Pendapatan = jumlah total pesanan yang BUKAN dibatalkan (konsisten dengan agregasi
+  // penjualan/terlaris: selama Xendit belum ada, order PENDING dianggap sudah commit).
+  // TODO: setelah Xendit terpasang, perketat ke paymentStatus === 'Lunas' (uang benar-benar masuk).
   const totalRevenue = orders
-    .filter((o) => o.paymentStatus === 'Lunas')
+    .filter((o) => o.status !== 'Dibatalkan')
     .reduce((sum, o) => sum + o.totalAmount, 0)
 
   // Statistik dihitung dari data asli (kartu Produk Aktif & Rating masih dummy)
