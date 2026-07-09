@@ -40,6 +40,10 @@ export async function PATCH(request: Request) {
   if (typeof body.description === 'string') patch.description = body.description
   if (typeof body.archived === 'boolean') patch.archived = body.archived
   if (typeof body.imageUrl === 'string' && body.imageUrl.trim()) patch.imageUrl = body.imageUrl
+  // Galeri foto (opsional): array string, dibatasi maks 9 di mock-db
+  if (Array.isArray(body.images) && body.images.every((s) => typeof s === 'string')) {
+    patch.images = body.images as string[]
+  }
 
   const updated = await updateProduct(body.id, patch)
   if (!updated) {

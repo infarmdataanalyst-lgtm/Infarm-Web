@@ -23,6 +23,7 @@ type UploadedImage = {
 }
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB per file
+const MAX_IMAGES = 9 // maksimal foto per produk (sesuai slider detail produk)
 
 export default function UploadProductPage() {
   const router = useRouter()
@@ -47,7 +48,15 @@ export default function UploadProductPage() {
     if (!fileList || fileList.length === 0) return
     setUploadNotice(null)
 
+    // Sudah penuh → tolak semua
+    if (images.length >= MAX_IMAGES) {
+      setUploadNotice(`Maksimal ${MAX_IMAGES} foto. Hapus salah satu untuk menambah.`)
+      return
+    }
+
+    const available = MAX_IMAGES - images.length // sisa slot foto
     let added = 0
+    let capped = false
     Array.from(fileList).forEach((file) => {
       if (!file.type.startsWith('image/')) {
         setUploadNotice(`"${file.name}" bukan file gambar dan dilewati.`)
@@ -57,20 +66,33 @@ export default function UploadProductPage() {
         setUploadNotice(`"${file.name}" melebihi 5MB dan dilewati.`)
         return
       }
+      // Lewati bila slot 9 foto sudah penuh
+      if (added >= available) {
+        capped = true
+        return
+      }
       added += 1
       const reader = new FileReader()
       reader.onload = () => {
         const src = reader.result as string
-        setImages((prev) => [
-          ...prev,
-          { id: `${file.name}-${file.size}-${prev.length}`, src, name: file.name },
-        ])
+        // Guard tambahan: jangan melebihi 9 walau ada race antar-reader
+        setImages((prev) =>
+          prev.length >= MAX_IMAGES
+            ? prev
+            : [...prev, { id: `${file.name}-${file.size}-${prev.length}`, src, name: file.name }],
+        )
       }
       reader.readAsDataURL(file)
     })
 
     if (added > 0) {
-      setUploadNotice(`${added} foto berhasil ditambahkan.`)
+      setUploadNotice(
+        capped
+          ? `${added} foto ditambahkan (batas ${MAX_IMAGES} foto tercapai).`
+          : `${added} foto berhasil ditambahkan.`,
+      )
+    } else if (capped) {
+      setUploadNotice(`Maksimal ${MAX_IMAGES} foto tercapai.`)
     }
   }
 
@@ -106,6 +128,8 @@ export default function UploadProductPage() {
           description: description.trim() || undefined,
           // Gambar pertama = gambar utama (data URL base64); kosong → pakai placeholder
           imageUrl: images[0]?.src,
+          // Seluruh galeri (maks 9) → tampil sebagai thumbnail di halaman detail produk
+          images: images.map((img) => img.src),
         }),
       })
       if (!res.ok) throw new Error('save failed')
@@ -253,7 +277,7 @@ export default function UploadProductPage() {
                   Tarik dan lepas gambar di sini
                 </span>
                 <span className="mt-1 text-xs text-gray-400">
-                  atau klik untuk memilih file · Maksimal 5MB per file
+                  atau klik untuk memilih file · Maksimal {MAX_IMAGES} foto · 5MB per file
                 </span>
                 <input
                   type="file"

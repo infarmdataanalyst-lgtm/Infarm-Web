@@ -23,7 +23,8 @@ type Product = {
   slug: ProductCategory | '' // slug kategori (untuk form edit)
   price: number
   stock: number
-  image: string
+  image: string // foto utama (thumbnail tabel) = images[0]
+  images?: string[] // galeri foto (maks 9)
   persisted: boolean // true bila tersimpan di mock DB (bisa diedit/dihapus permanen)
   archived: boolean // true = disembunyikan dari ecommerce, tetap ada di OMS
 }
@@ -35,11 +36,20 @@ type EditForm = {
   slug: ProductCategory | ''
   price: number | ''
   stock: number | ''
-  image: string
+  images: string[] // galeri foto (maks 9); images[0] = foto utama
 }
 
 const LOW_STOCK_THRESHOLD = 10 // di bawah angka ini dianggap stok menipis
 const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB per foto
+const MAX_IMAGES = 9 // maksimal foto per produk (sesuai slider detail produk)
+
+// Pilihan rentang waktu untuk kolom "Terjual". days=null berarti sepanjang waktu.
+const SALES_RANGES: { label: string; days: number | null }[] = [
+  { label: '7 Hari', days: 7 },
+  { label: '30 Hari', days: 30 },
+  { label: '90 Hari', days: 90 },
+  { label: 'Semua', days: null },
+]
 
 // === Dummy Data Produk (contoh bawaan, tidak tersimpan di DB) ===
 const INITIAL_PRODUCTS: Product[] = [
@@ -61,6 +71,7 @@ function mapStored(p: StoredProduct): Product {
     price: p.promoPrice,
     stock: p.stock,
     image: p.imageUrl,
+    images: p.images,
     persisted: true,
     archived: p.archived ?? false,
   }
@@ -89,6 +100,10 @@ export default function ProductsPage() {
   const [deleteTarget, setDeleteTarget] = useState<Product | null>(null)
   const [deleting, setDeleting] = useState(false)
 
+  // Data terjual per produk (peta productId → unit terjual) + rentang waktu terpilih
+  const [soldCounts, setSoldCounts] = useState<Record<string, number>>({})
+  const [rangeDays, setRangeDays] = useState<number | null>(30) // default 30 hari terakhir
+
   // Ambil produk hasil input OMS (mock DB) lalu tampilkan di depan daftar dummy
   useEffect(() => {
     let active = true
@@ -104,6 +119,27 @@ export default function ProductsPage() {
     }
   }, [])
 
+  // Ambil jumlah terjual per produk sesuai rentang waktu terpilih
+  useEffect(() => {
+    let active = true
+    const params = new URLSearchParams()
+    // days=null → sepanjang waktu (tanpa filter from)
+    if (rangeDays != null) {
+      const from = new Date(Date.now() - rangeDays * 86_400_000).toISOString()
+      params.set('from', from)
+    }
+    fetch(`/api/products/sales-count?${params.toString()}`)
+      .then((res) => res.json())
+      .then((data: { counts?: Record<string, number> }) => {
+        if (!active) return
+        setSoldCounts(data.counts ?? {})
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [rangeDays])
+
   // === Ringkasan stok ===
   const summary = useMemo(() => {
     const total = products.length
@@ -117,13 +153,20 @@ export default function ProductsPage() {
   function openEdit(product: Product) {
     setEditTarget(product)
     setEditError(null)
+    // Galeri untuk diedit: pakai images bila ada, fallback ke foto utama tunggal
+    const gallery =
+      product.images && product.images.length > 0
+        ? product.images
+        : product.image
+          ? [product.image]
+          : []
     setForm({
       name: product.name,
       sku: product.sku,
       slug: product.slug,
       price: product.price,
       stock: product.stock,
-      image: product.image,
+      images: gallery,
     })
   }
 
@@ -133,22 +176,43 @@ export default function ProductsPage() {
     setEditError(null)
   }
 
-  // Membaca foto baru yang dipilih → preview (data URL)
+  // Menambahkan satu/lebih foto ke galeri (data URL), dibatasi maks 9
   function handleEditImage(fileList: FileList | null) {
-    const file = fileList?.[0]
-    if (!file) return
-    if (!file.type.startsWith('image/')) {
-      setEditError('File yang dipilih bukan gambar.')
+    if (!fileList || !form) return
+    const available = MAX_IMAGES - form.images.length
+    if (available <= 0) {
+      setEditError(`Maksimal ${MAX_IMAGES} foto.`)
       return
     }
-    if (file.size > MAX_FILE_SIZE) {
-      setEditError('Ukuran foto melebihi 5MB.')
-      return
-    }
-    setEditError(null)
-    const reader = new FileReader()
-    reader.onload = () => setForm((f) => (f ? { ...f, image: reader.result as string } : f))
-    reader.readAsDataURL(file)
+    // Ambil sebanyak slot tersisa; sisanya diabaikan
+    Array.from(fileList)
+      .slice(0, available)
+      .forEach((file) => {
+        if (!file.type.startsWith('image/')) {
+          setEditError('File yang dipilih bukan gambar.')
+          return
+        }
+        if (file.size > MAX_FILE_SIZE) {
+          setEditError('Ukuran foto melebihi 5MB.')
+          return
+        }
+        setEditError(null)
+        const reader = new FileReader()
+        reader.onload = () =>
+          setForm((f) =>
+            f
+              ? f.images.length >= MAX_IMAGES
+                ? f
+                : { ...f, images: [...f.images, reader.result as string] }
+              : f,
+          )
+        reader.readAsDataURL(file)
+      })
+  }
+
+  // Menghapus satu foto dari galeri berdasarkan indeks
+  function removeEditImage(index: number) {
+    setForm((f) => (f ? { ...f, images: f.images.filter((_, i) => i !== index) } : f))
   }
 
   async function handleSaveEdit() {
@@ -179,7 +243,8 @@ export default function ProductsPage() {
             category: form.slug,
             price,
             stock,
-            imageUrl: form.image,
+            imageUrl: form.images[0],
+            images: form.images,
           }),
         })
         if (!res.ok) throw new Error()
@@ -204,7 +269,8 @@ export default function ProductsPage() {
                 categoryLabel: getCategoryLabel(form.slug) ?? p.categoryLabel,
                 price,
                 stock,
-                image: form.image,
+                image: form.images[0] ?? p.image,
+                images: form.images,
               }
             : p,
         ),
@@ -289,8 +355,29 @@ export default function ProductsPage() {
           <SummaryCard label="Stok Habis" value={`${summary.outOfStock} Produk`} valueClass="text-red-600" accentClass="bg-red-50 text-red-600" icon={<EmptyIcon />} />
         </section>
 
+        {/* === Filter Rentang Penjualan (kolom Terjual) === */}
+        <div className="mt-6 flex flex-wrap items-center gap-2">
+          <span className="text-sm font-medium text-gray-600">Terjual dalam:</span>
+          <div className="inline-flex rounded-lg border border-gray-200 bg-white p-0.5">
+            {SALES_RANGES.map((range) => (
+              <button
+                key={range.label}
+                type="button"
+                onClick={() => setRangeDays(range.days)}
+                className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                  rangeDays === range.days
+                    ? 'bg-emerald-700 text-white'
+                    : 'text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                {range.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* === Tabel Produk === */}
-        <section className="mt-6 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+        <section className="mt-4 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead className="border-b border-gray-200 bg-gray-50 text-xs font-semibold uppercase tracking-wide text-gray-500">
@@ -300,6 +387,7 @@ export default function ProductsPage() {
                   <th className="px-5 py-3.5">Kategori</th>
                   <th className="px-5 py-3.5">Harga</th>
                   <th className="px-5 py-3.5">Sisa Stok</th>
+                  <th className="px-5 py-3.5">Terjual</th>
                   <th className="px-5 py-3.5 text-right">Aksi</th>
                 </tr>
               </thead>
@@ -343,6 +431,13 @@ export default function ProductsPage() {
                           </button>
                         )}
                       </div>
+                    </td>
+                    {/* Terjual dalam rentang waktu terpilih */}
+                    <td className={`px-5 py-4 ${product.archived ? 'opacity-60' : ''}`}>
+                      <span className="font-semibold text-gray-900">
+                        {(soldCounts[product.id] ?? 0).toLocaleString('id-ID')}
+                      </span>
+                      <span className="ml-1 text-xs text-gray-400">pcs</span>
                     </td>
                     {/* Aksi: Edit + Arsip + Hapus */}
                     <td className="px-5 py-4">
@@ -392,15 +487,52 @@ export default function ProductsPage() {
               {editTarget.persisted ? 'Perubahan disimpan permanen & tampil di ecommerce.' : 'Produk contoh — perubahan hanya sementara di layar.'}
             </p>
 
-            {/* Foto */}
-            <div className="mt-4 flex items-center gap-4">
-              <div className="relative h-20 w-20 flex-none overflow-hidden rounded-lg border border-gray-200 bg-gray-100">
-                <Image src={form.image} alt={form.name} fill unoptimized sizes="80px" className="object-cover" />
-              </div>
-              <label className="cursor-pointer rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-600 transition hover:bg-gray-50">
-                Ganti Foto
-                <input type="file" accept="image/*" className="hidden" onChange={(e) => { handleEditImage(e.target.files); e.target.value = '' }} />
+            {/* Galeri foto (maks 9). Foto pertama = foto utama. */}
+            <div className="mt-4">
+              <label className="mb-1.5 block text-sm font-medium text-gray-700">
+                Foto Produk <span className="font-normal text-gray-400">(maks {MAX_IMAGES}, foto pertama = utama)</span>
               </label>
+              <div className="grid grid-cols-4 gap-3 sm:grid-cols-5">
+                {form.images.map((src, index) => (
+                  <div
+                    key={index}
+                    className="group relative aspect-square overflow-hidden rounded-lg border border-gray-200 bg-gray-100"
+                  >
+                    <Image src={src} alt={`Foto ${index + 1}`} fill unoptimized sizes="80px" className="object-cover" />
+                    {/* Penanda foto utama */}
+                    {index === 0 && (
+                      <span className="absolute left-1 top-1 rounded-full bg-emerald-600 px-1.5 py-0.5 text-[9px] font-semibold text-white">
+                        Utama
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => removeEditImage(index)}
+                      aria-label={`Hapus foto ${index + 1}`}
+                      className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-gray-900/60 text-xs leading-none text-white opacity-0 transition group-hover:opacity-100"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+                {/* Tombol tambah foto (muncul selama < 9 foto) */}
+                {form.images.length < MAX_IMAGES && (
+                  <label className="flex aspect-square cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 bg-gray-50 text-gray-400 transition hover:border-emerald-400 hover:bg-emerald-50/40">
+                    <span className="text-2xl leading-none">+</span>
+                    <span className="mt-0.5 text-[10px] font-medium">Tambah</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => {
+                        handleEditImage(e.target.files)
+                        e.target.value = ''
+                      }}
+                    />
+                  </label>
+                )}
+              </div>
             </div>
 
             {/* Nama & SKU */}

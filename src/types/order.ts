@@ -42,6 +42,15 @@ export type Order = {
   trackingNumber?: string // nomor resi
 }
 
+// Agregasi produk terlaris — jumlah unit terjual & total pendapatan per produk.
+// Dihitung on-demand dari orders.items (tidak disimpan sebagai kolom terpisah).
+export type BestSellingProduct = {
+  productId: string
+  name: string
+  totalSold: number // total unit terjual (jumlah quantity)
+  totalRevenue: number // total pendapatan dari produk ini (quantity * price)
+}
+
 // Payload yang dikirim halaman sukses checkout ke API (sebelum disimpan).
 // paymentStatus opsional — default 'Lunas' karena dikirim setelah pembayaran sukses.
 export type CreateOrderInput = {

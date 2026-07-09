@@ -1,14 +1,16 @@
 'use client'
 
 // src/app/keranjang/page.tsx
-// Halaman Keranjang Belanja. Ditempatkan DI LUAR route group (store) agar tidak mewarisi
-// AppBar global — halaman ini punya header hijau sendiri (CartHeader).
+// Halaman Keranjang Belanja. Di LUAR route group (store) → punya header hijau sendiri (CartHeader).
 // Sumber data keranjang = cookie (lib/cart-client.ts), dibaca reaktif via useSyncExternalStore.
+// Promo aktif diambil REAL dari Supabase lewat API server-only (/api/promotions/active).
+// (Rekomendasi paket combo tampil di halaman detail produk, bukan di keranjang.)
 
 import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import type { CartLineItem } from '@/types/cart'
 import type { StoredProduct } from '@/types/product'
+import type { Promotion } from '@/types/promotion'
 import { dummyProducts } from '@/lib/data/dummy-products'
 import {
   updateQuantity,
@@ -17,9 +19,11 @@ import {
   getCartSnapshot,
   getServerCartSnapshot,
   setCheckoutItems,
+  setCheckoutPromo,
 } from '@/lib/cart-client'
+import { computePromoProgress, computePromoRewards } from '@/lib/promo-cart'
 import CartHeader from '@/components/cart/CartHeader'
-import GiftBanner from '@/components/cart/GiftBanner'
+import CartPromoList from '@/components/cart/CartPromoList'
 import CartItemRow from '@/components/cart/CartItemRow'
 import ProtectionInfo from '@/components/cart/ProtectionInfo'
 import CartRecentlyViewed from '@/components/cart/CartRecentlyViewed'
@@ -37,6 +41,10 @@ export default function CartPage() {
   // Produk OMS dari Supabase (untuk me-resolve detail item keranjang yang ber-id UUID)
   const [omsProducts, setOmsProducts] = useState<StoredProduct[]>([])
 
+  // Promo aktif real dari Supabase (via API server-only)
+  const [promos, setPromos] = useState<Promotion[]>([])
+  const [loadingPromos, setLoadingPromos] = useState(true)
+
   // === Ambil produk real dari API saat halaman dibuka ===
   useEffect(() => {
     fetch('/api/products/list')
@@ -45,8 +53,24 @@ export default function CartPage() {
       .catch(() => setOmsProducts([]))
   }, [])
 
+  // === Ambil promo aktif (server-side filter). Gagal fetch → section promo kosong, halaman aman. ===
+  useEffect(() => {
+    let active = true
+    fetch('/api/promotions/active')
+      .then((res) => res.json())
+      .then((data: { promotions?: Promotion[] }) => {
+        if (active) setPromos(data.promotions ?? [])
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (active) setLoadingPromos(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
   // === Gabungkan item cookie dengan detail produk (nama, foto, harga coret, badge) ===
-  // Cari produk dari Supabase dulu, lalu fallback ke dummy (produk contoh lama).
   const items: CartLineItem[] = useMemo(() => {
     return cookieCart.flatMap((ci) => {
       const product =
@@ -71,13 +95,11 @@ export default function CartPage() {
   // === Kalkulasi dinamis (item tercentang) ===
   const selectedItems = useMemo(() => items.filter((i) => i.selected), [items])
 
-  // Total harga belanja dari item yang dicentang
   const selectedTotal = useMemo(
     () => selectedItems.reduce((sum, i) => sum + i.price * i.quantity, 0),
     [selectedItems],
   )
 
-  // Jumlah barang (akumulasi quantity) yang dicentang — dipakai di "Item (X)" & "Checkout (X)"
   const selectedCount = useMemo(
     () => selectedItems.reduce((sum, i) => sum + i.quantity, 0),
     [selectedItems],
@@ -85,9 +107,13 @@ export default function CartPage() {
 
   const allSelected = items.length > 0 && items.every((i) => i.selected)
 
+  // === Promo: progres tiap promo + agregasi hadiah yang tercapai (berdasar item tercentang) ===
+  const promoProgress = useMemo(() => computePromoProgress(promos, selectedTotal), [promos, selectedTotal])
+  const promoRewards = useMemo(() => computePromoRewards(promos, selectedTotal), [promos, selectedTotal])
+  const finalTotal = Math.max(0, selectedTotal - promoRewards.totalDiscount)
+
   // === Aksi ===
 
-  // Centang / lepas centang satu item (toggle keanggotaan di set "excluded")
   function toggleSelect(productId: string) {
     setExcluded((prev) => {
       const next = new Set(prev)
@@ -97,29 +123,25 @@ export default function CartPage() {
     })
   }
 
-  // Pilih semua / lepas semua
   function toggleSelectAll() {
     setExcluded(allSelected ? new Set(items.map((i) => i.productId)) : new Set())
   }
 
-  // Tambah jumlah satu item (+1) — tulis ke cookie, store memicu re-render
   function increment(productId: string) {
     const item = cookieCart.find((i) => i.productId === productId)
     if (item) updateQuantity(productId, item.quantity + 1)
   }
 
-  // Kurangi jumlah satu item (-1). Jika mencapai 0, item dihapus dari keranjang.
   function decrement(productId: string) {
     const item = cookieCart.find((i) => i.productId === productId)
-    if (item) updateQuantity(productId, item.quantity - 1) // <1 otomatis dihapus oleh helper
+    if (item) updateQuantity(productId, item.quantity - 1)
   }
 
-  // Hapus item dari keranjang
   function remove(productId: string) {
     removeFromCart(productId)
   }
 
-  // Lanjut ke checkout: simpan dulu item TERCENTANG ke cookie checkout agar dibaca di /checkout
+  // Lanjut ke checkout: simpan item TERCENTANG + snapshot promo/combo yang tercapai.
   function handleCheckout() {
     const chosen = selectedItems.map((i) => ({
       productId: i.productId,
@@ -127,11 +149,28 @@ export default function CartPage() {
       price: i.price,
     }))
     setCheckoutItems(chosen)
+
+    // Snapshot promo/combo agar bisa diteruskan ke order nanti
+    const selectedIdSet = new Set(selectedItems.map((i) => i.productId))
+    const comboIds = Array.from(
+      new Set(
+        cookieCart
+          .filter((c) => selectedIdSet.has(c.productId) && c.comboId)
+          .map((c) => c.comboId as string),
+      ),
+    )
+    setCheckoutPromo({
+      promoIds: promoRewards.reachedPromoIds,
+      freeShipping: promoRewards.freeShipping,
+      discountTotal: promoRewards.totalDiscount,
+      freeProductIds: promoRewards.freeProducts.map((f) => f.id),
+      comboIds,
+    })
+
     router.push('/checkout')
   }
 
-  // Produk "baru dilihat" — ambil 2 produk berbadge promo sebagai contoh
-  // TODO: ganti dengan riwayat asli setelah fitur tracking dibuat
+  // Produk "baru dilihat" — contoh; TODO ganti riwayat asli
   const recentlyViewed = dummyProducts.filter((p) => p.badge).slice(0, 2)
 
   return (
@@ -139,8 +178,8 @@ export default function CartPage() {
       {/* 1 — Header hijau dengan tombol kembali + judul */}
       <CartHeader />
 
-      {/* 2 — Banner hadiah dinamis berdasarkan total item tercentang */}
-      <GiftBanner selectedTotal={selectedTotal} />
+      {/* 2 — Promo aktif (real dari Supabase): progress bar / pesan sukses per promo */}
+      <CartPromoList promos={promoProgress} loading={loadingPromos} />
 
       {/* pb-24: ruang agar konten tak tertutup bilah checkout bawah yang fixed */}
       <main className="flex-1 pb-24">
@@ -169,11 +208,11 @@ export default function CartPage() {
         <CartRecentlyViewed products={recentlyViewed} />
       </main>
 
-      {/* 6 — Bilah checkout bawah (sticky) dengan total & jumlah dinamis */}
+      {/* 6 — Bilah checkout bawah (sticky); total sudah dikurangi diskon promo */}
       <CartCheckoutBar
         allSelected={allSelected}
         selectedCount={selectedCount}
-        selectedTotal={selectedTotal}
+        selectedTotal={finalTotal}
         onToggleSelectAll={toggleSelectAll}
         onCheckout={handleCheckout}
       />

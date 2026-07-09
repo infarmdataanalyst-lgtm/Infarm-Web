@@ -6,15 +6,23 @@ import Link from 'next/link'
 import type { Product } from '@/types/product'
 import { dummyProducts } from '@/lib/data/dummy-products'
 import { readProducts } from '@/lib/mock-db/products'
+import { getSalesCountByProduct } from '@/lib/mock-db/orders'
 import ProductCard from '@/components/product/ProductCard'
 
-// Menampilkan section "Katalog Terlaris": produk baru dari OMS + dummy.
+// Menampilkan section "Katalog Terlaris": produk paling banyak dibeli di depan.
 export default async function BestSellingProducts() {
-  // Produk hasil input OMS (mock DB) tampil paling depan, lalu dummy bawaan.
+  // Produk OMS (non-arsip) + dummy, diurut berdasarkan unit terjual dari data order.
   // Produk yang diarsipkan disembunyikan dari ecommerce (tetap ada di OMS).
-  // TODO: ganti dengan query Supabase setelah OMS selesai (urut berdasarkan penjualan)
   const omsProducts = (await readProducts()).filter((p) => !p.archived)
-  const products: Product[] = [...omsProducts, ...dummyProducts].slice(0, 10)
+  const soldCounts = await getSalesCountByProduct()
+
+  // Urutkan berdasarkan unit terjual (terbanyak dulu). Produk tanpa penjualan
+  // tetap pada urutan asalnya (OMS terbaru dulu, lalu dummy) via sort stabil.
+  const products: Product[] = [...omsProducts, ...dummyProducts]
+    .map((product, index) => ({ product, index, sold: soldCounts[product.id] ?? 0 }))
+    .sort((a, b) => b.sold - a.sold || a.index - b.index)
+    .slice(0, 10)
+    .map((entry) => entry.product)
 
   return (
     <section className="w-full">

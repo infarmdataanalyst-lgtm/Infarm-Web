@@ -13,11 +13,12 @@ import {
   TrendingDown,
   Download,
   Calendar,
+  Trophy,
 } from 'lucide-react'
 import OmsHeader from '@/components/oms/OmsHeader'
 import SalesChart from '@/components/oms/SalesChart'
-import { readOrders } from '@/lib/mock-db/orders'
-import type { OrderPaymentStatus } from '@/types/order'
+import { readOrders, getBestSellingProducts } from '@/lib/mock-db/orders'
+import type { OrderPaymentStatus, BestSellingProduct } from '@/types/order'
 
 // Dashboard membaca order asli dari mock DB → selalu segarkan, jangan di-cache
 export const dynamic = 'force-dynamic'
@@ -59,8 +60,11 @@ function formatRupiah(value: number): string {
 }
 
 export default async function DashboardPage() {
-  // Baca pesanan asli dari mock DB (data dari checkout ecommerce)
-  const orders = await readOrders()
+  // Baca pesanan asli & produk terlaris dari mock DB (data dari checkout ecommerce)
+  const [orders, bestSellers] = await Promise.all([
+    readOrders(),
+    getBestSellingProducts({ limit: 5 }),
+  ])
 
   // 5 pesanan terbaru untuk widget "Pesanan Terbaru" (data disimpan newest-first)
   const recentOrders = orders.slice(0, 5)
@@ -161,6 +165,35 @@ export default async function DashboardPage() {
             </div>
           </div>
           <SalesChart />
+        </section>
+
+        {/* === Widget Produk Terlaris === */}
+        <section className="mt-6 rounded-xl border border-gray-200 bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
+            <div className="flex items-center gap-2">
+              <Trophy className="h-5 w-5 text-amber-500" />
+              <h3 className="text-lg font-bold text-gray-900">Produk Terlaris</h3>
+            </div>
+            <Link
+              href="/oms/dashboard/products"
+              className="text-sm font-semibold text-emerald-700 hover:text-emerald-800"
+            >
+              Kelola Produk →
+            </Link>
+          </div>
+          <div className="px-6 py-5">
+            {bestSellers.length === 0 ? (
+              <p className="py-6 text-center text-sm text-gray-400">
+                Belum ada penjualan. Data terlaris muncul setelah ada pesanan lunas.
+              </p>
+            ) : (
+              <ol className="space-y-4">
+                {bestSellers.map((product, index) => (
+                  <BestSellerRow key={product.productId} product={product} rank={index + 1} />
+                ))}
+              </ol>
+            )}
+          </div>
         </section>
 
         {/* === Grid Bawah: Pesanan Terbaru + Stok Rendah === */}
@@ -298,6 +331,36 @@ function PaymentBadge({ status }: { status: OrderPaymentStatus }) {
       <span className="h-1.5 w-1.5 rounded-full bg-current" />
       {status}
     </span>
+  )
+}
+
+// Baris produk terlaris: peringkat, nama, unit terjual, dan total pendapatan
+function BestSellerRow({ product, rank }: { product: BestSellingProduct; rank: number }) {
+  // Peringkat 1-3 diberi warna medali; sisanya netral
+  const rankColor =
+    rank === 1
+      ? 'bg-amber-100 text-amber-700'
+      : rank === 2
+        ? 'bg-gray-100 text-gray-600'
+        : rank === 3
+          ? 'bg-orange-100 text-orange-700'
+          : 'bg-gray-50 text-gray-400'
+
+  return (
+    <li className="flex items-center gap-4">
+      <span
+        className={`flex h-8 w-8 flex-none items-center justify-center rounded-full text-sm font-bold ${rankColor}`}
+      >
+        {rank}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-semibold text-gray-900">{product.name}</p>
+        <p className="text-xs text-gray-400">{formatRupiah(product.totalRevenue)}</p>
+      </div>
+      <span className="flex-none text-sm font-bold text-emerald-700">
+        {product.totalSold.toLocaleString('id-ID')} terjual
+      </span>
+    </li>
   )
 }
 

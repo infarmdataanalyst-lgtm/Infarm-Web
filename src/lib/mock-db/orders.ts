@@ -16,6 +16,7 @@ import type {
   CreateOrderInput,
   OrderPaymentStatus,
   OrderFulfillmentStatus,
+  BestSellingProduct,
 } from '@/types/order'
 
 // === Pemetaan baris DB <-> Order ===
@@ -93,6 +94,79 @@ export async function getOrderByOrderId(orderId: string): Promise<Order | null> 
   }
 
   return data ? rowToOrder(data as OrderRow) : null
+}
+
+// Opsi filter agregasi penjualan. from/to = ISO date string (inklusif).
+// Tanpa from/to = sepanjang waktu.
+export type SalesRangeOptions = {
+  from?: string // batas bawah order_date (ISO), inklusif
+  to?: string // batas atas order_date (ISO), inklusif
+}
+
+// Mengagregasi unit terjual & pendapatan per productId dari pesanan.
+// Hanya menghitung penjualan riil: paymentStatus 'Lunas' dan status BUKAN 'Dibatalkan'
+// (order batal/refund tidak dihitung). Filter rentang tanggal didorong ke query DB.
+// Dipakai bersama oleh getBestSellingProducts & getSalesCountByProduct.
+async function aggregateSales(
+  opts: SalesRangeOptions = {},
+): Promise<Map<string, BestSellingProduct>> {
+  const supabase = createAdminClient()
+  // Ambil hanya kolom yang dibutuhkan untuk agregasi (hemat payload).
+  let query = supabase.from('orders').select('items, payment_status, status, order_date')
+  if (opts.from) query = query.gte('order_date', opts.from)
+  if (opts.to) query = query.lte('order_date', opts.to)
+
+  const { data, error } = await query
+  if (error) {
+    console.error('Gagal menghitung penjualan dari Supabase:', error.message)
+    return new Map()
+  }
+
+  type SalesRow = Pick<OrderRow, 'items' | 'payment_status' | 'status' | 'order_date'>
+
+  // Akumulasi unit terjual & pendapatan per productId
+  const totals = new Map<string, BestSellingProduct>()
+  for (const row of (data as SalesRow[]) ?? []) {
+    // Lewati order batal atau belum lunas — bukan penjualan riil
+    if (row.payment_status !== 'Lunas' || row.status === 'Dibatalkan') continue
+    for (const item of row.items ?? []) {
+      const prev = totals.get(item.productId)
+      if (prev) {
+        prev.totalSold += item.quantity
+        prev.totalRevenue += item.quantity * item.price
+      } else {
+        totals.set(item.productId, {
+          productId: item.productId,
+          name: item.name,
+          totalSold: item.quantity,
+          totalRevenue: item.quantity * item.price,
+        })
+      }
+    }
+  }
+  return totals
+}
+
+// Menghitung produk terlaris (paling banyak terjual), diurut terbanyak dulu.
+// opts.limit membatasi jumlah produk (default 5); opts.from/to memfilter rentang tanggal.
+export async function getBestSellingProducts(
+  opts: SalesRangeOptions & { limit?: number } = {},
+): Promise<BestSellingProduct[]> {
+  const totals = await aggregateSales(opts)
+  return Array.from(totals.values())
+    .sort((a, b) => b.totalSold - a.totalSold)
+    .slice(0, opts.limit ?? 5)
+}
+
+// Mengembalikan peta productId → total unit terjual dalam rentang waktu.
+// Dipakai untuk kolom "Terjual" di tabel produk OMS & pengurutan storefront.
+export async function getSalesCountByProduct(
+  opts: SalesRangeOptions = {},
+): Promise<Record<string, number>> {
+  const totals = await aggregateSales(opts)
+  const counts: Record<string, number> = {}
+  for (const [productId, agg] of totals) counts[productId] = agg.totalSold
+  return counts
 }
 
 // === Tulis ===

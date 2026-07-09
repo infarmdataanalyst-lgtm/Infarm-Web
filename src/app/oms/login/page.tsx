@@ -10,6 +10,7 @@ import { useState, type FormEvent } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { setOmsSession, sanitizeOmsRedirect } from '@/lib/oms-auth'
 
 // === Akun dummy sementara ===
 // Satu kredensial staf internal yang dikunci di kode sampai Supabase Auth siap.
@@ -70,7 +71,12 @@ export default function OmsLoginPage() {
       password === DUMMY_CREDENTIALS.password
 
     if (isValid) {
-      router.push('/oms/dashboard')
+      // Tandai sesi admin di cookie agar lolos guard proxy.ts (remember → bertahan 30 hari).
+      setOmsSession(rememberMe)
+      // Balik ke halaman yang awalnya dituju (?redirect=...) bila aman, selain itu ke dashboard.
+      const params = new URLSearchParams(window.location.search)
+      const target = sanitizeOmsRedirect(params.get('redirect'))
+      router.replace(target)
       return
     }
 
