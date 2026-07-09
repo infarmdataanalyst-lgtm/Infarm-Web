@@ -27,20 +27,24 @@ export function validatePromotionInput(body: unknown): PromotionValidation {
   if (name.length < 3) {
     return { ok: false, error: 'Nama promo wajib diisi minimal 3 karakter.' }
   }
+  if (name.length > 100) {
+    return { ok: false, error: 'Nama promo maksimal 100 karakter.' }
+  }
 
   const type = b.type as PromotionType
   if (!TYPES.includes(type)) {
-    return { ok: false, error: 'Tipe hadiah wajib dipilih.' }
+    return { ok: false, error: 'Pilih tipe hadiah.' }
   }
 
   const minPurchase = typeof b.minPurchase === 'number' ? Math.floor(b.minPurchase) : NaN
-  if (!Number.isFinite(minPurchase) || minPurchase < 1000) {
-    return { ok: false, error: 'Minimal pembelian wajib diisi (minimal Rp1.000).' }
+  if (!Number.isFinite(minPurchase) || minPurchase < 0) {
+    return { ok: false, error: 'Minimal pembelian tidak boleh negatif.' }
   }
 
+  // Pesan progres opsional; bila diisi maksimal 150 karakter
   const progressMessage = typeof b.progressMessage === 'string' ? b.progressMessage.trim() : ''
-  if (!progressMessage) {
-    return { ok: false, error: 'Pesan progres wajib diisi.' }
+  if (progressMessage.length > 150) {
+    return { ok: false, error: 'Pesan progres maksimal 150 karakter.' }
   }
 
   // Detail hadiah — sesuai tipe yang dipilih
@@ -56,11 +60,11 @@ export function validatePromotionInput(body: unknown): PromotionValidation {
     freeProductName = typeof b.freeProductName === 'string' ? b.freeProductName : ''
   } else if (type === 'discount_nominal') {
     const v = typeof b.discountValue === 'number' ? Math.floor(b.discountValue) : NaN
-    if (!Number.isFinite(v) || v <= 0) {
-      return { ok: false, error: 'Nilai diskon wajib diisi.' }
+    if (!Number.isFinite(v) || v < 100) {
+      return { ok: false, error: 'Nominal diskon minimal Rp 100.' }
     }
     if (v > minPurchase) {
-      return { ok: false, error: 'Nilai diskon tidak boleh lebih besar dari minimal pembelian.' }
+      return { ok: false, error: 'Nominal diskon tidak boleh melebihi minimal pembelian.' }
     }
     discountValue = v
   } else if (type === 'discount_percent') {
@@ -74,10 +78,10 @@ export function validatePromotionInput(body: unknown): PromotionValidation {
   // Periode (opsional). Bila berakhir diisi → mulai wajib; berakhir tidak boleh sebelum mulai.
   const startAt = typeof b.startAt === 'string' && b.startAt ? b.startAt : null
   const endAt = typeof b.endAt === 'string' && b.endAt ? b.endAt : null
-  if (endAt && !startAt) {
-    return { ok: false, error: 'Tanggal mulai wajib diisi jika tanggal berakhir diatur.' }
+  if ((startAt && !endAt) || (!startAt && endAt)) {
+    return { ok: false, error: 'Tanggal mulai dan berakhir harus diisi bersamaan.' }
   }
-  if (startAt && endAt && new Date(endAt).getTime() < new Date(startAt).getTime()) {
+  if (startAt && endAt && new Date(endAt).getTime() <= new Date(startAt).getTime()) {
     return { ok: false, error: 'Tanggal berakhir harus setelah tanggal mulai.' }
   }
 

@@ -4,12 +4,13 @@
 
 import Image from 'next/image'
 import Link from 'next/link'
-import type { Product } from '@/types/product'
+import { type Product, isProductOnSale } from '@/types/product'
 import { formatRupiah } from '@/lib/format'
 
 // Menampilkan satu kartu produk yang menautkan ke halaman detail produk.
 export default function ProductCard({ product }: { product: Product }) {
   const { id, name, originalPrice, promoPrice, imageUrl, badge } = product
+  const onSale = isProductOnSale(product)
 
   return (
     <Link
@@ -39,7 +40,10 @@ export default function ProductCard({ product }: { product: Product }) {
       <div className="flex flex-1 flex-col p-2.5">
         <h3 className="line-clamp-2 text-sm font-medium leading-snug text-zinc-800">{name}</h3>
         <div className="mt-auto pt-2">
-          <p className="text-xs text-zinc-400 line-through">{formatRupiah(originalPrice)}</p>
+          {/* Harga coret hanya bila sedang diskon (harga asli > harga jual) */}
+          {onSale && (
+            <p className="text-xs text-zinc-400 line-through">{formatRupiah(originalPrice)}</p>
+          )}
           <p className="text-base font-bold text-red-500">{formatRupiah(promoPrice)}</p>
         </div>
       </div>

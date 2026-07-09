@@ -28,6 +28,8 @@ export async function GET(request: Request) {
       orderId: order.orderId,
       customerName: order.customerName,
       items: order.items,
+      // status disertakan agar form review bisa memblokir pesanan yang sudah dibatalkan
+      status: order.status ?? 'Diproses',
     },
   })
 }

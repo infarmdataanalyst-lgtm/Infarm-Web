@@ -42,6 +42,8 @@ export default function ComboForm({
 
   // === State submit ===
   const [attempted, setAttempted] = useState(false) // true setelah tombol simpan ditekan sekali
+  const [touchedName, setTouchedName] = useState(false)
+  const [touchedPrice, setTouchedPrice] = useState(false)
   const [saving, setSaving] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
@@ -60,10 +62,11 @@ export default function ComboForm({
     }
   }, [])
 
-  // === Kalkulasi harga (otomatis) ===
+  // === Kalkulasi harga (otomatis, reactive) ===
   const normalPrice = useMemo(() => calcNormalPrice(items), [items])
   const comboPriceNum = comboPrice === '' ? 0 : comboPrice
-  const savings = Math.max(0, normalPrice - comboPriceNum)
+  // Hemat = Rp0 saat harga combo kosong (jangan tampilkan seluruh harga normal / minus)
+  const savings = comboPrice === '' ? 0 : Math.max(0, normalPrice - comboPriceNum)
   const savingsPercent = normalPrice > 0 ? Math.round((savings / normalPrice) * 100) : 0
 
   // === Hasil pencarian produk (kecualikan yang sudah ditambahkan) ===
@@ -77,21 +80,38 @@ export default function ComboForm({
   }, [products, query, selectedIds])
 
   // === Validasi (inline) ===
-  const nameError = name.trim().length < 3 ? 'Nama combo wajib diisi minimal 3 karakter.' : null
-  const itemsError = items.length < 2 ? 'Minimal 2 produk wajib ditambahkan.' : null
-  const comboPriceError =
-    comboPrice === '' || comboPriceNum <= 0
-      ? 'Harga combo wajib diisi.'
-      : comboPriceNum >= normalPrice
-        ? 'Harga combo harus lebih murah dari total harga satuan'
+  const trimmedName = name.trim()
+  const nameError = !trimmedName
+    ? 'Nama combo tidak boleh kosong'
+    : trimmedName.length < 3
+      ? 'Nama combo minimal 3 karakter'
+      : trimmedName.length > 100
+        ? 'Nama combo maksimal 100 karakter'
         : null
+  const itemsError =
+    items.length < 2 ? 'Tambahkan minimal 2 produk untuk membentuk combo' : null
+  const comboPriceError =
+    comboPrice === ''
+      ? 'Harga combo tidak boleh kosong'
+      : comboPriceNum < 100
+        ? 'Harga minimal Rp 100'
+        : normalPrice > 0 && comboPriceNum >= normalPrice
+          ? 'Harga combo harus lebih murah dari harga normal'
+          : null
+
+  // Form valid → gating tombol simpan
+  const isValid = !nameError && !itemsError && !comboPriceError
 
   // === Aksi item ===
 
-  // Menambahkan produk ke combo (default quantity 1). Tolak bila sudah ada.
+  // Menambahkan produk ke combo (default quantity 1). Tolak bila duplikat atau diarsipkan.
   function addProduct(product: StoredProduct) {
+    if (product.archived) {
+      setProductNotice('Produk ini sudah diarsipkan, tidak bisa ditambahkan')
+      return
+    }
     if (selectedIds.has(product.id)) {
-      setProductNotice('Produk sudah ditambahkan')
+      setProductNotice('Produk sudah ada dalam combo ini')
       return
     }
     setItems((prev) => [
@@ -118,8 +138,12 @@ export default function ComboForm({
     setAttempted(true)
     setSubmitError(null)
 
-    // Hentikan bila ada error inline
-    if (nameError || itemsError || comboPriceError) return
+    // Hentikan bila ada error inline + scroll ke section pertama yang bermasalah
+    const firstBad = nameError ? 'name' : itemsError ? 'items' : comboPriceError ? 'price' : null
+    if (firstBad) {
+      document.getElementById(`combo-${firstBad}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      return
+    }
 
     setSaving(true)
     const payload = {
@@ -178,12 +202,14 @@ export default function ComboForm({
           <section className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
             <h3 className="text-base font-bold text-gray-900">Informasi Combo</h3>
 
-            <div className="mt-5">
-              <Field label="Nama Combo" error={attempted ? nameError : null}>
+            <div id="combo-name" className="mt-5">
+              <Field label="Nama Combo" error={attempted || touchedName ? nameError : null}>
                 <input
                   type="text"
                   value={name}
+                  maxLength={100}
                   onChange={(e) => setName(e.target.value)}
+                  onBlur={() => setTouchedName(true)}
                   placeholder="Contoh: Paket Berkebun Pemula"
                   className={inputClass}
                 />
@@ -216,7 +242,7 @@ export default function ComboForm({
           </section>
 
           {/* --- Seksi 2: Produk dalam Combo --- */}
-          <section className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+          <section id="combo-items" className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
             <div className="flex items-center justify-between">
               <h3 className="text-base font-bold text-gray-900">Produk dalam Combo</h3>
               <button
@@ -342,24 +368,32 @@ export default function ComboForm({
                 <span className="text-sm font-semibold text-gray-900">{formatRupiah(normalPrice)}</span>
               </div>
 
-              {/* Harga Combo (input) */}
-              <Field label="Harga Combo" error={comboPrice !== '' || attempted ? comboPriceError : null}>
-                <div className="relative">
-                  <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center border-r border-gray-200 px-3 text-sm font-medium text-gray-500">
-                    Rp
-                  </span>
-                  <input
-                    type="number"
-                    min={0}
-                    value={comboPrice}
-                    onChange={(e) =>
-                      setComboPrice(e.target.value === '' ? '' : Math.max(0, Number(e.target.value)))
-                    }
-                    placeholder="0"
-                    className={`${inputClass} pl-12`}
-                  />
-                </div>
-              </Field>
+              {/* Harga Combo (input) — digit-only */}
+              <div id="combo-price">
+                <Field label="Harga Combo" error={attempted || touchedPrice ? comboPriceError : null}>
+                  <div className="relative">
+                    <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center border-r border-gray-200 px-3 text-sm font-medium text-gray-500">
+                      Rp
+                    </span>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={comboPrice}
+                      onChange={(e) => {
+                        const digits = e.target.value.replace(/\D/g, '')
+                        setComboPrice(digits === '' ? '' : Number(digits))
+                      }}
+                      onBlur={() => setTouchedPrice(true)}
+                      placeholder="0"
+                      className={`${inputClass} pl-12`}
+                    />
+                  </div>
+                </Field>
+                {/* Preview format Rupiah saat nilai valid */}
+                {comboPrice !== '' && !comboPriceError && (
+                  <p className="mt-1 text-xs font-medium text-emerald-700">{formatRupiah(comboPriceNum)}</p>
+                )}
+              </div>
 
               {/* Hemat (read-only, otomatis) */}
               <div className="flex items-center justify-between rounded-lg bg-emerald-50 px-4 py-3">
@@ -394,8 +428,8 @@ export default function ComboForm({
             <button
               type="button"
               onClick={handleSave}
-              disabled={saving}
-              className="rounded-lg bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-70"
+              disabled={saving || !isValid}
+              className="rounded-lg bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {saving ? 'Menyimpan…' : isEdit ? 'Simpan Perubahan' : 'Simpan Combo'}
             </button>

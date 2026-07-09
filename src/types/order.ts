@@ -1,19 +1,24 @@
 // src/types/order.ts
-// Tipe data pesanan (order) untuk mock database lokal & OMS.
-// Dipakai bersama oleh API route ecommerce (tulis) dan dashboard OMS (baca).
+// Tipe data pesanan (order) untuk OMS & ecommerce.
+// CATATAN: tipe ini APP-FACING (camelCase, status Bahasa Indonesia). Skema DB Supabase
+// memakai kolom Bahasa Indonesia + enum English (PENDING/PAID/...) yang dipetakan di
+// src/lib/mock-db/orders.ts. UI tidak perlu tahu skema DB — cukup tipe ini.
 
 // Satu baris item produk di dalam sebuah pesanan
 export type OrderItem = {
   productId: string
-  name: string
+  name: string // di-resolve dari tabel products saat baca (order_items tak menyimpan nama)
+  imageUrl?: string // di-resolve dari products.image_url saat baca (order_items tak menyimpan foto)
   quantity: number
-  price: number // harga satuan saat checkout (dalam Rupiah)
+  price: number // harga satuan saat checkout (snapshot = price_at_purchase)
 }
 
-// Status pembayaran pesanan; sengaja dibatasi agar konsisten dengan badge di OMS
+// Status pembayaran pesanan (app-facing). DB: PENDING→Menunggu, PAID→Lunas, FAILED→Gagal.
 export type OrderPaymentStatus = 'Lunas' | 'Menunggu' | 'Gagal'
 
-// Status alur (fulfillment) pesanan — dipakai sebagai tab filter di halaman Pesanan OMS
+// Status alur (fulfillment) pesanan (app-facing) — dipakai tab filter di OMS.
+// DB: PENDING→'Menunggu Pembayaran', PROCESSING→Diproses, SHIPPED→Dikirim,
+//     COMPLETED→Selesai, CANCELLED→Dibatalkan.
 export type OrderFulfillmentStatus =
   | 'Menunggu Pembayaran'
   | 'Diproses'
@@ -23,46 +28,58 @@ export type OrderFulfillmentStatus =
 
 // Informasi logistik/pengiriman pesanan
 export type OrderLogistics = {
-  courier: string // mis. 'JNE'
-  service: string // mis. 'Reguler'
+  courier: string // nama_ekspedisi, mis. 'JNE'
+  service: string // jenis_layanan, mis. 'Reguler'
 }
 
-// Pesanan lengkap yang disimpan di orders.json
+// Alamat pengiriman terstruktur (dari input form + hasil search Mengantar)
+export type OrderShippingAddress = {
+  shippingAddress: string // nama jalan / detail alamat
+  provinsi: string
+  kota: string
+  kecamatan: string
+  kelurahan: string
+  kodepos: string
+  destinationId: string // _id kelurahan Mengantar (untuk cek ongkir & booking kurir)
+}
+
+// Pesanan lengkap
 export type Order = {
-  orderId: string
+  orderId: string // = nomor_invoice (mis. INV-20260601-4821)
   customerName: string
   customerPhone?: string
   customerEmail?: string // untuk kirim konfirmasi pesanan ke buyer
-  date: string // ISO date string, mis. '2026-06-15T14:20:00.000Z'
+  date: string // ISO date = created_at
+  items: OrderItem[]
+  totalAmount: number // = jumlah_total (subtotal + ongkir - diskon)
+  paymentStatus: OrderPaymentStatus
+  status?: OrderFulfillmentStatus
+  logistics?: OrderLogistics
+  trackingNumber?: string // no_tracking (diisi setelah kurir pickup)
+  transactionId?: string // id_transaksi (dari Xendit setelah pembayaran)
+  address?: OrderShippingAddress
+}
+
+// Payload dari checkout ke API (sebelum disimpan). nomor_invoice digenerate di server.
+// paymentStatus/status opsional — default 'Menunggu'/'Menunggu Pembayaran' (DB PENDING)
+// karena pembayaran belum dikonfirmasi (Xendit menyusul).
+export type CreateOrderInput = {
+  customerName: string
+  customerPhone?: string
+  customerEmail?: string
   items: OrderItem[]
   totalAmount: number
-  paymentStatus: OrderPaymentStatus
-  status?: OrderFulfillmentStatus // alur pesanan; default diisi saat saveOrder
-  logistics?: OrderLogistics // kurir & layanan pengiriman
-  trackingNumber?: string // nomor resi
+  logistics?: OrderLogistics
+  address: OrderShippingAddress
+  paymentStatus?: OrderPaymentStatus
+  status?: OrderFulfillmentStatus
 }
 
 // Agregasi produk terlaris — jumlah unit terjual & total pendapatan per produk.
-// Dihitung on-demand dari orders.items (tidak disimpan sebagai kolom terpisah).
+// Dihitung on-demand dari order_items (tidak disimpan sebagai kolom terpisah).
 export type BestSellingProduct = {
   productId: string
   name: string
   totalSold: number // total unit terjual (jumlah quantity)
   totalRevenue: number // total pendapatan dari produk ini (quantity * price)
-}
-
-// Payload yang dikirim halaman sukses checkout ke API (sebelum disimpan).
-// paymentStatus opsional — default 'Lunas' karena dikirim setelah pembayaran sukses.
-export type CreateOrderInput = {
-  orderId: string
-  customerName: string
-  customerPhone?: string
-  customerEmail?: string
-  date: string
-  items: OrderItem[]
-  totalAmount: number
-  paymentStatus?: OrderPaymentStatus
-  status?: OrderFulfillmentStatus
-  logistics?: OrderLogistics
-  trackingNumber?: string
 }

@@ -11,6 +11,18 @@ import Image from 'next/image'
 import Link from 'next/link'
 import OmsHeader from '@/components/oms/OmsHeader'
 import { PRODUCT_CATEGORIES, getCategoryLabel } from '@/lib/data/categories'
+import {
+  validateName,
+  validateSkuFormat,
+  validateCategory,
+  validatePrice,
+  validateOriginalPrice,
+  validateStock,
+  validateImages,
+  validateImageFile,
+  ACCEPTED_IMAGE_ACCEPT,
+  NAME_MAX,
+} from '@/lib/product-validation'
 import type { ProductCategory, StoredProduct } from '@/types/product'
 
 // === Tipe Data ===
@@ -21,7 +33,8 @@ type Product = {
   sku: string
   categoryLabel: string // label tampilan kategori
   slug: ProductCategory | '' // slug kategori (untuk form edit)
-  price: number
+  price: number // harga jual (promoPrice)
+  originalPrice?: number // harga asli (dicoret bila > price)
   stock: number
   image: string // foto utama (thumbnail tabel) = images[0]
   images?: string[] // galeri foto (maks 9)
@@ -35,12 +48,12 @@ type EditForm = {
   sku: string
   slug: ProductCategory | ''
   price: number | ''
+  originalPrice: number | '' // harga asli (opsional)
   stock: number | ''
   images: string[] // galeri foto (maks 9); images[0] = foto utama
 }
 
 const LOW_STOCK_THRESHOLD = 10 // di bawah angka ini dianggap stok menipis
-const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB per foto
 const MAX_IMAGES = 9 // maksimal foto per produk (sesuai slider detail produk)
 
 // Pilihan rentang waktu untuk kolom "Terjual". days=null berarti sepanjang waktu.
@@ -69,6 +82,7 @@ function mapStored(p: StoredProduct): Product {
     categoryLabel: getCategoryLabel(p.category) ?? p.category,
     slug: p.category,
     price: p.promoPrice,
+    originalPrice: p.originalPrice,
     stock: p.stock,
     image: p.imageUrl,
     images: p.images,
@@ -103,6 +117,29 @@ export default function ProductsPage() {
   // Data terjual per produk (peta productId → unit terjual) + rentang waktu terpilih
   const [soldCounts, setSoldCounts] = useState<Record<string, number>>({})
   const [rangeDays, setRangeDays] = useState<number | null>(30) // default 30 hari terakhir
+
+  // SKU duplikat (mode edit) + toast sukses
+  const [editSkuDuplicate, setEditSkuDuplicate] = useState(false)
+  const [toast, setToast] = useState('')
+
+  // Toast sukses setelah upload produk baru (flag di-set halaman upload sebelum redirect)
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem('oms_product_saved')) {
+        sessionStorage.removeItem('oms_product_saved')
+        setToast('Produk berhasil disimpan.')
+      }
+    } catch {
+      // sessionStorage bisa gagal (mode privat) — abaikan
+    }
+  }, [])
+
+  // Auto-sembunyikan toast
+  useEffect(() => {
+    if (!toast) return
+    const t = setTimeout(() => setToast(''), 3000)
+    return () => clearTimeout(t)
+  }, [toast])
 
   // Ambil produk hasil input OMS (mock DB) lalu tampilkan di depan daftar dummy
   useEffect(() => {
@@ -153,6 +190,7 @@ export default function ProductsPage() {
   function openEdit(product: Product) {
     setEditTarget(product)
     setEditError(null)
+    setEditSkuDuplicate(false)
     // Galeri untuk diedit: pakai images bila ada, fallback ke foto utama tunggal
     const gallery =
       product.images && product.images.length > 0
@@ -165,6 +203,9 @@ export default function ProductsPage() {
       sku: product.sku,
       slug: product.slug,
       price: product.price,
+      // Tampilkan harga asli hanya bila memang ada diskon (asli > jual); selain itu kosong
+      originalPrice:
+        product.originalPrice && product.originalPrice > product.price ? product.originalPrice : '',
       stock: product.stock,
       images: gallery,
     })
@@ -174,6 +215,51 @@ export default function ProductsPage() {
     setEditTarget(null)
     setForm(null)
     setEditError(null)
+    setEditSkuDuplicate(false)
+  }
+
+  // Error live per field modal edit (dihitung dari form). Deskripsi tak ada di modal ini.
+  const editErrors = useMemo(() => {
+    if (!form) return {} as Record<string, string | undefined>
+    return {
+      sku: validateSkuFormat(form.sku),
+      name: validateName(form.name),
+      category: validateCategory(form.slug),
+      price: validatePrice(form.price),
+      originalPrice: validateOriginalPrice(form.originalPrice, form.price),
+      stock: validateStock(form.stock),
+      images: validateImages(form.images.length),
+    }
+  }, [form])
+
+  // SKU error gabungan (format lalu duplikat) + status valid keseluruhan modal
+  const editSkuError = editErrors.sku ?? (editSkuDuplicate ? 'SKU sudah digunakan produk lain' : undefined)
+  const isEditValid =
+    form != null &&
+    !editSkuError &&
+    !editErrors.name &&
+    !editErrors.category &&
+    !editErrors.price &&
+    !editErrors.originalPrice &&
+    !editErrors.stock &&
+    !editErrors.images
+
+  // Cek duplikat SKU saat onBlur (kecualikan produk yang sedang diedit)
+  async function checkEditSku() {
+    if (!form || !editTarget) return
+    if (validateSkuFormat(form.sku)) {
+      setEditSkuDuplicate(false)
+      return
+    }
+    try {
+      const res = await fetch(
+        `/api/products/check-sku?sku=${encodeURIComponent(form.sku.trim())}&excludeId=${encodeURIComponent(editTarget.id)}`,
+      )
+      const data = (await res.json()) as { exists?: boolean }
+      setEditSkuDuplicate(data.exists === true)
+    } catch {
+      setEditSkuDuplicate(false)
+    }
   }
 
   // Menambahkan satu/lebih foto ke galeri (data URL), dibatasi maks 9
@@ -188,12 +274,9 @@ export default function ProductsPage() {
     Array.from(fileList)
       .slice(0, available)
       .forEach((file) => {
-        if (!file.type.startsWith('image/')) {
-          setEditError('File yang dipilih bukan gambar.')
-          return
-        }
-        if (file.size > MAX_FILE_SIZE) {
-          setEditError('Ukuran foto melebihi 5MB.')
+        const fileError = validateImageFile(file)
+        if (fileError) {
+          setEditError(fileError)
           return
         }
         setEditError(null)
@@ -217,18 +300,25 @@ export default function ProductsPage() {
 
   async function handleSaveEdit() {
     if (!editTarget || !form) return
-    if (!form.name.trim() || !form.sku.trim()) {
-      setEditError('Nama dan SKU wajib diisi.')
-      return
-    }
-    if (!form.slug) {
-      setEditError('Silakan pilih kategori.')
+
+    // Validasi seluruh field (pesan spesifik dari validator bersama)
+    const firstError =
+      editSkuError ??
+      editErrors.name ??
+      editErrors.category ??
+      editErrors.price ??
+      editErrors.originalPrice ??
+      editErrors.stock ??
+      editErrors.images
+    if (firstError) {
+      setEditError(firstError)
       return
     }
 
     setSaving(true)
     const price = Number(form.price) || 0
     const stock = Number(form.stock) || 0
+    const originalPrice = form.originalPrice === '' ? undefined : Number(form.originalPrice)
 
     if (editTarget.persisted) {
       // Produk mock DB → simpan permanen via API
@@ -242,6 +332,7 @@ export default function ProductsPage() {
             sku: form.sku.trim(),
             category: form.slug,
             price,
+            originalPrice,
             stock,
             imageUrl: form.images[0],
             images: form.images,
@@ -268,6 +359,7 @@ export default function ProductsPage() {
                 slug: form.slug,
                 categoryLabel: getCategoryLabel(form.slug) ?? p.categoryLabel,
                 price,
+                originalPrice,
                 stock,
                 image: form.images[0] ?? p.image,
                 images: form.images,
@@ -278,6 +370,7 @@ export default function ProductsPage() {
     }
 
     setSaving(false)
+    setToast('Perubahan produk tersimpan.')
     closeEdit()
   }
 
@@ -522,7 +615,7 @@ export default function ProductsPage() {
                     <span className="mt-0.5 text-[10px] font-medium">Tambah</span>
                     <input
                       type="file"
-                      accept="image/*"
+                      accept={ACCEPTED_IMAGE_ACCEPT}
                       multiple
                       className="hidden"
                       onChange={(e) => {
@@ -533,37 +626,49 @@ export default function ProductsPage() {
                   </label>
                 )}
               </div>
+              {editErrors.images && (
+                <p className="mt-1 text-xs font-medium text-red-600">{editErrors.images}</p>
+              )}
             </div>
 
             {/* Nama & SKU */}
             <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
               <EditField label="Nama Produk">
-                <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={modalInput} />
+                <input type="text" value={form.name} maxLength={NAME_MAX} onChange={(e) => setForm({ ...form, name: e.target.value })} className={modalInput(!!editErrors.name)} aria-invalid={!!editErrors.name} />
+                {editErrors.name && <p className="mt-1 text-xs font-medium text-red-600">{editErrors.name}</p>}
               </EditField>
               <EditField label="SKU / Kode">
-                <input type="text" value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} className={modalInput} />
+                <input type="text" value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} onBlur={checkEditSku} className={modalInput(!!editSkuError)} aria-invalid={!!editSkuError} />
+                {editSkuError && <p className="mt-1 text-xs font-medium text-red-600">{editSkuError}</p>}
               </EditField>
             </div>
 
             {/* Kategori */}
             <div className="mt-4">
               <EditField label="Kategori">
-                <select value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value as ProductCategory })} className={modalInput}>
+                <select value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value as ProductCategory })} className={modalInput(!!editErrors.category)} aria-invalid={!!editErrors.category}>
                   <option value="" disabled>Pilih kategori…</option>
                   {PRODUCT_CATEGORIES.map((c) => (
                     <option key={c.slug} value={c.slug}>{c.label}</option>
                   ))}
                 </select>
+                {editErrors.category && <p className="mt-1 text-xs font-medium text-red-600">{editErrors.category}</p>}
               </EditField>
             </div>
 
             {/* Harga & Stok */}
             <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <EditField label="Harga (Rp)">
-                <input type="number" min={0} value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value === '' ? '' : Math.max(0, Number(e.target.value)) })} className={modalInput} />
+              <EditField label="Harga Jual (Rp)">
+                <input type="text" inputMode="numeric" value={form.price} onChange={(e) => { const d = e.target.value.replace(/\D/g, ''); setForm({ ...form, price: d === '' ? '' : Number(d) }) }} className={modalInput(!!editErrors.price)} aria-invalid={!!editErrors.price} />
+                {editErrors.price && <p className="mt-1 text-xs font-medium text-red-600">{editErrors.price}</p>}
+              </EditField>
+              <EditField label="Harga Asli (opsional)">
+                <input type="text" inputMode="numeric" value={form.originalPrice} onChange={(e) => { const d = e.target.value.replace(/\D/g, ''); setForm({ ...form, originalPrice: d === '' ? '' : Number(d) }) }} placeholder="Kosong = tanpa diskon" className={modalInput(!!editErrors.originalPrice)} aria-invalid={!!editErrors.originalPrice} />
+                {editErrors.originalPrice && <p className="mt-1 text-xs font-medium text-red-600">{editErrors.originalPrice}</p>}
               </EditField>
               <EditField label="Sisa Stok (pcs)">
-                <input type="number" min={0} value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value === '' ? '' : Math.max(0, Number(e.target.value)) })} className={modalInput} />
+                <input type="text" inputMode="numeric" value={form.stock} onChange={(e) => { const d = e.target.value.replace(/\D/g, ''); setForm({ ...form, stock: d === '' ? '' : Number(d) }) }} className={modalInput(!!editErrors.stock)} aria-invalid={!!editErrors.stock} />
+                {editErrors.stock && <p className="mt-1 text-xs font-medium text-red-600">{editErrors.stock}</p>}
               </EditField>
             </div>
 
@@ -573,11 +678,20 @@ export default function ProductsPage() {
               <button type="button" onClick={closeEdit} className="rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-600 transition hover:bg-gray-50">
                 Batal
               </button>
-              <button type="button" onClick={handleSaveEdit} disabled={saving} className="rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60">
+              <button type="button" onClick={handleSaveEdit} disabled={saving || !isEditValid} className="rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60">
                 {saving ? 'Menyimpan…' : 'Simpan Perubahan'}
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* === Toast sukses === */}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 z-[60] -translate-x-1/2" role="status">
+          <p className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white shadow-lg">
+            {toast}
+          </p>
         </div>
       )}
 
@@ -611,8 +725,13 @@ export default function ProductsPage() {
 
 // === Sub-komponen ===
 
-const modalInput =
-  'w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100'
+// Kelas input modal; border merah saat error
+function modalInput(hasError = false): string {
+  const base = 'w-full rounded-lg border bg-white px-3 py-2.5 text-sm text-gray-900 outline-none transition focus:ring-2'
+  return hasError
+    ? `${base} border-red-400 focus:border-red-500 focus:ring-red-100`
+    : `${base} border-gray-300 focus:border-emerald-500 focus:ring-emerald-100`
+}
 
 function EditField({ label, children }: { label: string; children: React.ReactNode }) {
   return (

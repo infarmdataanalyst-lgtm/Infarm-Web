@@ -25,6 +25,7 @@ import {
   subscribeCheckout,
   getCheckoutSnapshot,
   getServerCheckoutSnapshot,
+  clearCart,
 } from '@/lib/cart-client'
 import {
   DUMMY_ORDER_ITEMS,
@@ -160,8 +161,9 @@ export default function CheckoutPage() {
     return () => clearTimeout(timer)
   }, [toast])
 
-  // Proses bayar (mode prototipe): simpan order ke mock DB lalu arahkan ke halaman sukses.
-  // TODO: ganti simulasi ini dengan buat invoice via lib/xendit & redirect ke halaman Xendit.
+  // Proses bayar: simpan order (orders + order_items + kurangi stok, atomik via API) lalu
+  // kosongkan keranjang & arahkan ke halaman sukses dengan ?invoice=.
+  // Nomor invoice digenerate di server. Pembayaran masih PENDING (Xendit menyusul).
   async function handlePay() {
     if (isPaying) return
 
@@ -181,36 +183,52 @@ export default function CheckoutPage() {
 
     setIsPaying(true)
 
-    // ID invoice unik sederhana untuk prototipe
-    const orderId = `INV-${Date.now().toString().slice(-8)}`
-
     try {
-      await fetch('/api/orders/create', {
+      const res = await fetch('/api/orders/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          orderId,
-          // Nilai sudah divalidasi sebelum sampai sini (telepon = angka bersih, email = lowercase)
+          // Nilai sudah divalidasi (telepon = angka bersih 08xx, email = lowercase)
           customerName: address.recipientName.trim(),
           customerPhone: address.phone,
           customerEmail: address.email,
-          date: new Date().toISOString(),
           items: orderItems.map((item) => ({
             productId: item.id,
             name: item.name,
             quantity: item.quantity,
             price: item.price,
           })),
+          // jumlah_total = subtotal + ongkir - diskon
           totalAmount: total,
-          paymentStatus: 'Lunas',
           logistics: { courier: selectedCourier.name, service: selectedCourier.estimatedDate },
+          // Alamat terstruktur dari form + hasil search Mengantar
+          address: {
+            shippingAddress: address.street,
+            provinsi: address.provinceName,
+            kota: address.cityName,
+            kecamatan: address.districtName,
+            kelurahan: address.subdistrictName,
+            kodepos: address.postalCode,
+            destinationId: address.destination_id,
+          },
         }),
       })
-    } catch {
-      // Mode prototipe: walau simpan gagal, tetap lanjut ke halaman sukses.
-    }
 
-    router.push(`/checkout/success?order=${orderId}`)
+      const data = (await res.json().catch(() => ({}))) as { invoice?: string; error?: string }
+      if (!res.ok || !data.invoice) {
+        // Mis. stok tidak cukup (409) → tampilkan pesan dari server
+        setToast(data.error ?? 'Gagal memproses pesanan. Silakan coba lagi.')
+        setIsPaying(false)
+        return
+      }
+
+      // Order berhasil → kosongkan keranjang lalu ke halaman sukses
+      clearCart()
+      router.push(`/checkout/success?invoice=${encodeURIComponent(data.invoice)}`)
+    } catch {
+      setToast('Gagal memproses pesanan. Periksa koneksi lalu coba lagi.')
+      setIsPaying(false)
+    }
   }
 
   return (

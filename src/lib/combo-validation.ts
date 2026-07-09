@@ -20,6 +20,9 @@ export function validateComboInput(body: unknown): ComboValidation {
   if (name.length < 3) {
     return { ok: false, error: 'Nama combo wajib diisi minimal 3 karakter.' }
   }
+  if (name.length > 100) {
+    return { ok: false, error: 'Nama combo maksimal 100 karakter.' }
+  }
 
   if (!Array.isArray(b.items)) {
     return { ok: false, error: 'Daftar produk combo tidak valid.' }
@@ -65,8 +68,8 @@ export function validateComboInput(body: unknown): ComboValidation {
   }
 
   const comboPrice = typeof b.comboPrice === 'number' ? Math.floor(b.comboPrice) : NaN
-  if (!Number.isFinite(comboPrice) || comboPrice <= 0) {
-    return { ok: false, error: 'Harga combo wajib diisi dan harus lebih dari 0.' }
+  if (!Number.isFinite(comboPrice) || comboPrice < 100) {
+    return { ok: false, error: 'Harga combo minimal Rp 100.' }
   }
 
   const normalPrice = calcNormalPrice(items)

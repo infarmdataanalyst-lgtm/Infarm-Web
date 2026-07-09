@@ -31,10 +31,14 @@ export async function PATCH(request: Request) {
   if (typeof body.category === 'string' && VALID_CATEGORIES.includes(body.category)) {
     patch.category = body.category as StoredProduct['category']
   }
-  // Opsi harga sederhana: satu harga jual → originalPrice = promoPrice
+  // Harga jual → promo_price. Harga asli (opsional) → original_price bila > harga jual,
+  // selain itu disamakan (tanpa diskon).
   if (typeof body.price === 'number' && body.price >= 0) {
-    patch.originalPrice = body.price
     patch.promoPrice = body.price
+    patch.originalPrice =
+      typeof body.originalPrice === 'number' && body.originalPrice > body.price
+        ? body.originalPrice
+        : body.price
   }
   if (typeof body.stock === 'number' && body.stock >= 0) patch.stock = body.stock
   if (typeof body.description === 'string') patch.description = body.description

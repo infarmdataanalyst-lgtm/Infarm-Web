@@ -25,8 +25,12 @@ export default function ReviewForm() {
   // Data produk yang akan diulas (dibangun dari item pesanan)
   const [products, setProducts] = useState<ReviewProduct[]>([])
   const [customerName, setCustomerName] = useState('')
-  const [status, setStatus] = useState<'loading' | 'ready' | 'notfound'>('loading')
+  // 'cancelled' → pesanan sudah dibatalkan, tidak boleh diulas
+  // 'done' → semua produk pada pesanan sudah diulas sebelumnya
+  const [status, setStatus] = useState<'loading' | 'ready' | 'notfound' | 'cancelled' | 'done'>('loading')
   const [submitting, setSubmitting] = useState(false)
+  // Pesan error saat kirim ulasan gagal (mis. pesanan dibatalkan / produk bukan bagian pesanan)
+  const [submitError, setSubmitError] = useState<string | null>(null)
 
   // State ulasan: key productId → { rating, review }
   const [reviews, setReviews] = useState<Record<string, ReviewEntry>>({})
@@ -44,11 +48,21 @@ export default function ReviewForm() {
         r.ok ? r.json() : null,
       ),
       fetch('/api/products/list').then((r) => (r.ok ? r.json() : { products: [] })),
+      // Produk yang SUDAH diulas untuk pesanan ini → jangan tawarkan lagi (cegah ulasan ganda)
+      fetch(`/api/reviews/reviewed?orderId=${encodeURIComponent(orderId)}`).then((r) =>
+        r.ok ? r.json() : { reviewedProductIds: [] },
+      ),
     ])
-      .then(([orderRes, productRes]) => {
+      .then(([orderRes, productRes, reviewedRes]) => {
         if (!active) return
         if (!orderRes?.order) {
           setStatus('notfound')
+          return
+        }
+
+        // Pesanan yang sudah dibatalkan tidak boleh diulas (guard utama tetap di server)
+        if (orderRes.order.status === 'Dibatalkan') {
+          setStatus('cancelled')
           return
         }
 
@@ -58,17 +72,28 @@ export default function ReviewForm() {
           imageById.set(p.id, p.imageUrl)
         }
 
+        // Buang produk yang sudah diulas sebelumnya untuk pesanan ini
+        const reviewedIds = new Set<string>((reviewedRes?.reviewedProductIds ?? []) as string[])
         const items = orderRes.order.items as OrderItem[]
-        const built: ReviewProduct[] = items.map((item) => ({
-          id: item.productId,
-          name: item.name,
-          variant: '', // pesanan belum menyimpan varian
-          imageUrl: imageById.get(item.productId) || PLACEHOLDER_IMAGE,
-          price: item.price,
-        }))
+        const built: ReviewProduct[] = items
+          .filter((item) => !reviewedIds.has(item.productId))
+          .map((item) => ({
+            id: item.productId,
+            name: item.name,
+            variant: '', // pesanan belum menyimpan varian
+            imageUrl: imageById.get(item.productId) || PLACEHOLDER_IMAGE,
+            price: item.price,
+          }))
+
+        setCustomerName(orderRes.order.customerName ?? '')
+
+        // Semua produk pada pesanan sudah diulas → tidak ada yang perlu ditampilkan
+        if (built.length === 0) {
+          setStatus('done')
+          return
+        }
 
         setProducts(built)
-        setCustomerName(orderRes.order.customerName ?? '')
         setReviews(Object.fromEntries(built.map((p) => [p.id, { rating: 0, review: '' }])))
         setStatus('ready')
       })
@@ -98,19 +123,22 @@ export default function ReviewForm() {
   )
 
   // Kirim ulasan ke Supabase (satu request per produk yang dirating), lalu ke halaman konfirmasi.
+  // Hanya redirect ke "submitted" bila SEMUA request sukses (cek res.ok) — jangan pura-pura berhasil.
   async function handleSubmit() {
     if (submitting) return
     const toSubmit = products.filter((p) => (reviews[p.id]?.rating ?? 0) > 0)
     if (toSubmit.length === 0) return
 
     setSubmitting(true)
+    setSubmitError(null)
     try {
-      await Promise.all(
+      const responses = await Promise.all(
         toSubmit.map((p) =>
           fetch('/api/reviews/create', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+              orderId,
               productId: p.id,
               authorName: customerName || 'Pelanggan Infarm',
               rating: reviews[p.id].rating,
@@ -119,8 +147,19 @@ export default function ReviewForm() {
           }),
         ),
       )
+
+      // Ada request yang gagal → tampilkan pesan error dari server, JANGAN redirect.
+      const failed = responses.find((r) => !r.ok)
+      if (failed) {
+        const data = (await failed.json().catch(() => ({}))) as { error?: string }
+        setSubmitError(data.error ?? 'Gagal mengirim ulasan. Silakan coba lagi.')
+        setSubmitting(false)
+        return
+      }
+
       router.push(`/review/submitted?order=${encodeURIComponent(orderId)}`)
     } catch {
+      setSubmitError('Tidak dapat terhubung ke server. Silakan coba lagi.')
       setSubmitting(false)
     }
   }
@@ -158,6 +197,22 @@ export default function ReviewForm() {
           </div>
         )}
 
+        {status === 'cancelled' && (
+          <div className="px-4 py-16 text-center">
+            <p className="text-sm text-gray-500">
+              Pesanan ini sudah dibatalkan, jadi tidak dapat diberi ulasan.
+            </p>
+          </div>
+        )}
+
+        {status === 'done' && (
+          <div className="px-4 py-16 text-center">
+            <p className="text-sm text-gray-500">
+              Semua produk pada pesanan ini sudah kamu ulas. Terima kasih atas masukanmu!
+            </p>
+          </div>
+        )}
+
         {status === 'ready' && (
           <ul className="flex flex-col">
             {products.map((product) => (
@@ -182,6 +237,14 @@ export default function ReviewForm() {
       {status === 'ready' && (
         <div className="fixed inset-x-0 bottom-0 z-30 border-t border-gray-100 bg-white">
           <div className="mx-auto max-w-2xl px-4 py-3">
+            {submitError && (
+              <p
+                role="alert"
+                className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600"
+              >
+                {submitError}
+              </p>
+            )}
             <button
               type="button"
               onClick={handleSubmit}

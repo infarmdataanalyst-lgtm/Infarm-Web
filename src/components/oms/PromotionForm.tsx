@@ -71,8 +71,15 @@ export default function PromotionForm({
 
   // === State submit ===
   const [attempted, setAttempted] = useState(false)
+  const [touchedName, setTouchedName] = useState(false)
+  const [touchedMin, setTouchedMin] = useState(false)
+  const [touchedDiscount, setTouchedDiscount] = useState(false)
+  const [touchedProgress, setTouchedProgress] = useState(false)
   const [saving, setSaving] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+
+  // Tanggal hari ini (lokal, YYYY-MM-DD) untuk validasi "tanggal mulai tidak di masa lalu"
+  const todayStr = new Date().toLocaleDateString('en-CA')
 
   // Ambil produk (hanya stok > 0 & tidak diarsipkan yang boleh jadi hadiah)
   useEffect(() => {
@@ -100,40 +107,67 @@ export default function PromotionForm({
   const minPurchaseNum = minPurchase === '' ? 0 : minPurchase
   const discountNum = discountValue === '' ? 0 : discountValue
 
+  // Produk hadiah terpilih (untuk cek archived saat free_product)
+  const selectedFreeProduct = useMemo(
+    () => products.find((p) => p.id === freeProductId),
+    [products, freeProductId],
+  )
+
   // === Validasi inline ===
-  const nameError = name.trim().length < 3 ? 'Nama promo wajib diisi minimal 3 karakter.' : null
-  const typeError = type === '' ? 'Tipe hadiah wajib dipilih.' : null
+  const trimmedName = name.trim()
+  const nameError = !trimmedName
+    ? 'Nama promo tidak boleh kosong'
+    : trimmedName.length < 3
+      ? 'Nama promo minimal 3 karakter'
+      : trimmedName.length > 100
+        ? 'Nama promo maksimal 100 karakter'
+        : null
+  const typeError = type === '' ? 'Pilih tipe hadiah' : null
+  // Minimal pembelian: wajib diisi, ≥ 0 (digit-only sudah blok negatif)
   const minPurchaseError =
-    minPurchase === '' || minPurchaseNum < 1000
-      ? 'Minimal pembelian wajib diisi, minimal Rp1.000.'
-      : null
+    minPurchase === ''
+      ? 'Minimal pembelian tidak boleh kosong'
+      : minPurchaseNum < 0
+        ? 'Minimal pembelian tidak boleh negatif'
+        : null
 
   const freeProductError =
-    type === 'free_product' && !freeProductId ? 'Produk hadiah wajib dipilih.' : null
+    type === 'free_product'
+      ? !freeProductId
+        ? 'Pilih produk hadiah'
+        : selectedFreeProduct?.archived
+          ? 'Produk ini sudah diarsipkan, pilih produk lain'
+          : null
+      : null
   const discountNominalError =
     type === 'discount_nominal'
-      ? discountValue === '' || discountNum <= 0
-        ? 'Nilai diskon wajib diisi.'
+      ? discountValue === '' || discountNum < 100
+        ? 'Nominal diskon minimal Rp 100'
         : discountNum > minPurchaseNum
-          ? 'Nilai diskon tidak boleh lebih besar dari minimal pembelian.'
+          ? 'Nominal diskon tidak boleh melebihi minimal pembelian'
           : null
       : null
   const discountPercentError =
     type === 'discount_percent'
       ? discountValue === '' || discountNum < 1 || discountNum > 100
-        ? 'Persen diskon harus antara 1–100.'
+        ? 'Diskon persen harus antara 1-100'
         : null
       : null
 
-  // Periode: bila berakhir diisi → mulai wajib; berakhir tidak boleh sebelum mulai
+  // Periode (opsional). Kalau salah satu diisi → keduanya wajib; berakhir harus SETELAH mulai;
+  // saat create, mulai tidak boleh di masa lalu (dilewati di mode edit).
   const periodError =
-    endDate && !startDate
-      ? 'Tanggal mulai wajib diisi jika tanggal berakhir diatur.'
-      : startDate && endDate && endDate < startDate
-        ? 'Tanggal berakhir harus setelah tanggal mulai.'
-        : null
+    (startDate && !endDate) || (!startDate && endDate)
+      ? 'Tanggal mulai dan berakhir harus diisi bersamaan'
+      : startDate && endDate && endDate <= startDate
+        ? 'Tanggal berakhir harus setelah tanggal mulai'
+        : !isEdit && startDate && startDate < todayStr
+          ? 'Tanggal mulai tidak boleh di masa lalu'
+          : null
 
-  const progressError = progressMessage.trim() === '' ? 'Pesan progres wajib diisi.' : null
+  // Pesan progres opsional; bila diisi maksimal 150 karakter
+  const progressError =
+    progressMessage.length > 150 ? 'Pesan progres maksimal 150 karakter' : null
 
   const hasError = Boolean(
     nameError ||
@@ -145,6 +179,7 @@ export default function PromotionForm({
       periodError ||
       progressError,
   )
+  const isValid = !hasError && type !== ''
 
   // Preview pesan: ganti {sisa} dengan kekurangan contoh (keranjang kosong → sebesar minimal pembelian)
   const previewMessage = progressMessage
@@ -179,7 +214,25 @@ export default function PromotionForm({
   async function handleSave() {
     setAttempted(true)
     setSubmitError(null)
-    if (hasError || type === '') return
+
+    // Scroll ke field/section pertama yang bermasalah
+    const firstBad = nameError
+      ? 'name'
+      : typeError
+        ? 'type'
+        : minPurchaseError
+          ? 'min'
+          : freeProductError || discountNominalError || discountPercentError
+            ? 'gift'
+            : periodError
+              ? 'period'
+              : progressError
+                ? 'progress'
+                : null
+    if (firstBad) {
+      document.getElementById(`promo-${firstBad}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      return
+    }
 
     setSaving(true)
     const payload = {
@@ -247,19 +300,21 @@ export default function PromotionForm({
           <section className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
             <h3 className="text-base font-bold text-gray-900">Informasi Promo</h3>
 
-            <div className="mt-5">
-              <Field label="Nama Promo" error={attempted ? nameError : null}>
+            <div id="promo-name" className="mt-5">
+              <Field label="Nama Promo" error={attempted || touchedName ? nameError : null}>
                 <input
                   type="text"
                   value={name}
+                  maxLength={100}
                   onChange={(e) => setName(e.target.value)}
+                  onBlur={() => setTouchedName(true)}
                   placeholder="Contoh: Gratis Ongkir Spesial Panen"
                   className={inputClass}
                 />
               </Field>
             </div>
 
-            <div className="mt-5">
+            <div id="promo-type" className="mt-5">
               <Field label="Tipe Hadiah" error={attempted ? typeError : null}>
                 <select
                   value={type}
@@ -306,29 +361,34 @@ export default function PromotionForm({
           {/* --- Seksi 2: Kondisi Promo --- */}
           <section className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
             <h3 className="text-base font-bold text-gray-900">Kondisi Promo</h3>
-            <div className="mt-5">
-              <Field label="Minimal Pembelian" error={attempted ? minPurchaseError : null}>
+            <div id="promo-min" className="mt-5">
+              <Field label="Minimal Pembelian" error={attempted || touchedMin ? minPurchaseError : null}>
                 <div className="relative">
                   <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center border-r border-gray-200 px-3 text-sm font-medium text-gray-500">
                     Rp
                   </span>
                   <input
-                    type="number"
-                    min={0}
+                    type="text"
+                    inputMode="numeric"
                     value={minPurchase}
-                    onChange={(e) =>
-                      setMinPurchase(e.target.value === '' ? '' : Math.max(0, Number(e.target.value)))
-                    }
+                    onChange={(e) => {
+                      const digits = e.target.value.replace(/\D/g, '')
+                      setMinPurchase(digits === '' ? '' : Number(digits))
+                    }}
+                    onBlur={() => setTouchedMin(true)}
                     placeholder="0"
                     className={`${inputClass} pl-12`}
                   />
                 </div>
               </Field>
+              {minPurchase !== '' && !minPurchaseError && (
+                <p className="mt-1 text-xs font-medium text-emerald-700">{formatRupiah(minPurchaseNum)}</p>
+              )}
             </div>
           </section>
 
           {/* --- Seksi 3: Detail Hadiah (kondisional) --- */}
-          <section className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+          <section id="promo-gift" className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
             <h3 className="text-base font-bold text-gray-900">Detail Hadiah</h3>
 
             {type === '' && (
@@ -414,18 +474,20 @@ export default function PromotionForm({
 
             {type === 'discount_nominal' && (
               <div className="mt-4">
-                <Field label="Nominal Diskon" error={attempted ? discountNominalError : null}>
+                <Field label="Nominal Diskon" error={attempted || touchedDiscount ? discountNominalError : null}>
                   <div className="relative">
                     <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center border-r border-gray-200 px-3 text-sm font-medium text-gray-500">
                       Rp
                     </span>
                     <input
-                      type="number"
-                      min={0}
+                      type="text"
+                      inputMode="numeric"
                       value={discountValue}
-                      onChange={(e) =>
-                        setDiscountValue(e.target.value === '' ? '' : Math.max(0, Number(e.target.value)))
-                      }
+                      onChange={(e) => {
+                        const digits = e.target.value.replace(/\D/g, '')
+                        setDiscountValue(digits === '' ? '' : Number(digits))
+                      }}
+                      onBlur={() => setTouchedDiscount(true)}
                       placeholder="0"
                       className={`${inputClass} pl-12`}
                     />
@@ -436,16 +498,17 @@ export default function PromotionForm({
 
             {type === 'discount_percent' && (
               <div className="mt-4">
-                <Field label="Persen Diskon" error={attempted ? discountPercentError : null}>
+                <Field label="Persen Diskon" error={attempted || touchedDiscount ? discountPercentError : null}>
                   <div className="relative">
                     <input
-                      type="number"
-                      min={1}
-                      max={100}
+                      type="text"
+                      inputMode="numeric"
                       value={discountValue}
-                      onChange={(e) =>
-                        setDiscountValue(e.target.value === '' ? '' : Math.max(0, Number(e.target.value)))
-                      }
+                      onChange={(e) => {
+                        const digits = e.target.value.replace(/\D/g, '')
+                        setDiscountValue(digits === '' ? '' : Number(digits))
+                      }}
+                      onBlur={() => setTouchedDiscount(true)}
                       placeholder="1 - 100"
                       className={`${inputClass} pr-10`}
                     />
@@ -459,7 +522,7 @@ export default function PromotionForm({
           </section>
 
           {/* --- Seksi 4: Periode Promo (opsional) --- */}
-          <section className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+          <section id="promo-period" className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
             <h3 className="text-base font-bold text-gray-900">Periode Promo</h3>
             <p className="mt-1 text-sm text-gray-500">Opsional. Kosongkan untuk promo tanpa batas waktu.</p>
 
@@ -488,16 +551,22 @@ export default function PromotionForm({
           <section className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
             <h3 className="text-base font-bold text-gray-900">Pesan Progres di Keranjang</h3>
 
-            <div className="mt-5">
-              <Field label="Pesan Progres" error={attempted ? progressError : null}>
+            <div id="promo-progress" className="mt-5">
+              <Field label="Pesan Progres (opsional)" error={attempted || touchedProgress ? progressError : null}>
                 <input
                   type="text"
                   value={progressMessage}
+                  maxLength={150}
                   onChange={(e) => setProgressMessage(e.target.value)}
+                  onBlur={() => setTouchedProgress(true)}
                   placeholder="Tambah {sisa} lagi untuk gratis ongkir!"
                   className={inputClass}
                 />
               </Field>
+              <div className="mt-1 flex items-center justify-between">
+                <span className="text-xs text-gray-400">Boleh dikosongkan.</span>
+                <span className="text-xs text-gray-400">{progressMessage.length}/150</span>
+              </div>
               <p className="mt-1.5 text-xs text-gray-400">
                 Gunakan <code className="rounded bg-gray-100 px-1 py-0.5 text-gray-600">{PROGRESS_TOKEN}</code>{' '}
                 untuk menampilkan kekurangan pembelian secara otomatis.
@@ -535,8 +604,8 @@ export default function PromotionForm({
             <button
               type="button"
               onClick={handleSave}
-              disabled={saving}
-              className="rounded-lg bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-70"
+              disabled={saving || !isValid}
+              className="rounded-lg bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {saving ? 'Menyimpan…' : isEdit ? 'Simpan Perubahan' : 'Simpan Promo'}
             </button>

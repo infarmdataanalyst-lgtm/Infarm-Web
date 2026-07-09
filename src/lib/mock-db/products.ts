@@ -114,10 +114,16 @@ export async function saveProduct(input: CreateProductInput): Promise<StoredProd
   // Foto utama: imageUrl eksplisit → foto pertama galeri → placeholder
   const primary = input.imageUrl?.trim() || gallery[0] || '/images/product-placeholder.png'
 
+  // promo_price = harga jual (dibayar buyer). original_price = harga asli (dicoret).
+  // Bila originalPrice tak diisi / tidak lebih besar → samakan dengan harga jual (tanpa diskon).
+  const promo = input.price
+  const original =
+    input.originalPrice !== undefined && input.originalPrice > promo ? input.originalPrice : promo
+
   const row: Record<string, unknown> = {
     name: input.name,
-    original_price: input.price,
-    promo_price: input.price,
+    original_price: original,
+    promo_price: promo,
     image_url: primary,
     images: gallery,
     category: input.category,

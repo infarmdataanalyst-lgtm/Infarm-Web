@@ -23,7 +23,6 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { useSidebar } from './SidebarContext'
-import { clearOmsSession } from '@/lib/oms-auth'
 
 // === Definisi Menu Navigasi ===
 type NavItem = {
@@ -112,9 +111,14 @@ function SidebarContent({ pathname }: { pathname: string }) {
     return pathname === href || pathname.startsWith(`${href}/`)
   }
 
-  // Logout: hapus cookie sesi lalu kembali ke login (replace agar tak bisa "back" ke dashboard).
-  function handleLogout() {
-    clearOmsSession()
+  // Logout: minta server hapus cookie sesi httpOnly, lalu kembali ke login
+  // (replace agar tak bisa "back" ke dashboard).
+  async function handleLogout() {
+    try {
+      await fetch('/api/oms/logout', { method: 'POST' })
+    } catch {
+      // Abaikan error jaringan; tetap arahkan ke login.
+    }
     router.replace('/oms/login')
   }
 

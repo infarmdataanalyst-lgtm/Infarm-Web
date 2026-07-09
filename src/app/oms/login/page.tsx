@@ -3,22 +3,14 @@
 // src/app/oms/login/page.tsx
 // Halaman Login OMS (Order Management System) — area internal Infarm, bukan untuk pembeli umum.
 // Layout split-screen di desktop (panel visual + form), terpusat penuh di mobile.
-// Catatan: autentikasi nyata via Supabase Auth menyusul (lihat checklist OMS di CLAUDE.md).
-// Sementara memakai satu akun dummy hardcode untuk validasi login.
+// Autentikasi diverifikasi di SERVER lewat POST /api/oms/login (cek tabel admin_users di Supabase),
+// yang lalu men-set cookie sesi httpOnly bertanda tangan. Tak ada kredensial di sisi client.
 
 import { useState, type FormEvent } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { setOmsSession, sanitizeOmsRedirect } from '@/lib/oms-auth'
-
-// === Akun dummy sementara ===
-// Satu kredensial staf internal yang dikunci di kode sampai Supabase Auth siap.
-// TODO: hapus & ganti dengan signInWithPassword Supabase setelah OMS dibangun.
-const DUMMY_CREDENTIALS = {
-  email: 'admin@infarm.id',
-  password: 'admin',
-} as const
+import { sanitizeOmsRedirect } from '@/lib/oms-auth'
 
 export default function OmsLoginPage() {
   const router = useRouter()
@@ -51,8 +43,8 @@ export default function OmsLoginPage() {
     return next
   }
 
-  // Submit: validasi field → simulasi tembak server (1 dtk) → cek kredensial dummy.
-  // Cocok → redirect dashboard. Salah → tampilkan pesan error & matikan loading.
+  // Submit: validasi field → POST /api/oms/login (verifikasi di server + set cookie sesi).
+  // Sukses → redirect dashboard. Gagal → tampilkan pesan error & matikan loading.
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setAuthError(null)
@@ -62,27 +54,28 @@ export default function OmsLoginPage() {
     if (Object.keys(found).length > 0) return
 
     setIsLoading(true)
-    // Jeda buatan agar terasa seperti menembak server asli.
-    // TODO: ganti dengan signInWithPassword Supabase Auth setelah OMS dibangun.
-    await new Promise((resolve) => setTimeout(resolve, 1000))
+    try {
+      const res = await fetch('/api/oms/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: email.trim(), password, remember: rememberMe }),
+      })
 
-    const isValid =
-      email.trim() === DUMMY_CREDENTIALS.email &&
-      password === DUMMY_CREDENTIALS.password
+      if (res.ok) {
+        // Cookie sesi sudah di-set server (httpOnly). Balik ke tujuan awal (?redirect=) bila aman.
+        const params = new URLSearchParams(window.location.search)
+        const target = sanitizeOmsRedirect(params.get('redirect'))
+        router.replace(target)
+        return
+      }
 
-    if (isValid) {
-      // Tandai sesi admin di cookie agar lolos guard proxy.ts (remember → bertahan 30 hari).
-      setOmsSession(rememberMe)
-      // Balik ke halaman yang awalnya dituju (?redirect=...) bila aman, selain itu ke dashboard.
-      const params = new URLSearchParams(window.location.search)
-      const target = sanitizeOmsRedirect(params.get('redirect'))
-      router.replace(target)
-      return
+      const data = await res.json().catch(() => ({}))
+      setAuthError(
+        data.error ?? 'Email kerja atau kata sandi yang Anda masukkan salah. Silakan periksa kembali.',
+      )
+    } catch {
+      setAuthError('Tidak dapat terhubung ke server. Silakan coba lagi.')
     }
-
-    setAuthError(
-      'Email kerja atau kata sandi yang Anda masukkan salah. Silakan periksa kembali.',
-    )
     setIsLoading(false)
   }
 

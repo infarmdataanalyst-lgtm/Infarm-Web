@@ -145,7 +145,8 @@ src/
 │   │   └── dashboard/            # dashboard, products (+upload), orders, reviews,
 │   │       │                     #   paket-combo (+baru, [id]/edit), promosi (+baru, [id]/edit)
 │   ├── api/                      # Route Handlers (runtime nodejs)
-│   │   ├── products/             # create | update | delete | list
+│   │   ├── products/             # create | update | delete | list | check-sku |
+│   │   │                         #   best-selling | sales-count | best-selling-catalog
 │   │   ├── orders/               # create | list | get | cancel (GET+PATCH)
 │   │   ├── reviews/              # create | list | reply | visibility
 │   │   ├── combos/              # create | update | delete | toggle | list | active (storefront)
@@ -154,9 +155,11 @@ src/
 │   ├── layout.tsx                # Root layout (font, metadata)
 │   └── globals.css               # Tailwind v4 + @config tailwind.config.ts
 ├── components/
-│   ├── home/                     # Homepage (HeroSearchBar, dll)
-│   ├── product/                  # Kartu & detail produk
-│   ├── cart/                     # Keranjang: CartPromoList, CartComboList, CartPaymentSummary, dll
+│   ├── home/                     # Homepage (HeroSearchBar, BestSellingProducts [infinite scroll], dll)
+│   ├── product/                  # Kartu & detail produk: ProductImageSlider (galeri maks 9),
+│   │                             #   ProductInfo (harga coret + "N terjual"), TrackProductView (catat lihat)
+│   ├── cart/                     # Keranjang: CartPromoList, CartComboList, CartPaymentSummary,
+│   │                             #   CartRecentlyViewed ("Dilihat Sebelumnya"), dll
 │   ├── checkout/                 # AddressForm, AddressSearchCombobox, ShippingOptions (bottom sheet
 │   │                             #   cek ongkir), PaymentModal, BottomSheet, OrderSummary, dll
 │   ├── order-cancellation/       # OrderCancellationView (client)
@@ -165,8 +168,10 @@ src/
 │   ├── oms/                      # Sidebar, header, chart, ComboForm, PromotionForm
 │   └── ui/                       # Komponen UI generik (AppBar, dll)
 ├── lib/
-│   ├── cart-client.ts            # Helper keranjang sisi-klien (cookie base64) + addComboToCart + snapshot promo
+│   ├── cart-client.ts            # Helper keranjang sisi-klien (cookie base64) + addComboToCart + snapshot promo + clearCart
+│   ├── recently-viewed.ts        # Riwayat "pernah dilihat" (guest, localStorage, maks 10)
 │   ├── promo-cart.ts             # Helper murni: progres/hadiah promo + relevansi & alokasi harga combo (keranjang)
+│   ├── product-validation.ts     # Validasi form produk (SKU, nama, kategori, harga jual/asli, stok, deskripsi, foto)
 │   ├── format.ts                 # Util format (mis. rupiah)
 │   ├── phone.ts                  # Validasi & normalisasi no. telepon ID (checkout)
 │   ├── email.ts                  # Validasi & normalisasi email (checkout)
@@ -252,11 +257,13 @@ Tulis komentar untuk memudahkan maintenance. Ikuti aturan berikut:
   dipetakan oleh fungsi `rowTo*` di tiap file mock-db)
 - **Jangan** memanggil `createAdminClient()` dari komponen `'use client'` — server only
 
-### Dummy data tampilan (masih dipakai)
-- `src/lib/data/dummy-*.ts` masih jadi sumber untuk: katalog dummy yang digabung di storefront,
-  detail produk (`dummy-product-details`), serta fallback ringkasan checkout
-- Halaman yang me-resolve produk dari cookie (keranjang/checkout) menggabungkan **produk Supabase
-  (via API) + dummy** agar produk OMS maupun dummy sama-sama tampil
+### Dummy data tampilan (dipakai terbatas)
+- **Katalog `/products` kini PURE produk OMS** (Supabase) — dummy TIDAK lagi digabung di katalog
+  maupun section "Produk Terlaris" homepage.
+- `src/lib/data/dummy-*.ts` masih dipakai sebagai: **fallback** detail produk
+  (`dummy-product-details`, bila id bukan produk OMS), fallback ringkasan checkout, dan sebagai
+  peta pelengkap saat me-resolve item cookie di keranjang/checkout (produk OMS didahulukan;
+  yang diarsipkan dibuang).
 
 ### Keranjang (cookie-based)
 - Semua operasi keranjang via helper di `src/lib/cart-client.ts`
@@ -279,20 +286,31 @@ Tulis komentar untuk memudahkan maintenance. Ikuti aturan berikut:
   (lihat `supabase/README.md`), berurutan sesuai timestamp
 - Regenerate types (saat CLI tersedia): `supabase gen types typescript --local > src/types/supabase.ts`
 
-## Auth Guard OMS (sementara, cookie-based)
+## Auth Guard OMS (cookie sesi bertanda tangan + tabel admin_users)
 
 Akses `/oms/dashboard/*` dilindungi guard di **`src/proxy.ts`** (Next.js 16 Proxy, pengganti
-middleware). **Bukan auth real** — penanda sesi sementara sampai Supabase Auth dipasang.
+middleware). Login diverifikasi ke **tabel Supabase `admin_users`** (bukan lagi dummy hardcode);
+sesi disimpan sebagai **cookie httpOnly bertanda tangan HMAC** (bukan lagi penanda `"1"` forgeable).
 
-- **Cookie penanda**: `oms_session` (helper terpusat di `src/lib/oms-auth.ts`:
-  `OMS_SESSION_COOKIE`, `setOmsSession`/`clearOmsSession` [client], `sanitizeOmsRedirect`).
-- **Guard** (`proxy.ts`, `matcher: '/oms/dashboard/:path*'`): tanpa cookie → `307` ke
-  `/oms/login?redirect=<tujuan asli>`. Halaman `/oms/login` tidak ikut diproteksi.
-- **Redirect-after-login**: login sukses → `setOmsSession(rememberMe)` + baca `?redirect`,
-  divalidasi `sanitizeOmsRedirect` (cegah open redirect — hanya path `/oms/dashboard*`),
-  lalu `router.replace(target)`.
-- **Logout**: tombol "Keluar" di `Sidebar` → `clearOmsSession()` + `router.replace('/oms/login')`.
-- **Roadmap**: ganti cookie penanda ini dengan sesi Supabase Auth (cek sesi di `proxy.ts`).
+- **Tabel `admin_users`**: `username` (unik), `password_hash` (scrypt, format `saltHex:hashHex`),
+  `name`, `is_active`. RLS aktif tanpa policy publik → akses hanya server (service_role).
+  Migration `supabase/migrations/20260708120000_init_admin_users.sql` (+ seed admin awal).
+- **Verifikasi password**: `src/lib/mock-db/admins.ts` (server-only, `node:crypto` scrypt +
+  `timingSafeEqual`). `authenticateAdmin(username, password)`.
+- **Token sesi**: `src/lib/oms-auth.ts` — `createSessionToken`/`verifySessionToken`
+  (HMAC-SHA256 via Web Crypto, jalan di edge & node), `sanitizeOmsRedirect`,
+  `OMS_SESSION_COOKIE`. Secret dari env `OMS_SESSION_SECRET` (fallback dev).
+- **Login**: `POST /api/oms/login` (runtime nodejs) — verifikasi kredensial + **rate limit**
+  in-memory (5 percobaan/menit per IP+username) → set cookie sesi `httpOnly`, `secure` (prod),
+  `SameSite=Lax`, `maxAge` (12 jam; 30 hari bila "Ingat Saya").
+- **Guard** (`proxy.ts`, `matcher: '/oms/dashboard/:path*'`): `verifySessionToken` cookie →
+  invalid/kedaluwarsa → `307` ke `/oms/login?redirect=<tujuan asli>`. `/oms/login` tak diproteksi.
+- **Logout**: tombol "Keluar" di `Sidebar` → `POST /api/oms/logout` (hapus cookie httpOnly) +
+  `router.replace('/oms/login')`.
+- **Catatan**: proxy hanya menjaga **halaman** dashboard. Route handler mutasi OMS
+  (`/api/products|combos|promotions|reviews/...`, `/api/orders/list`) **belum** dijaga per-endpoint
+  (lihat temuan K-1 di `docs/security-audit-2026-07-08.md`) — roadmap berikutnya.
+- **Roadmap**: pertimbangkan Supabase Auth penuh bila butuh multi-peran/reset password.
 
 ## Pembatalan Pesanan Guest (token-protected)
 
@@ -394,6 +412,84 @@ validasi server di `src/lib/*-validation.ts`, UI lewat API Routes (BUKAN server 
   (`setCheckoutPromo`, tipe `CheckoutPromoSnapshot`) untuk diteruskan ke order nanti *(wiring ke
   tabel orders masih roadmap)*.
 
+## Skema Order & Checkout (Supabase) — sudah diperbarui
+
+Tabel `orders` **memakai kolom Bahasa Indonesia** + tabel anak `order_items`. Enum di DB
+Inggris, dipetakan ke label Indonesia di data layer (`rowToOrder`), jadi UI dashboard/track/cancel
+tidak perlu berubah saat skema DB berganti.
+
+- **`orders`** (kolom utama): `nomor_invoice` (unik), `email`, `no_telepon`, `nama_customer`,
+  `jumlah_total`, `shipping_address`, `provinsi`/`kota`/`kecamatan`/`kelurahan`/`kodepos`,
+  `nama_ekspedisi`, `jenis_layanan`, `no_tracking`, `id_transaksi`, `destination_id`,
+  `status_pembayaran`, `order_status`, `created_at`.
+- **`order_items`**: `order_id` → `orders.id`, `product_id` (nullable — dummy non-UUID → null),
+  `quantity`, `price_at_purchase` (**snapshot harga saat beli**, bukan harga produk sekarang).
+- **Enum ↔ label**:
+  - `status_pembayaran` `PENDING|PAID|FAILED` ↔ `Menunggu|Lunas|Gagal`
+  - `order_status` `PENDING|PROCESSING|SHIPPED|COMPLETED|CANCELLED` ↔
+    `Menunggu Pembayaran|Diproses|Dikirim|Selesai|Dibatalkan`
+- **Checkout atomik**: `POST /api/orders/create` → `saveOrder` (`src/lib/mock-db/orders.ts`) memanggil
+  **RPC `create_order_with_items`** (`supabase/migrations/20260702120000_...`, plpgsql `security definer`):
+  dalam SATU transaksi — insert `orders` + `order_items` + kurangi `products.stock`. Stok salah satu
+  produk kurang → `raise exception 'INSUFFICIENT_STOCK:<nama>'` → **seluruh transaksi rollback**;
+  app melempar `OrderStockError` ("Stok produk … tidak mencukupi").
+- **Nomor invoice**: `generateInvoiceNumber()` = `INV-{YYYYMMDD}-{4 digit acak}`. Unik via index
+  `orders_nomor_invoice_key`; `saveOrder` retry beberapa kali bila tabrakan (unique violation).
+- **Baris warisan**: `rowToOrder` pakai `orderId: nomor_invoice ?? id` (aman untuk baris lama
+  tanpa `nomor_invoice`).
+
+## Foto Produk Multi (Galeri, maks 9)
+
+- **Kolom** `products.images` (`jsonb`, default `[]`) — migration `20260701120000_add_products_images.sql`.
+  `image_url` tetap = foto utama (`images[0]`). Batas maks 9 selaras slider + validasi app.
+- App: `StoredProduct.images: string[]`; `mock-db/products.ts` punya `sanitizeGallery` + **fallback aman**
+  bila kolom `images` belum di-migrate (kode error `PGRST204`/`42703`).
+- OMS upload + **modal edit** bisa tambah/ganti/hapus foto (bukan hanya ganti 1). Foto disimpan
+  base64 data-URL (prototipe).
+- Detail produk: `ProductImageSlider` (thumbnail clickable desktop+mobile, dots); fallback ke
+  `imageUrl` bila galeri kosong.
+
+## Harga Coret (Diskon)
+
+- Dua kolom eksisting: **`original_price`** (harga asli/coret) & **`promo_price`** (harga jual). **Tanpa**
+  kolom `is_on_sale`/tanggal sale — status diskon dihitung: `isProductOnSale(p)` = `originalPrice > promoPrice`
+  (`src/types/product.ts`).
+- OMS form: field **Harga Jual** (= `promoPrice`) + **Harga Asli** opsional (`validateOriginalPrice`
+  wajib > harga jual bila diisi). `saveProduct` set `original = originalPrice` bila > promo, else = promo.
+- Tampil coret di: `ProductCard`, `ProductInfo`, `CartRecentlyViewed` (kondisional lewat `isProductOnSale`).
+
+## Produk Terlaris & "N Terjual"
+
+- Agregasi di `src/lib/mock-db/orders.ts` (`aggregateSales`): jumlah `order_items.quantity` per produk.
+  **Sementara** hanya mengecualikan `order_status = CANCELLED` (`.neq`). **TODO**: setelah Xendit,
+  ketatkan ke `status_pembayaran = PAID` (order baru masih `PENDING` sampai pembayaran real).
+- Fungsi: `getBestSellingProducts({limit, from, to})` dan `getSalesCountByProduct({from, to})`.
+- **OMS** halaman produk: kolom "Terjual" + selektor rentang waktu.
+- **Storefront**: section "Produk Terlaris" homepage (`BestSellingProducts`, client, infinite scroll
+  via `IntersectionObserver` native, paginasi `/api/products/best-selling-catalog`); "N terjual"
+  di detail produk (di samping rating).
+
+## Validasi Form Produk (OMS)
+
+Logika terpusat di `src/lib/product-validation.ts`, dipakai form upload **dan** modal edit + dicek ulang
+di server (`/api/products/{create,update}`). Konstanta: `SKU_REGEX` (`^[A-Z0-9-]+$`), nama 3–200,
+deskripsi 20–2000, harga 100–99.999.999, stok 0–999.999, `MAX_PRODUCT_IMAGES=9`,
+`MAX_IMAGE_BYTES=2MB`, `ACCEPTED_IMAGE_TYPES` (jpg/png/webp).
+
+- **SKU**: format wajib huruf besar/angka/strip + **cek duplikat** server (`/api/products/check-sku`,
+  dukung `excludeId` saat edit).
+- Foto: min 1, maks 9, tiap file ≤ 2MB & tipe diterima (`validateImageFile`).
+- Error tampil per-field + auto-scroll ke field invalid pertama (`PRODUCT_FIELD_ORDER`).
+
+## Riwayat "Dilihat Sebelumnya" (Recently Viewed)
+
+- **localStorage** (guest, sisi-klien) key `recently_viewed_products` — `src/lib/recently-viewed.ts`
+  (`trackProductView`, `getRecentlyViewedIds`). Array `{ product_id, viewed_at }`, terbaru di depan,
+  maks 10, anti-duplikat, semua akses `try/catch` (aman saat disabled/penuh).
+- Dicatat saat buka detail produk via `TrackProductView` (komponen null, `'use client'`).
+- Ditampilkan di **keranjang** (`CartRecentlyViewed`): resolve id → data produk **terbaru** (OMS+dummy),
+  buang produk diarsipkan atau yang sudah ada di keranjang, maks 6; section disembunyikan bila kosong.
+
 ## Roadmap Integrasi (target arsitektur — belum diimplementasi)
 
 ### Xendit (Payment Gateway)
@@ -410,7 +506,9 @@ validasi server di `src/lib/*-validation.ts`, UI lewat API Routes (BUKAN server 
 - [x] Halaman beranda (homepage) — dengan search bar autocomplete
 - [x] Halaman katalog produk (`/products`)
 - [x] Halaman detail produk (`/produk/[id]`)
-- [x] Halaman keranjang (`/keranjang`) — data dari cookie
+- [x] Halaman keranjang (`/keranjang`) — data dari cookie + section "Dilihat Sebelumnya" (localStorage)
+- [x] Katalog & "Produk Terlaris" pure produk OMS (infinite scroll); "N terjual" di detail produk
+- [x] Detail produk: galeri foto multi (maks 9) + harga coret
 - [x] Promo & paket combo REAL di keranjang (dari Supabase via `/api/{promotions,combos}/active`)
 - [x] Halaman guest checkout (`/checkout` + `/checkout/success`)
 - [x] Halaman review produk (`/review`)
@@ -423,15 +521,19 @@ validasi server di `src/lib/*-validation.ts`, UI lewat API Routes (BUKAN server 
 - [ ] Mengantar: booking kurir & tracking resi otomatis — masih roadmap
 
 ### OMS (Back Office)
-- [x] Halaman login OMS (`/oms/login`) — auth dummy + guard cookie (`proxy.ts`), Supabase Auth menyusul
+- [x] Login OMS (`/oms/login`) — verifikasi ke tabel `admin_users` (scrypt) + cookie sesi httpOnly
+      bertanda tangan HMAC + rate limit (`proxy.ts` verifikasi tanda tangan)
 - [x] Dashboard OMS (`/oms/dashboard`)
-- [x] Manajemen produk (list, upload/create, update, delete) via API + Supabase
+- [x] Manajemen produk (list, upload/create, update, delete) via API + Supabase — multi-foto (maks 9),
+      harga jual/asli (coret), validasi form, kolom "Terjual" + rentang waktu
 - [x] Manajemen order (`/oms/dashboard/orders`)
 - [x] Manajemen review (`/oms/dashboard/reviews`) — create/list/reply/visibility
 - [x] Manajemen Paket & Combo (`/oms/dashboard/paket-combo`) — create/list/update/delete/toggle
 - [x] Manajemen Promosi (`/oms/dashboard/promosi`) — create/list/update/delete/toggle
-- [ ] Autentikasi admin real (Supabase Auth)
-- [ ] Manajemen inventori / stok real (alokasi stok saat checkout)
+- [~] Autentikasi admin: sudah DB-backed (`admin_users` + scrypt + sesi HMAC httpOnly); Supabase Auth
+      penuh (multi-peran/reset password) + proteksi per-endpoint API OMS masih menyusul
+- [~] Stok berkurang atomik saat checkout (RPC `create_order_with_items`); alokasi/rilis stok penuh
+      (mis. saat pembayaran gagal/expired) menyusul bareng Xendit
 
 ---
 
@@ -456,6 +558,8 @@ NEXT_PUBLIC_SUPABASE_URL
 NEXT_PUBLIC_SUPABASE_ANON_KEY
 SUPABASE_SERVICE_ROLE_KEY        # server-only (dipakai mock-db via createAdminClient)
 ORDER_CANCEL_SECRET              # server-only, opsional (HMAC token pembatalan; ada fallback dev)
+OMS_SESSION_SECRET               # server-only (HMAC tanda tangan cookie sesi OMS; ada fallback dev
+                                 # — WAJIB di-set di production, jangan pakai fallback)
 
 # Sudah dipakai sekarang (Mengantar — cek ongkir)
 NEXT_PUBLIC_MENGANTAR_ORIGIN_ID  # PUBLIC/client; _id kelurahan toko (asal pengiriman). WAJIB di-set
@@ -551,7 +655,7 @@ search alamat + **cek ongkir Mengantar sudah real**; bagian Xendit (pembayaran) 
 resi masih roadmap (dijalankan dengan mock).
 
 ### Alur Browsing & Keranjang
-1. User membuka web → data produk diambil via `GET /api/products/list` (Supabase, digabung dummy)
+1. User membuka web → data produk diambil via `GET /api/products/list` (Supabase; katalog & terlaris pure OMS)
 2. Server menyiapkan tampilan halaman (Server Component)
 3. User klik "Tambah ke Keranjang" → disimpan ke cookie (`infarm_cart`) via `cart-client.ts`
 4. Angka keranjang di navbar update (+1) tanpa reload (custom event)
@@ -565,7 +669,8 @@ resi masih roadmap (dijalankan dengan mock).
 8. Halaman `/checkout`: form Nama, No. HP, Email, Alamat (search Mengantar → `destination_id`),
    lalu **cek ongkir otomatis** (pilih kurir → `selected_courier`, ongkir masuk total), Metode
    Pembayaran. Semua field & kurir divalidasi client; tombol "Bayar Sekarang" aktif hanya bila valid.
-9. User isi form → klik "Bayar Sekarang" → order (termasuk email) tersimpan ke Supabase (`POST /api/orders/create`)
+9. User isi form → klik "Bayar Sekarang" → `POST /api/orders/create` → RPC atomik `create_order_with_items`
+   (insert `orders` + `order_items` + kurangi stok; rollback bila stok kurang; nomor invoice `INV-…`)
 10. Backend **buat invoice** → hubungi Xendit API untuk generate link pembayaran *(roadmap)*
 11. Xendit kirim balik URL invoice *(roadmap)*
 12. User di-redirect ke halaman pembayaran Xendit *(roadmap)*
