@@ -2,6 +2,7 @@
 // API memperbarui paket/combo di Supabase. Dipanggil PATCH dari ComboForm (mode edit).
 
 import { NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/oms-guard'
 import { updateCombo } from '@/lib/mock-db/combos'
 import { validateComboInput } from '@/lib/combo-validation'
 
@@ -9,6 +10,10 @@ export const runtime = 'nodejs'
 
 // Memperbarui combo: validasi server lalu replace data + item-nya.
 export async function PATCH(request: Request) {
+  // Guard: endpoint OMS — wajib sesi admin (K-1)
+  const unauthorized = await requireAdmin()
+  if (unauthorized) return unauthorized
+
   let body: Record<string, unknown>
   try {
     body = await request.json()

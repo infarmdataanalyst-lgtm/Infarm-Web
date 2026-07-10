@@ -2,12 +2,17 @@
 // API menyimpan/menghapus balasan admin pada sebuah ulasan (moderasi OMS).
 
 import { NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/oms-guard'
 import { setReviewReply } from '@/lib/mock-db/reviews'
 
 export const runtime = 'nodejs'
 
 // Menyimpan balasan admin. reply kosong/null = hapus balasan.
 export async function POST(request: Request) {
+  // Guard: endpoint OMS — wajib sesi admin (K-1)
+  const unauthorized = await requireAdmin()
+  if (unauthorized) return unauthorized
+
   let body: Record<string, unknown>
   try {
     body = await request.json()

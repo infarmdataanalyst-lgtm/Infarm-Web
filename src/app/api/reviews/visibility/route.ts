@@ -2,12 +2,17 @@
 // API menyetel apakah sebuah ulasan tampil di storefront (moderasi OMS).
 
 import { NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/oms-guard'
 import { setReviewVisibility } from '@/lib/mock-db/reviews'
 
 export const runtime = 'nodejs'
 
 // Mengubah status tampil/sembunyi sebuah ulasan
 export async function POST(request: Request) {
+  // Guard: endpoint OMS — wajib sesi admin (K-1)
+  const unauthorized = await requireAdmin()
+  if (unauthorized) return unauthorized
+
   let body: Record<string, unknown>
   try {
     body = await request.json()

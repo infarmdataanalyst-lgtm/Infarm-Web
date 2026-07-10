@@ -2,6 +2,7 @@
 // API memperbarui promo di Supabase. Dipanggil PATCH dari PromotionForm (mode edit).
 
 import { NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/oms-guard'
 import { updatePromotion } from '@/lib/mock-db/promotions'
 import { validatePromotionInput } from '@/lib/promotion-validation'
 
@@ -9,6 +10,10 @@ export const runtime = 'nodejs'
 
 // Memperbarui promo: validasi server lalu replace datanya.
 export async function PATCH(request: Request) {
+  // Guard: endpoint OMS — wajib sesi admin (K-1)
+  const unauthorized = await requireAdmin()
+  if (unauthorized) return unauthorized
+
   let body: Record<string, unknown>
   try {
     body = await request.json()

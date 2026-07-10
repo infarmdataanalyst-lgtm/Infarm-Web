@@ -3,6 +3,7 @@
 // Dipanggil POST dari form Upload Produk OMS.
 
 import { NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/oms-guard'
 import { revalidatePath } from 'next/cache'
 import { saveProduct } from '@/lib/mock-db/products'
 import { PRODUCT_CATEGORIES } from '@/lib/data/categories'
@@ -81,6 +82,10 @@ function validatePayload(body: unknown): { input: CreateProductInput } | { error
 
 // Menyimpan produk baru dari OMS
 export async function POST(request: Request) {
+  // Guard: endpoint OMS — wajib sesi admin (K-1)
+  const unauthorized = await requireAdmin()
+  if (unauthorized) return unauthorized
+
   let body: unknown
   try {
     body = await request.json()

@@ -2,12 +2,17 @@
 // API mengaktifkan / menonaktifkan combo (kolom is_active). Dipanggil PATCH dari daftar combo OMS.
 
 import { NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/oms-guard'
 import { setComboActive } from '@/lib/mock-db/combos'
 
 export const runtime = 'nodejs'
 
 // Mengubah status aktif sebuah combo
 export async function PATCH(request: Request) {
+  // Guard: endpoint OMS — wajib sesi admin (K-1)
+  const unauthorized = await requireAdmin()
+  if (unauthorized) return unauthorized
+
   let body: Record<string, unknown>
   try {
     body = await request.json()

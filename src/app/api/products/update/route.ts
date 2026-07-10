@@ -2,6 +2,7 @@
 // API memperbarui produk di mock database (dari modal Edit OMS).
 
 import { NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/oms-guard'
 import { revalidatePath } from 'next/cache'
 import { updateProduct } from '@/lib/mock-db/products'
 import { PRODUCT_CATEGORIES } from '@/lib/data/categories'
@@ -13,6 +14,10 @@ const VALID_CATEGORIES = PRODUCT_CATEGORIES.map((c) => c.slug) as string[]
 
 // Memperbarui produk berdasarkan id; hanya field yang dikirim yang diubah
 export async function PATCH(request: Request) {
+  // Guard: endpoint OMS — wajib sesi admin (K-1)
+  const unauthorized = await requireAdmin()
+  if (unauthorized) return unauthorized
+
   let body: Record<string, unknown>
   try {
     body = await request.json()

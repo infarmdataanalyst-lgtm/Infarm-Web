@@ -2,12 +2,17 @@
 // API mengaktifkan / menonaktifkan promo (kolom is_active). Dipanggil PATCH dari daftar promo OMS.
 
 import { NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/oms-guard'
 import { setPromotionActive } from '@/lib/mock-db/promotions'
 
 export const runtime = 'nodejs'
 
 // Mengubah status aktif sebuah promo
 export async function PATCH(request: Request) {
+  // Guard: endpoint OMS — wajib sesi admin (K-1)
+  const unauthorized = await requireAdmin()
+  if (unauthorized) return unauthorized
+
   let body: Record<string, unknown>
   try {
     body = await request.json()

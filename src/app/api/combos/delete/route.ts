@@ -3,12 +3,17 @@
 // Memakai POST (bukan DELETE) agar body JSON {id} pasti terkirim di semua klien.
 
 import { NextResponse } from 'next/server'
+import { requireAdmin } from '@/lib/oms-guard'
 import { deleteCombo } from '@/lib/mock-db/combos'
 
 export const runtime = 'nodejs'
 
 // Menghapus combo berdasarkan id
 export async function POST(request: Request) {
+  // Guard: endpoint OMS — wajib sesi admin (K-1)
+  const unauthorized = await requireAdmin()
+  if (unauthorized) return unauthorized
+
   let body: Record<string, unknown>
   try {
     body = await request.json()
