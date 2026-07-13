@@ -444,8 +444,13 @@ tidak perlu berubah saat skema DB berganti.
   `image_url` tetap = foto utama (`images[0]`). Batas maks 9 selaras slider + validasi app.
 - App: `StoredProduct.images: string[]`; `mock-db/products.ts` punya `sanitizeGallery` + **fallback aman**
   bila kolom `images` belum di-migrate (kode error `PGRST204`/`42703`).
-- OMS upload + **modal edit** bisa tambah/ganti/hapus foto (bukan hanya ganti 1). Foto disimpan
-  base64 data-URL (prototipe).
+- OMS upload + **modal edit** bisa tambah/ganti/hapus foto (bukan hanya ganti 1).
+- **Foto disimpan sebagai URL Supabase Storage, BUKAN base64.** Bucket **`product-images`** (public).
+  Client OMS tetap kirim data-URL base64; `saveProduct`/`updateProduct` (`mock-db/products.ts`)
+  otomatis **decode → upload ke Storage → simpan URL** (`uploadImageIfDataUrl`/`uploadGallery`).
+  Kolom `image_url`/`images` = URL `https://<proj>.supabase.co/storage/v1/object/public/product-images/...`.
+  **Jangan pernah simpan base64 ke `image_url`/`images`** (dulu bikin payload `products/list` ~5MB;
+  setelah pindah Storage jadi ~20KB). Migrasi data lama: `scripts/migrate-product-images-to-storage.mjs`.
 - Detail produk: `ProductImageSlider` (thumbnail clickable desktop+mobile, dots); fallback ke
   `imageUrl` bila galeri kosong.
 

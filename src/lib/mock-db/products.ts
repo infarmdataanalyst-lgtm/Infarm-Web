@@ -9,12 +9,57 @@
 // jadi readProducts() bisa melihat produk archived (untuk OMS) dan operasi
 // tulis tidak terhalang policy. JANGAN diimpor dari komponen 'use client'.
 
+import { randomUUID } from 'node:crypto'
 import { createAdminClient } from '@/lib/supabase/server'
 import type {
   StoredProduct,
   CreateProductInput,
   ProductCategory,
 } from '@/types/product'
+
+// === Upload gambar ke Supabase Storage ===
+// Foto produk WAJIB disimpan sebagai URL Storage, bukan base64 di kolom DB (payload membengkak).
+// Bucket 'product-images' (public). Helper di bawah mengubah data-URL base64 → file di Storage → URL.
+
+const IMAGE_BUCKET = 'product-images'
+
+// Ekstensi file dari mime data-URL (fallback .bin)
+const MIME_EXT: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+}
+
+// Bila string berupa data-URL base64 → decode, upload ke Storage, kembalikan URL publik.
+// Bila sudah URL (http) / placeholder / kosong → kembalikan apa adanya (idempoten).
+async function uploadImageIfDataUrl(value: string): Promise<string> {
+  if (!value || !value.startsWith('data:')) return value
+
+  const match = value.match(/^data:([^;]+);base64,(.+)$/)
+  if (!match) return value // format tak dikenal → biarkan (jangan hilangkan foto)
+
+  const mime = match[1]
+  const ext = MIME_EXT[mime] ?? 'bin'
+  const buffer = Buffer.from(match[2], 'base64')
+  const path = `products/${randomUUID()}.${ext}`
+
+  const supabase = createAdminClient()
+  const { error } = await supabase.storage
+    .from(IMAGE_BUCKET)
+    .upload(path, buffer, { contentType: mime, upsert: false })
+
+  if (error) {
+    console.error('Gagal upload gambar ke Storage:', error.message)
+    return value // fallback: pertahankan data-URL agar foto tak hilang (payload berat, tapi aman)
+  }
+
+  return supabase.storage.from(IMAGE_BUCKET).getPublicUrl(path).data.publicUrl
+}
+
+// Memproses daftar gambar galeri: upload yang masih data-URL, sisanya (URL) dibiarkan.
+async function uploadGallery(images: string[]): Promise<string[]> {
+  return Promise.all(images.map((img) => uploadImageIfDataUrl(img)))
+}
 
 // === Pemetaan baris DB <-> StoredProduct ===
 
@@ -110,9 +155,12 @@ export async function getProductById(id: string): Promise<StoredProduct | null> 
 // Opsi harga sederhana: originalPrice = promoPrice = price (tanpa diskon).
 export async function saveProduct(input: CreateProductInput): Promise<StoredProduct> {
   const supabase = createAdminClient()
-  const gallery = sanitizeGallery(input.images)
-  // Foto utama: imageUrl eksplisit → foto pertama galeri → placeholder
-  const primary = input.imageUrl?.trim() || gallery[0] || '/images/product-placeholder.png'
+  // Upload galeri (data-URL → Storage) lebih dulu agar kolom images berisi URL, bukan base64
+  const gallery = await uploadGallery(sanitizeGallery(input.images))
+  // Foto utama: imageUrl eksplisit → foto pertama galeri → placeholder. Upload bila masih data-URL.
+  const primary = await uploadImageIfDataUrl(
+    input.imageUrl?.trim() || gallery[0] || '/images/product-placeholder.png',
+  )
 
   // promo_price = harga jual (dibayar buyer). original_price = harga asli (dicoret).
   // Bila originalPrice tak diisi / tidak lebih besar → samakan dengan harga jual (tanpa diskon).
@@ -163,16 +211,17 @@ export async function updateProduct(
   if (patch.name !== undefined) dbPatch.name = patch.name
   if (patch.originalPrice !== undefined) dbPatch.original_price = patch.originalPrice
   if (patch.promoPrice !== undefined) dbPatch.promo_price = patch.promoPrice
-  if (patch.imageUrl !== undefined) dbPatch.image_url = patch.imageUrl
+  // Foto utama: upload bila masih data-URL (jangan simpan base64 ke image_url)
+  if (patch.imageUrl !== undefined) dbPatch.image_url = await uploadImageIfDataUrl(patch.imageUrl)
   if (patch.category !== undefined) dbPatch.category = patch.category
   if (patch.badge !== undefined) dbPatch.badge = patch.badge
   if (patch.sku !== undefined) dbPatch.sku = patch.sku
   if (patch.stock !== undefined) dbPatch.stock = patch.stock
   if (patch.description !== undefined) dbPatch.description = patch.description
   if (patch.archived !== undefined) dbPatch.archived = patch.archived
-  // Galeri: simpan array + sinkronkan foto utama (image_url) ke foto pertama galeri
+  // Galeri: upload data-URL → URL Storage, simpan array + sinkronkan foto utama ke foto pertama
   if (patch.images !== undefined) {
-    const gallery = sanitizeGallery(patch.images)
+    const gallery = await uploadGallery(sanitizeGallery(patch.images))
     dbPatch.images = gallery
     if (gallery[0]) dbPatch.image_url = gallery[0]
   }

@@ -39,14 +39,16 @@ double-guard (`revealErrors()` + cek kurir + toast). **Dua lapis (client + serve
 
 ## Temuan
 
-### 🟠 SEDANG · Latensi & payload `GET /api/products/list`
+### 🟠 SEDANG · Latensi & payload `GET /api/products/list` — ✅ RESOLVED (2026-07-13)
 - **5.0 MB** per request; warm **~2.1–2.6s** (cold 4.0s). Bukan cold-compile (hit#2 tetap 2.1s).
 - **Sebab:** foto produk disimpan **base64 data-URL** (`image_url` + galeri `images[]`) dan dikirim
   **penuh** di list. Satu produk ~150KB+.
 - **Dampak:** endpoint dipanggil di katalog, keranjang, **checkout**, dan form review → semua berat +
   boros bandwidth (fatal di mobile).
-- **Saran:** jangan sertakan galeri base64 di list; kirim thumbnail/URL, atau endpoint ringkas khusus
-  list. (Perlu keputusan: pindah foto ke storage/URL vs tetap base64.)
+- **Perbaikan (2026-07-13):** foto dipindah ke Supabase Storage (bucket `product-images`);
+  `image_url`/`images` kini berisi URL, bukan base64. `saveProduct`/`updateProduct` auto-upload
+  data-URL → Storage; data lama dimigrasi via `scripts/migrate-product-images-to-storage.mjs`.
+  **Payload terukur ulang: `products/list` 5.0MB → ~20KB; `best-selling-catalog` >1MB → ~3.5KB.**
 
 ### 🔴 TERKAIT AUDIT · Harga & total dari client dipercaya (K-3, masih terbuka)
 - Happy path membuktikan server **menerima `totalAmount` apa adanya** (83.400 tak dihitung ulang);
@@ -64,9 +66,10 @@ double-guard (`revealErrors()` + cek kurir + toast). **Dua lapis (client + serve
 
 ## Ringkasan
 Alur data checkout **berfungsi end-to-end**: produk → alamat → ongkir → submit → order tersimpan →
-invoice format benar → redirect. Validasi wajib solid (client + server 422). Dua hal perlu perhatian:
-**performa `products/list` (5MB)** dan **kepercayaan harga dari client (K-3)**.
+invoice format benar → redirect. Validasi wajib solid (client + server 422). Status dua temuan:
+**performa `products/list` ✅ SUDAH DIPERBAIKI** (foto → Storage, 5MB → ~20KB) dan **kepercayaan harga
+dari client (K-3) masih terbuka**.
 
 ### Prioritas usulan
-1. `products/list` — dampak UX langsung (payload 5MB).
-2. K-3 — butuh keputusan desain harga (server hitung ulang dari DB).
+1. ~~`products/list` — payload 5MB~~ → ✅ selesai 2026-07-13 (foto pindah ke Supabase Storage).
+2. K-3 — butuh keputusan desain harga (server hitung ulang dari DB). **Masih terbuka.**
