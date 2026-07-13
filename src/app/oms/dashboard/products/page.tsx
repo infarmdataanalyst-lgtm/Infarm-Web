@@ -18,10 +18,12 @@ import {
   validatePrice,
   validateOriginalPrice,
   validateStock,
+  validateDescription,
   validateImages,
   validateImageFile,
   ACCEPTED_IMAGE_ACCEPT,
   NAME_MAX,
+  DESC_MAX,
 } from '@/lib/product-validation'
 import type { ProductCategory, StoredProduct } from '@/types/product'
 
@@ -36,6 +38,7 @@ type Product = {
   price: number // harga jual (promoPrice)
   originalPrice?: number // harga asli (dicoret bila > price)
   stock: number
+  description?: string // deskripsi produk (tampil di halaman detail ecommerce)
   image: string // foto utama (thumbnail tabel) = images[0]
   images?: string[] // galeri foto (maks 9)
   persisted: boolean // true bila tersimpan di mock DB (bisa diedit/dihapus permanen)
@@ -50,6 +53,7 @@ type EditForm = {
   price: number | ''
   originalPrice: number | '' // harga asli (opsional)
   stock: number | ''
+  description: string // deskripsi produk
   images: string[] // galeri foto (maks 9); images[0] = foto utama
 }
 
@@ -84,6 +88,7 @@ function mapStored(p: StoredProduct): Product {
     price: p.promoPrice,
     originalPrice: p.originalPrice,
     stock: p.stock,
+    description: p.description,
     image: p.imageUrl,
     images: p.images,
     persisted: true,
@@ -207,6 +212,7 @@ export default function ProductsPage() {
       originalPrice:
         product.originalPrice && product.originalPrice > product.price ? product.originalPrice : '',
       stock: product.stock,
+      description: product.description ?? '',
       images: gallery,
     })
   }
@@ -218,7 +224,7 @@ export default function ProductsPage() {
     setEditSkuDuplicate(false)
   }
 
-  // Error live per field modal edit (dihitung dari form). Deskripsi tak ada di modal ini.
+  // Error live per field modal edit (dihitung dari form)
   const editErrors = useMemo(() => {
     if (!form) return {} as Record<string, string | undefined>
     return {
@@ -228,6 +234,7 @@ export default function ProductsPage() {
       price: validatePrice(form.price),
       originalPrice: validateOriginalPrice(form.originalPrice, form.price),
       stock: validateStock(form.stock),
+      description: validateDescription(form.description),
       images: validateImages(form.images.length),
     }
   }, [form])
@@ -242,6 +249,7 @@ export default function ProductsPage() {
     !editErrors.price &&
     !editErrors.originalPrice &&
     !editErrors.stock &&
+    !editErrors.description &&
     !editErrors.images
 
   // Cek duplikat SKU saat onBlur (kecualikan produk yang sedang diedit)
@@ -309,6 +317,7 @@ export default function ProductsPage() {
       editErrors.price ??
       editErrors.originalPrice ??
       editErrors.stock ??
+      editErrors.description ??
       editErrors.images
     if (firstError) {
       setEditError(firstError)
@@ -334,6 +343,7 @@ export default function ProductsPage() {
             price,
             originalPrice,
             stock,
+            description: form.description.trim(),
             imageUrl: form.images[0],
             images: form.images,
           }),
@@ -361,6 +371,7 @@ export default function ProductsPage() {
                 price,
                 originalPrice,
                 stock,
+                description: form.description.trim(),
                 image: form.images[0] ?? p.image,
                 images: form.images,
               }
@@ -669,6 +680,29 @@ export default function ProductsPage() {
               <EditField label="Sisa Stok (pcs)">
                 <input type="text" inputMode="numeric" value={form.stock} onChange={(e) => { const d = e.target.value.replace(/\D/g, ''); setForm({ ...form, stock: d === '' ? '' : Number(d) }) }} className={modalInput(!!editErrors.stock)} aria-invalid={!!editErrors.stock} />
                 {editErrors.stock && <p className="mt-1 text-xs font-medium text-red-600">{editErrors.stock}</p>}
+              </EditField>
+            </div>
+
+            {/* Deskripsi produk (tampil di halaman detail ecommerce) */}
+            <div className="mt-4">
+              <EditField label="Deskripsi Produk">
+                <textarea
+                  value={form.description}
+                  maxLength={DESC_MAX}
+                  rows={4}
+                  onChange={(e) => setForm({ ...form, description: e.target.value })}
+                  className={`${modalInput(!!editErrors.description)} resize-y`}
+                  aria-invalid={!!editErrors.description}
+                  placeholder="Jelaskan detail produk, manfaat, cara pakai, dll."
+                />
+                <div className="mt-1 flex items-center justify-between">
+                  {editErrors.description ? (
+                    <p className="text-xs font-medium text-red-600">{editErrors.description}</p>
+                  ) : (
+                    <span />
+                  )}
+                  <span className="text-xs text-gray-400">{form.description.length}/{DESC_MAX}</span>
+                </div>
               </EditField>
             </div>
 
