@@ -4,7 +4,8 @@
       "Bash(node -e ' *)",
       "Bash(curl -s -o /dev/null -w \"list bytes: %{size_download}\\\\n\" \"http://localhost:3000/api/products/list\")",
       "Bash(npx tsc *)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(echo \"pid $!\")"
     ]
   }
 }
