@@ -35,7 +35,7 @@ export default function TrackSearchForm({ defaultValue = '' }: TrackSearchFormPr
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Contoh: ORD-2026-XXXXX"
+          placeholder="Contoh: INV-20260713-1234"
           aria-label="Nomor pesanan"
           className="block w-full rounded-xl border border-gray-300 bg-white py-3 pl-11 pr-4 text-sm text-gray-900 placeholder-gray-400 transition-colors focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-100"
         />

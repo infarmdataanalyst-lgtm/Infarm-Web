@@ -1,11 +1,12 @@
 // src/components/track/TrackingTimeline.tsx
-// Linimasa vertikal status pengiriman. Titik terbaru (indeks 0) hijau dengan ikon centang;
-// status lama di bawahnya abu-abu redup, dihubungkan garis vertikal halus.
+// Linimasa vertikal riwayat perjalanan. Titik terbaru (indeks 0) hijau dengan ikon centang;
+// entri lama di bawahnya abu-abu redup, dihubungkan garis vertikal halus.
+// Sumber data: generateTrackingHistory(order) di src/lib/tracking.ts.
 
-import type { TrackingEvent } from '@/lib/data/dummy-orders'
+import type { TrackingHistoryEntry } from '@/lib/tracking'
 
 type TrackingTimelineProps = {
-  events: TrackingEvent[] // diurutkan terbaru di indeks 0
+  events: TrackingHistoryEntry[] // diurutkan terbaru di indeks 0
 }
 
 // Menampilkan riwayat status sebagai linimasa vertikal (terbaru di atas).
