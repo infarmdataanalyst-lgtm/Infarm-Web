@@ -196,10 +196,12 @@ export default function CheckoutPage() {
             productId: item.id,
             name: item.name,
             quantity: item.quantity,
-            price: item.price,
+            price: item.price, // diabaikan server — harga otoritatif diambil dari DB (K-3)
           })),
-          // jumlah_total = subtotal + ongkir - diskon
-          totalAmount: total,
+          // Server menghitung ulang total dari harga DB + ongkir + diskon (totalAmount client diabaikan)
+          totalAmount: total, // dikirim untuk kompatibilitas; server tetap hitung ulang
+          shippingCost: selectedCourier.price,
+          discount: ORDER_DISCOUNT,
           logistics: { courier: selectedCourier.name, service: selectedCourier.estimatedDate },
           // Alamat terstruktur dari form + hasil search Mengantar
           address: {

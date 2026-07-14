@@ -4,6 +4,7 @@
 
 import { NextResponse } from 'next/server'
 import { saveOrder, OrderStockError } from '@/lib/mock-db/orders'
+import { readProducts } from '@/lib/mock-db/products'
 import type { CreateOrderInput, OrderItem, OrderShippingAddress } from '@/types/order'
 
 // createAdminClient (Supabase) butuh runtime Node.js, bukan Edge
@@ -61,8 +62,47 @@ export async function POST(request: Request) {
     )
   }
 
+  // === K-3: harga OTORITATIF dari server (jangan percaya harga/total dari client) ===
+  // Ambil ulang harga tiap produk dari DB (promo_price), hitung subtotal & total di server.
+  // Harga & totalAmount yang dikirim client diabaikan → cegah manipulasi (mis. bayar Rp1).
+  const extra = body as CreateOrderInput & { shippingCost?: unknown; discount?: unknown }
+  const products = await readProducts()
+  const byId = new Map(products.map((p) => [p.id, p]))
+
+  let subtotal = 0
+  const pricedItems: OrderItem[] = []
+  for (const it of body.items) {
+    const prod = byId.get(it.productId)
+    // Produk wajib ada & tidak diarsipkan; harga diambil dari DB, bukan dari payload.
+    if (!prod || prod.archived) {
+      return NextResponse.json(
+        { error: 'Salah satu produk tidak tersedia. Muat ulang keranjang lalu coba lagi.' },
+        { status: 422 },
+      )
+    }
+    subtotal += prod.promoPrice * it.quantity
+    pricedItems.push({
+      productId: it.productId,
+      name: prod.name,
+      quantity: it.quantity,
+      price: prod.promoPrice, // snapshot harga jual dari DB
+    })
+  }
+
+  // Ongkir dari client (hasil cek ongkir Mengantar sisi-klien) — clamp ≥ 0.
+  // TODO: verifikasi ongkir server-side via Mengantar (origin+destination+weight) — roadmap.
+  const shippingCost =
+    typeof extra.shippingCost === 'number' && extra.shippingCost > 0 ? Math.round(extra.shippingCost) : 0
+  // Diskon (promo) — clamp 0..subtotal. Wiring promo→order masih roadmap; default 0.
+  const discount =
+    typeof extra.discount === 'number' && extra.discount > 0
+      ? Math.min(Math.round(extra.discount), subtotal)
+      : 0
+  const totalAmount = Math.max(0, subtotal + shippingCost - discount)
+
   try {
-    const saved = await saveOrder(body)
+    // Kirim item & total hasil hitung server (bukan dari client)
+    const saved = await saveOrder({ ...body, items: pricedItems, totalAmount })
     // invoice dikembalikan agar checkout bisa redirect ke ?invoice=...
     return NextResponse.json({ success: true, invoice: saved.orderId, order: saved }, { status: 201 })
   } catch (e) {

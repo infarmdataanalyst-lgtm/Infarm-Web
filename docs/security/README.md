@@ -24,6 +24,12 @@ temuan baru memakai nomor lanjutan. Detail lengkap tiap audit ada di snapshot be
   Verifikasi: `tsc`+`eslint` lolos; grep konfirmasi 14 endpoint memakai guard. **Sekaligus menutup
   S-4 (bagian `reviews/reply` admin-only) & menurunkan R-3 (endpoint tak lagi anonim).**
   Menyusul: guard endpoint baca OMS-only lain (`combos/list`, `promotions/list`, `products/check-sku`).
+- **2026-07-13** — **K-3 diperbaiki**: `orders/create` kini ambil harga tiap produk dari DB
+  (`promo_price`) & hitung `subtotal`/`totalAmount` di server; harga & total dari client **diabaikan**.
+  Produk tak dikenal/diarsipkan → `422`. Ongkir & diskon di-clamp (`shippingCost` ≥ 0, `discount`
+  0..subtotal). Verifikasi runtime: kirim `price:1, totalAmount:1` → order tersimpan total **83.400**
+  & item price **75.000** (dari DB). **Sisa (roadmap):** verifikasi ongkir server-side via Mengantar
+  (kini ongkir masih dipercaya dari client) → lihat S-3 saat wiring promo.
 
 ---
 
@@ -35,7 +41,7 @@ Legenda status: 🔴 Terbuka · 🟡 Sebagian · ✅ Selesai · ⚪ Diterima/roa
 |----|-------|----------|--------|-----------|-----------------------|--------------|
 | **K-1** | Endpoint API OMS tanpa auth (14 endpoint) | Kritis | ✅ Selesai (07-10) | 2026-07-08 | 2026-07-10 | `src/lib/oms-guard.ts`, 14 route `src/app/api/**` |
 | **K-2** | `GET /api/orders/list` bocor PII semua pelanggan | Kritis | ✅ Selesai (07-10) | 2026-07-08 | 2026-07-10 | `src/app/api/orders/list/route.ts` (requireAdmin) |
-| **K-3** | Harga & total dipercaya dari client | Kritis | 🔴 Terbuka | 2026-07-08 | 2026-07-10 | `src/app/api/orders/create/route.ts`, `src/lib/mock-db/orders.ts` |
+| **K-3** | Harga & total dipercaya dari client | Kritis | ✅ Selesai (07-13) | 2026-07-08 | 2026-07-13 | `src/app/api/orders/create/route.ts` (harga dari DB) |
 | **K-4** | Sesi OMS gampang dipalsukan | Kritis | ✅ Selesai (07-08) | 2026-07-08 | 2026-07-10 | `src/lib/oms-auth.ts`, `src/proxy.ts` |
 | **T-1** | Secret HMAC punya fallback hardcoded + token cancel tanpa expiry | Tinggi | 🔴 Terbuka | 2026-07-08 | 2026-07-10 | `src/lib/order-token.ts:13`, `src/lib/oms-auth.ts:21` |
 | **T-2** | Rate limit login lemah (in-memory + percaya `X-Forwarded-For`) | Tinggi | 🟡 Sebagian | 2026-07-08 | 2026-07-10 | `src/app/api/oms/login/route.ts` |
@@ -61,8 +67,8 @@ Legenda status: 🔴 Terbuka · 🟡 Sebagian · ✅ Selesai · ⚪ Diterima/roa
 
 ## Urutan prioritas perbaikan (usulan)
 1. ~~**K-1 + K-2** — proteksi auth semua endpoint mutasi OMS + `orders/list`.~~ ✅ **Selesai 2026-07-10.**
-2. **K-3** — hitung ulang harga/total server-side dari DB. ← **berikutnya**
-3. **T-1 + T-3** — fail-fast bila secret prod kosong; rotasi secret; ganti kredensial seed.
+2. ~~**K-3** — hitung ulang harga/total server-side dari DB.~~ ✅ **Selesai 2026-07-13.**
+3. **T-1 + T-3** — fail-fast bila secret prod kosong; rotasi secret; ganti kredensial seed. ← **berikutnya**
 4. **S-1, S-2** — security headers; token + invoice tak-tertebak untuk `orders/get`.
 5. **T-2, S-3–S-7, R-*** — hardening.
 
