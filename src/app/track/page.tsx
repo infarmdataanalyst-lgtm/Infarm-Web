@@ -21,6 +21,7 @@ import {
   isOrderCancelled,
 } from '@/lib/tracking'
 import { toTitleCase } from '@/lib/mengantar'
+import { maskName, maskPhone, maskStreet } from '@/lib/mask'
 import type { Order } from '@/types/order'
 
 export const metadata: Metadata = {
@@ -135,12 +136,12 @@ function TrackResult({ order }: { order: Order }) {
           <MapPin className="h-4 w-4 text-brand-primary" />
           Alamat Pengiriman
         </h2>
-        <p className="text-sm font-semibold text-gray-900">{order.customerName}</p>
+        <p className="text-sm font-semibold text-gray-900">{maskName(order.customerName)}</p>
         <p className="mt-1 text-sm leading-relaxed text-gray-600">{formatAddress(order)}</p>
         {order.customerPhone && (
           <p className="mt-2 flex items-center gap-1.5 text-sm text-gray-600">
             <Phone className="h-3.5 w-3.5 text-gray-400" />
-            {order.customerPhone}
+            {maskPhone(order.customerPhone)}
           </p>
         )}
       </section>
@@ -190,6 +191,8 @@ function SearchState({ hasQuery, query }: { hasQuery: boolean; query?: string })
 
 // Susun alamat lengkap mengikuti data checkout: jalan, lalu kelurahan/kecamatan/kota/provinsi kodepos.
 // Nilai dari Mengantar berupa UPPERCASE → di-Title Case agar enak dibaca.
+// Detail jalan/no rumah DISAMARKAN (maskStreet) karena halaman publik (S-2); region tetap tampil
+// agar user masih bisa mengenali pesanannya.
 function formatAddress(order: Order): string {
   const a = order.address
   if (!a) return '-'
@@ -197,7 +200,8 @@ function formatAddress(order: Order): string {
     .filter(Boolean)
     .map((s) => toTitleCase(s))
     .join(', ')
-  return [a.shippingAddress, region, a.kodepos].filter(Boolean).join(', ')
+  const street = a.shippingAddress ? maskStreet(a.shippingAddress) : ''
+  return [street, region, a.kodepos].filter(Boolean).join(', ')
 }
 
 // Badge status: hijau brand untuk alur normal, rose untuk dibatalkan.
