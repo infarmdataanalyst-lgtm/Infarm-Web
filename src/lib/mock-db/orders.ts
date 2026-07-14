@@ -310,16 +310,30 @@ export async function saveOrder(input: CreateOrderInput): Promise<Order> {
 
 // === Ubah status ===
 
-// Memperbarui status alur pesanan (mis. menjadi 'Dibatalkan' saat pembeli membatalkan).
+// Field logistik opsional yang ikut diperbarui saat status berubah (mis. saat 'Dikirim').
+export type OrderLogisticsPatch = {
+  courier?: string // → nama_ekspedisi
+  service?: string // → jenis_layanan
+  trackingNumber?: string // → no_tracking
+}
+
+// Memperbarui status alur pesanan (mis. 'Dibatalkan' saat pembeli membatalkan, atau 'Dikirim'
+// dari OMS dengan mengisi ekspedisi + no resi). Field logistik hanya ditulis bila disertakan.
 // Mengembalikan order terbaru (beserta item), atau null bila tidak ditemukan.
 export async function updateOrderStatus(
   orderId: string,
   status: OrderFulfillmentStatus,
+  logistics?: OrderLogisticsPatch,
 ): Promise<Order | null> {
   const supabase = createAdminClient()
+  const patch: Record<string, string> = { order_status: STATUS_TO_DB[status] }
+  if (logistics?.courier !== undefined) patch.nama_ekspedisi = logistics.courier
+  if (logistics?.service !== undefined) patch.jenis_layanan = logistics.service
+  if (logistics?.trackingNumber !== undefined) patch.no_tracking = logistics.trackingNumber
+
   const { data, error } = await supabase
     .from('orders')
-    .update({ order_status: STATUS_TO_DB[status] })
+    .update(patch)
     .eq('nomor_invoice', orderId)
     .select('id')
     .maybeSingle()

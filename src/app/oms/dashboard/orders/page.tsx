@@ -6,8 +6,9 @@
 // Sidebar disediakan otomatis oleh layout /oms/dashboard.
 
 import { useEffect, useMemo, useState } from 'react'
-import { Download, ChevronLeft, ChevronRight, Inbox } from 'lucide-react'
+import { Download, ChevronLeft, ChevronRight, Inbox, Eye } from 'lucide-react'
 import OmsHeader from '@/components/oms/OmsHeader'
+import OrderStatusModal from '@/components/oms/OrderStatusModal'
 import type {
   Order,
   OrderFulfillmentStatus,
@@ -34,6 +35,23 @@ export default function OrdersPage() {
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<(typeof TABS)[number]>('Semua')
   const [page, setPage] = useState(1)
+  // Order yang sedang dibuka di modal update status (null = modal tertutup)
+  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
+  const [toast, setToast] = useState('')
+
+  // Auto-sembunyikan toast
+  useEffect(() => {
+    if (!toast) return
+    const t = setTimeout(() => setToast(''), 3000)
+    return () => clearTimeout(t)
+  }, [toast])
+
+  // Ganti data order di tabel (in-place) setelah update sukses, lalu tutup modal + toast
+  function handleUpdated(updated: Order) {
+    setOrders((prev) => prev.map((o) => (o.orderId === updated.orderId ? updated : o)))
+    setSelectedOrder(null)
+    setToast(`Status pesanan ${updated.orderId} diperbarui menjadi "${updated.status}".`)
+  }
 
   // Ambil pesanan asli dari mock database saat halaman dibuka
   useEffect(() => {
@@ -131,19 +149,20 @@ export default function OrdersPage() {
                   <th className="px-5 py-3.5">Pembayaran</th>
                   <th className="px-5 py-3.5">Status</th>
                   <th className="px-5 py-3.5">Tanggal</th>
+                  <th className="px-5 py-3.5 text-right">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {/* Loading / kosong */}
                 {loading ? (
                   <tr>
-                    <td colSpan={8} className="px-5 py-12 text-center text-sm text-gray-400">
+                    <td colSpan={9} className="px-5 py-12 text-center text-sm text-gray-400">
                       Memuat pesanan…
                     </td>
                   </tr>
                 ) : pageOrders.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-5 py-16 text-center">
+                    <td colSpan={9} className="px-5 py-16 text-center">
                       <Inbox className="mx-auto h-8 w-8 text-gray-300" />
                       <p className="mt-2 text-sm font-medium text-gray-500">
                         Belum ada pesanan
@@ -206,6 +225,17 @@ export default function OrdersPage() {
                       <td className="px-5 py-4 whitespace-nowrap text-gray-500">
                         {formatDate(order.date)}
                       </td>
+                      {/* Aksi: buka modal update status */}
+                      <td className="px-5 py-4 text-right">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedOrder(order)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-600 transition hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700"
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                          Lihat Detail
+                        </button>
+                      </td>
                     </tr>
                   ))
                 )}
@@ -251,6 +281,24 @@ export default function OrdersPage() {
           </div>
         </div>
       </main>
+
+      {/* === Modal update status pesanan === */}
+      {selectedOrder && (
+        <OrderStatusModal
+          order={selectedOrder}
+          onClose={() => setSelectedOrder(null)}
+          onUpdated={handleUpdated}
+        />
+      )}
+
+      {/* === Toast sukses === */}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 z-[60] -translate-x-1/2" role="status">
+          <p className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white shadow-lg">
+            {toast}
+          </p>
+        </div>
+      )}
     </>
   )
 }
