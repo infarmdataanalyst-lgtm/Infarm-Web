@@ -3,6 +3,7 @@
 // Merakit: slider foto, info utama, kombo hemat, deskripsi, "baru dilihat", ulasan, dan bilah aksi bawah.
 // Server Component — produk OMS dibaca dari Supabase; produk dummy lama dipakai sebagai fallback.
 
+import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import { getProductDetail, getRecentlyViewed } from '@/lib/data/dummy-product-details'
 import { getProductById, readProducts } from '@/lib/mock-db/products'
@@ -42,6 +43,23 @@ function toProductDetail(
     reviewCount: summary.reviewCount,
     description: p.description?.trim() || 'Belum ada deskripsi untuk produk ini.',
     reviews,
+  }
+}
+
+// Judul halaman dinamis = nama produk, supaya laporan GA4 "Pages and screens"
+// mengelompokkan per NAMA produk (bukan UUID di URL yang tak terbaca).
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>
+}): Promise<Metadata> {
+  const { id } = await params
+  const stored = await getProductById(id)
+  const name = stored && !stored.archived ? stored.name : getProductDetail(id)?.name
+  if (!name) return { title: 'Produk — infarm.id' }
+  return {
+    title: `${name} — infarm.id`,
+    description: `Beli ${name} original di infarm.id.`,
   }
 }
 
