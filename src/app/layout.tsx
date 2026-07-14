@@ -3,7 +3,7 @@
 
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { GoogleAnalytics } from "@next/third-parties/google";
+import GoogleAnalyticsGate from "@/components/analytics/GoogleAnalyticsGate";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -30,7 +30,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   // Measurement ID dari env (jangan hardcode). GA4 hanya dipasang bila ID terisi,
-  // supaya placeholder tidak ikut jalan di lokal/dev.
+  // supaya placeholder tidak ikut jalan di lokal/dev. Gate membatasi GA hanya di
+  // routing e-commerce (buyer), bukan di OMS/admin.
   const gaId = process.env.NEXT_PUBLIC_GA_ID;
 
   return (
@@ -40,7 +41,7 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col">
         {children}
-        {gaId && <GoogleAnalytics gaId={gaId} />}
+        {gaId && <GoogleAnalyticsGate gaId={gaId} />}
       </body>
     </html>
   );

@@ -8,6 +8,7 @@
 import { useRouter } from 'next/navigation'
 import { useCallback, useRef, useState } from 'react'
 import { addToCart, setCheckoutItems, showCartToast, CART_BUMP_EVENT } from '@/lib/cart-client'
+import { trackAddToCart } from '@/lib/analytics'
 import FlyToCart, { type FlyPoint } from '@/components/product/FlyToCart'
 
 // Satu partikel animasi yang sedang berjalan
@@ -17,9 +18,15 @@ type Particle = { id: number; start: FlyPoint; end: FlyPoint }
 export default function StickyBuyBar({
   productId,
   price,
+  name,
+  category,
+  sku,
 }: {
   productId: string
   price: number
+  name: string // untuk payload GA4 add_to_cart
+  category: string
+  sku?: string
 }) {
   const router = useRouter()
   const addButtonRef = useRef<HTMLButtonElement>(null)
@@ -30,11 +37,13 @@ export default function StickyBuyBar({
   // Menyimpan ke cookie + memicu efek pop pada ikon. Dipakai saat animasi tiba (atau fallback).
   const commitAdd = useCallback(() => {
     addToCart({ productId, quantity: 1, price }) // tulis cookie → badge naik reaktif
+    // GA4 add_to_cart: dikirim SETELAH item masuk cookie keranjang (bukan sebelum)
+    trackAddToCart({ id: productId, sku, name, category, price }, 1)
     window.dispatchEvent(new CustomEvent(CART_BUMP_EVENT)) // pop ikon keranjang
     showCartToast() // toast sukses
     setJustAdded(true)
     window.setTimeout(() => setJustAdded(false), 1500)
-  }, [productId, price])
+  }, [productId, price, sku, name, category])
 
   // Klik "+ Keranjang": hitung koordinat tombol → ikon keranjang, lalu luncurkan partikel.
   function handleAddToCart() {

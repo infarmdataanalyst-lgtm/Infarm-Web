@@ -65,6 +65,7 @@ export type ProductReview = {
 // Produk lengkap untuk Halaman Detail Produk — memperluas Product dengan galeri foto,
 // rating agregat, deskripsi, dan daftar ulasan. promoPrice = harga jual efektif (setelah diskon).
 export type ProductDetail = Product & {
+  sku?: string // SKU produk OMS (dipakai item_id analytics GA4); kosong untuk produk dummy
   images: string[] // galeri foto produk (maksimal 9, dipakai slider)
   rating: number // rata-rata rating, mis. 5.0
   reviewCount: number // jumlah ulasan
