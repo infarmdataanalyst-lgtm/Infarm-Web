@@ -24,6 +24,16 @@ import type {
   BestSellingProduct,
 } from '@/types/order'
 
+// === Filter Options untuk query dinamis ===
+export type OrderFilterOptions = {
+  dari?: string
+  sampai?: string
+  kurir?: string
+  pembayaran?: OrderPaymentStatus
+  sortBy?: 'total' | 'tanggal'
+  order?: 'asc' | 'desc'
+}
+
 // === Pemetaan enum DB <-> app ===
 
 const DB_TO_PAYMENT: Record<string, OrderPaymentStatus> = {
@@ -173,6 +183,86 @@ function rowToOrder(row: OrderRow, items: OrderItem[]): Order {
 }
 
 // === Baca ===
+
+// Mengambil daftar unik kurir (nama_ekspedisi) untuk dropdown filter.
+export async function getDistinctCouriers(): Promise<string[]> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('orders')
+    .select('nama_ekspedisi')
+    .not('nama_ekspedisi', 'is', null)
+    .order('nama_ekspedisi', { ascending: true })
+
+  if (error) {
+    console.error('Gagal ambil kurir dari Supabase:', error.message)
+    return []
+  }
+
+  const couriers = new Set<string>()
+  for (const row of (data as { nama_ekspedisi: string | null }[]) ?? []) {
+    if (row.nama_ekspedisi) couriers.add(row.nama_ekspedisi)
+  }
+  return Array.from(couriers)
+}
+
+// Membaca pesanan dengan filter (tanggal, kurir, status pembayaran) & sorting.
+// Query dijalankan di Supabase (server-side), bukan fetch-all-then-filter.
+export async function readOrdersFiltered(opts: OrderFilterOptions = {}): Promise<Order[]> {
+  const supabase = createAdminClient()
+
+  // Mulai dari base query
+  let query = supabase.from('orders').select('*')
+
+  // Filter range tanggal (created_at inclusive both ends)
+  if (opts.dari) {
+    query = query.gte('created_at', `${opts.dari}T00:00:00Z`)
+  }
+  if (opts.sampai) {
+    query = query.lte('created_at', `${opts.sampai}T23:59:59Z`)
+  }
+
+  // Filter kurir (exact match)
+  if (opts.kurir) {
+    query = query.eq('nama_ekspedisi', opts.kurir)
+  }
+
+  // Filter status pembayaran
+  if (opts.pembayaran) {
+    query = query.eq('status_pembayaran', PAYMENT_TO_DB[opts.pembayaran])
+  }
+
+  // Sorting
+  const sortColumn = opts.sortBy === 'total' ? 'jumlah_total' : 'created_at'
+  const ascending = opts.order === 'asc'
+  query = query.order(sortColumn, { ascending })
+
+  const { data, error } = await query
+
+  if (error) {
+    console.error('Gagal membaca pesanan dari Supabase:', error.message)
+    return []
+  }
+
+  const rows = (data as OrderRow[]) ?? []
+  if (rows.length === 0) return []
+
+  // Ambil items & resolve produk (sama seperti readOrders)
+  const { data: itemData } = await supabase
+    .from('order_items')
+    .select('order_id, product_id, quantity, price_at_purchase')
+    .in('order_id', rows.map((r) => r.id))
+  const itemRows = (itemData as OrderItemRow[]) ?? []
+
+  const info = await resolveProductInfo(supabase, itemRows.map((r) => r.product_id))
+  const itemsByOrder = new Map<string, OrderItem[]>()
+  for (const ir of itemRows) {
+    const list = itemsByOrder.get(ir.order_id) ?? []
+    list.push(itemRowToItem(ir, info))
+    itemsByOrder.set(ir.order_id, list)
+  }
+
+  return rows.map((r) => rowToOrder(r, itemsByOrder.get(r.id) ?? []))
+}
 
 // Membaca seluruh pesanan (terbaru dulu) beserta item-nya, untuk tabel & widget OMS.
 // Array kosong bila terjadi error agar UI tidak crash.

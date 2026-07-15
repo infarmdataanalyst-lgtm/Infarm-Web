@@ -1,11 +1,12 @@
 'use client'
 
 // src/app/oms/dashboard/orders/page.tsx
-// Halaman Manajemen Pesanan OMS Infarm.
-// Membaca pesanan asli dari mock database via GET /api/orders/list (data dari checkout ecommerce).
-// Sidebar disediakan otomatis oleh layout /oms/dashboard.
+// Halaman Manajemen Pesanan OMS Infarm dengan filter tanggal, kurir, status pembayaran, & sorting.
+// Membaca pesanan via GET /api/orders/list dengan query params untuk filter server-side.
+// Filter tersimpan di URL query params untuk persistence saat reload/share link.
 
-import { useEffect, useMemo, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Download, ChevronLeft, ChevronRight, Inbox, Eye } from 'lucide-react'
 import OmsHeader from '@/components/oms/OmsHeader'
 import OrderStatusModal from '@/components/oms/OrderStatusModal'
@@ -14,6 +15,18 @@ import type {
   OrderFulfillmentStatus,
   OrderPaymentStatus,
 } from '@/types/order'
+
+// Shortcut tanggal untuk filter range
+type DateShortcut = {
+  label: string
+  days: number
+  isMonthStart?: boolean
+}
+const DATE_SHORTCUTS: DateShortcut[] = [
+  { label: 'Hari Ini', days: 0 },
+  { label: '7 Hari', days: 7 },
+  { label: 'Bulan Ini', days: 0, isMonthStart: true },
+]
 
 // === Konfigurasi Tab & Pagination ===
 
@@ -29,15 +42,35 @@ const TABS: Array<'Semua' | OrderFulfillmentStatus> = [
 
 const PAGE_SIZE = 10
 
+// Wrapper: useSearchParams (di OrdersContent) wajib dibungkus <Suspense> agar build Next.js tidak error.
 export default function OrdersPage() {
+  return (
+    <Suspense fallback={<OmsHeader title="Pesanan" notificationCount={3} />}>
+      <OrdersContent />
+    </Suspense>
+  )
+}
+
+function OrdersContent() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+
   // === State ===
   const [orders, setOrders] = useState<Order[]>([])
+  const [couriers, setCouriers] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<(typeof TABS)[number]>('Semua')
   const [page, setPage] = useState(1)
-  // Order yang sedang dibuka di modal update status (null = modal tertutup)
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
   const [toast, setToast] = useState('')
+
+  // === Filter State (baca dari URL searchParams) ===
+  const activeTab = (searchParams.get('status') as (typeof TABS)[number]) || 'Semua'
+  const dari = searchParams.get('dari') || ''
+  const sampai = searchParams.get('sampai') || ''
+  const kurir = searchParams.get('kurir') || ''
+  const pembayaran = (searchParams.get('pembayaran') as OrderPaymentStatus | null) || null
+  const sortBy = (searchParams.get('sortBy') as 'total' | 'tanggal' | null) || null
+  const order = (searchParams.get('order') as 'asc' | 'desc' | null) || null
 
   // Auto-sembunyikan toast
   useEffect(() => {
@@ -53,13 +86,31 @@ export default function OrdersPage() {
     setToast(`Status pesanan ${updated.orderId} diperbarui menjadi "${updated.status}".`)
   }
 
-  // Ambil pesanan asli dari mock database saat halaman dibuka
+  // Ambil pesanan dengan filter dari URL params
   useEffect(() => {
     let active = true
-    fetch('/api/orders/list')
+    setLoading(true)
+
+    // Build query string dari filter state
+    const params = new URLSearchParams()
+    if (dari) params.set('dari', dari)
+    if (sampai) params.set('sampai', sampai)
+    if (kurir) params.set('kurir', kurir)
+    if (pembayaran) params.set('pembayaran', pembayaran)
+    if (sortBy) params.set('sortBy', sortBy)
+    if (order) params.set('order', order)
+    if (activeTab !== 'Semua') params.set('status', activeTab)
+
+    const queryString = params.toString()
+    const url = `/api/orders/list${queryString ? '?' + queryString : ''}`
+
+    fetch(url)
       .then((res) => res.json())
-      .then((data: { orders?: Order[] }) => {
-        if (active) setOrders(data.orders ?? [])
+      .then((data: { orders?: Order[]; couriers?: string[] }) => {
+        if (active) {
+          setOrders(data.orders ?? [])
+          if (data.couriers) setCouriers(data.couriers)
+        }
       })
       .catch(() => {
         if (active) setOrders([])
@@ -67,29 +118,68 @@ export default function OrdersPage() {
       .finally(() => {
         if (active) setLoading(false)
       })
+
     return () => {
       active = false
     }
-  }, [])
+  }, [dari, sampai, kurir, pembayaran, sortBy, order, activeTab])
 
-  // Pesanan terfilter sesuai tab aktif
-  const filtered = useMemo(() => {
-    if (activeTab === 'Semua') return orders
-    return orders.filter((o) => o.status === activeTab)
-  }, [orders, activeTab])
-
-  // Pesanan untuk halaman saat ini
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  // Pesanan untuk halaman saat ini (orders sudah di-filter di server)
+  const totalPages = Math.max(1, Math.ceil(orders.length / PAGE_SIZE))
   const currentPage = Math.min(page, totalPages)
-  const pageOrders = filtered.slice(
+  const pageOrders = orders.slice(
     (currentPage - 1) * PAGE_SIZE,
     currentPage * PAGE_SIZE,
   )
 
-  // Reset ke halaman 1 setiap ganti tab
-  function selectTab(tab: (typeof TABS)[number]) {
-    setActiveTab(tab)
+  // === Helper: Date Shortcuts ===
+  function applyDateShortcut(days: number, isMonthStart: boolean = false) {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+
+    let fromDate = new Date(today)
+    if (isMonthStart) {
+      fromDate.setDate(1)
+    } else {
+      fromDate.setDate(today.getDate() - days)
+    }
+
+    const formatDate = (d: Date) => d.toISOString().split('T')[0]
+    return { dari: formatDate(fromDate), sampai: formatDate(today) }
+  }
+
+  // === Helper: Check if ANY filter is active ===
+  function hasActiveFilters() {
+    return !!(dari || sampai || kurir || pembayaran || sortBy || (activeTab !== 'Semua'))
+  }
+
+  // === Helper: Reset all filters ===
+  function resetFilters() {
+    router.push('/oms/dashboard/orders', { scroll: false })
     setPage(1)
+  }
+
+  // === Helper: Update URL with new filter values ===
+  function updateFilters(newFilters: Record<string, string | null | undefined>) {
+    const params = new URLSearchParams(searchParams)
+
+    Object.entries(newFilters).forEach(([key, value]) => {
+      if (value === null || value === '') {
+        params.delete(key)
+      } else if (value !== undefined) {
+        params.set(key, value)
+      }
+    })
+
+    const queryString = params.toString()
+    const href = `/oms/dashboard/orders${queryString ? '?' + queryString : ''}`
+    router.push(href, { scroll: false })
+    setPage(1)
+  }
+
+  // === Helper: Select tab (update URL) ===
+  function selectTab(tab: (typeof TABS)[number]) {
+    updateFilters({ status: tab === 'Semua' ? null : tab })
   }
 
   return (
@@ -112,6 +202,126 @@ export default function OrdersPage() {
             <Download className="h-4 w-4" />
             Ekspor Laporan
           </button>
+        </div>
+
+        {/* === Filter Section === */}
+        <div className="mt-6 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {/* Tanggal Dari */}
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Tanggal Dari
+              </label>
+              <input
+                type="date"
+                value={dari}
+                onChange={(e) => updateFilters({ dari: e.target.value || null })}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              />
+              {/* Date shortcuts */}
+              <div className="mt-2 flex gap-1.5 flex-wrap">
+                {DATE_SHORTCUTS.map((shortcut) => (
+                  <button
+                    key={shortcut.label}
+                    type="button"
+                    onClick={() => {
+                      const { dari: d, sampai: s } = applyDateShortcut(
+                        shortcut.days,
+                        shortcut.isMonthStart,
+                      )
+                      updateFilters({ dari: d, sampai: s })
+                    }}
+                    className="text-xs px-2 py-1 rounded bg-emerald-50 text-emerald-700 hover:bg-emerald-100 font-medium transition"
+                  >
+                    {shortcut.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Tanggal Sampai */}
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Tanggal Sampai
+              </label>
+              <input
+                type="date"
+                value={sampai}
+                onChange={(e) => updateFilters({ sampai: e.target.value || null })}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              />
+            </div>
+
+            {/* Filter Kurir */}
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Kurir
+              </label>
+              <select
+                value={kurir}
+                onChange={(e) => updateFilters({ kurir: e.target.value || null })}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              >
+                <option value="">Semua Kurir</option>
+                {couriers.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Filter Pembayaran */}
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Status Pembayaran
+              </label>
+              <select
+                value={pembayaran || ''}
+                onChange={(e) => updateFilters({ pembayaran: e.target.value || null })}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              >
+                <option value="">Semua Status</option>
+                <option value="Menunggu">Menunggu</option>
+                <option value="Lunas">Lunas</option>
+                <option value="Gagal">Gagal</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Sorting & Reset */}
+          <div className="mt-4 flex items-center gap-3 pt-4 border-t border-gray-100">
+            <label className="text-sm font-semibold text-gray-700">Urutkan:</label>
+            <select
+              value={sortBy || 'tanggal'}
+              onChange={(e) => updateFilters({ sortBy: e.target.value })}
+              className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+            >
+              <option value="tanggal">Tanggal</option>
+              <option value="total">Total Pesanan</option>
+            </select>
+
+            <button
+              type="button"
+              onClick={() => updateFilters({ order: order === 'asc' ? 'desc' : 'asc' })}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition"
+              title={order === 'asc' ? 'Ascending' : 'Descending'}
+            >
+              {order === 'asc' ? '↑' : '↓'}
+              <span className="text-xs">{order === 'asc' ? 'Naik' : 'Turun'}</span>
+            </button>
+
+            {/* Reset Button - hanya tampil jika ada filter aktif */}
+            {hasActiveFilters() && (
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="ml-auto rounded-lg border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-semibold text-red-700 hover:bg-red-100 transition"
+              >
+                Reset Filter
+              </button>
+            )}
+          </div>
         </div>
 
         {/* === Tabs Status === */}
@@ -246,7 +456,7 @@ export default function OrdersPage() {
           {/* === Footer: info jumlah + pagination === */}
           <div className="flex flex-col gap-3 border-t border-gray-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-xs text-gray-400">
-              Menampilkan {pageOrders.length} dari {filtered.length} pesanan
+              Menampilkan {pageOrders.length} dari {orders.length} pesanan
             </p>
             <div className="flex items-center gap-1.5">
               <PagerButton
