@@ -1,23 +1,58 @@
-// src/components/product/RecentlyViewed.tsx
-// Seksi "Kamu Sempat Lihat Ini" — daftar horizontal kartu produk yang baru dilihat. Server Component.
+'use client'
 
+// src/components/product/RecentlyViewed.tsx
+// Seksi "Produk yang Pernah Anda Lihat" — grid responsive kartu produk dari localStorage (client-side).
+// Baca riwayat real-time, resolve ke produk OMS, filter archived + produk saat ini, min 2 produk.
+
+import { useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
-import type { Product } from '@/types/product'
+import type { Product, StoredProduct } from '@/types/product'
+import { getRecentlyViewedIds } from '@/lib/recently-viewed'
 import { formatRupiah } from '@/lib/format'
+import { isProductOnSale } from '@/types/product'
 
-// Menampilkan daftar produk yang baru dilihat dalam scroll horizontal.
-export default function RecentlyViewed({ products }: { products: Product[] }) {
-  if (products.length === 0) return null
+export default function RecentlyViewed({
+  currentProductId,
+  allProducts,
+}: {
+  currentProductId: string
+  allProducts: StoredProduct[]
+}) {
+  const [viewedIds, setViewedIds] = useState<string[]>([])
+
+  // Baca localStorage sekali saat mount (client-side only)
+  useEffect(() => {
+    setViewedIds(getRecentlyViewedIds())
+  }, [])
+
+  // Resolve product IDs → detail, filter archived + produk saat ini
+  const products = useMemo(() => {
+    const byId = new Map<string, Product>()
+    for (const p of allProducts) {
+      if (!p.archived) {
+        byId.set(p.id, p)
+      }
+    }
+
+    return viewedIds
+      .filter((id) => id !== currentProductId) // exclude produk saat ini
+      .map((id) => byId.get(id))
+      .filter((p): p is Product => Boolean(p))
+      .slice(0, 6) // limit 6 (grid 4 col max)
+  }, [viewedIds, allProducts, currentProductId])
+
+  // Min 2 produk → jangan render jika kurang
+  if (products.length < 2) return null
 
   return (
     <section className="bg-white px-4 py-4">
-      <h2 className="mb-3 text-sm font-bold text-zinc-800">Kamu Sempat Lihat Ini</h2>
+      <h2 className="mb-3 text-lg font-bold text-zinc-800">Produk yang Pernah Anda Lihat</h2>
 
-      {/* Daftar horizontal yang bisa digeser */}
-      <ul className="flex gap-3 overflow-x-auto scrollbar-hide">
+      {/* Grid responsive: 1 mobile, 2 tablet, 4 desktop */}
+      <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {products.map((product) => (
-          <li key={product.id} className="w-32 shrink-0">
+          <li key={product.id}>
             <RecentCard product={product} />
           </li>
         ))}
@@ -26,31 +61,40 @@ export default function RecentlyViewed({ products }: { products: Product[] }) {
   )
 }
 
-// === Sub-komponen ===
-
-// Kartu kecil 1 produk untuk daftar "baru dilihat"
+// Kartu produk dengan badge promo, harga coret, harga diskon
 function RecentCard({ product }: { product: Product }) {
-  const { id, name, promoPrice, imageUrl } = product
+  const { id, name, originalPrice, promoPrice, imageUrl, badge } = product
+  const onSale = isProductOnSale(product)
 
   return (
     <Link
       href={`/produk/${id}`}
-      className="group flex flex-col overflow-hidden rounded-xl border border-zinc-100 bg-white shadow-sm transition hover:shadow-md"
+      className="group flex h-full flex-col overflow-hidden rounded-xl border border-zinc-100 bg-white shadow-sm transition hover:shadow-md"
     >
       <div className="relative aspect-square w-full bg-zinc-50">
-        {/* unoptimized: placeholder SVG sementara */}
         <Image
           src={imageUrl}
           alt={name}
           fill
           unoptimized
-          sizes="128px"
+          sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
           className="object-cover transition group-hover:scale-[1.02]"
         />
+        {badge && (
+          <span className="absolute left-0 top-2 rounded-r-md bg-red-500 px-2 py-1 text-xs font-semibold text-white shadow">
+            + {badge}
+          </span>
+        )}
       </div>
-      <div className="p-2">
-        <h3 className="line-clamp-2 text-xs leading-snug text-zinc-700">{name}</h3>
-        <p className="mt-1 text-sm font-bold text-red-500">{formatRupiah(promoPrice)}</p>
+
+      <div className="flex flex-1 flex-col p-2.5">
+        <h3 className="line-clamp-2 text-sm leading-snug text-zinc-800">{name}</h3>
+        <div className="mt-auto pt-2">
+          {onSale && (
+            <p className="text-xs text-zinc-400 line-through">{formatRupiah(originalPrice)}</p>
+          )}
+          <p className="text-base font-bold text-red-500">{formatRupiah(promoPrice)}</p>
+        </div>
       </div>
     </Link>
   )

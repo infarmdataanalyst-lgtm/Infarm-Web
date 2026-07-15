@@ -90,6 +90,7 @@ export async function getReviewsByProduct(productId: string): Promise<ProductRev
     comment: r.comment,
     category: r.category ?? 'Umum',
     imageUrls: r.image_urls?.length ? r.image_urls : undefined,
+    reply: r.reply ?? undefined,
   }))
 }
 

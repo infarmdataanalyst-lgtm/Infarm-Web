@@ -179,9 +179,9 @@ function FilterPill({
 
 // === Sub-komponen ===
 
-// Satu baris ulasan: avatar inisial, nama, tanggal, bintang, komentar, dan foto (opsional)
+// Satu baris ulasan: avatar inisial, nama, tanggal, bintang, komentar, foto (opsional), dan balasan admin (opsional)
 function ReviewItem({ review }: { review: ProductReview }) {
-  const { authorName, rating, date, comment, imageUrls } = review
+  const { authorName, rating, date, comment, imageUrls, reply } = review
 
   return (
     <div>
@@ -214,6 +214,14 @@ function ReviewItem({ review }: { review: ProductReview }) {
               <Image src={src} alt={`Foto ulasan ${i + 1}`} fill unoptimized sizes="64px" className="object-cover" />
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Balasan admin (opsional) */}
+      {reply && (
+        <div className="mt-3 rounded-lg bg-slate-50 p-3">
+          <p className="text-xs font-semibold text-slate-700">Balasan Admin</p>
+          <p className="mt-1 text-sm leading-relaxed text-slate-600">{reply}</p>
         </div>
       )}
     </div>

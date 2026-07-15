@@ -60,6 +60,7 @@ export type ProductReview = {
   comment: string
   category: string // kategori filter ulasan, mis. 'Kualitas' | 'Pengiriman'
   imageUrls?: string[] // foto ulasan (opsional)
+  reply?: string // balasan admin (opsional)
 }
 
 // Produk lengkap untuk Halaman Detail Produk — memperluas Product dengan galeri foto,

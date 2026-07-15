@@ -5,7 +5,7 @@
 
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
-import { getProductDetail, getRecentlyViewed } from '@/lib/data/dummy-product-details'
+import { getProductDetail } from '@/lib/data/dummy-product-details'
 import { getProductById, readProducts } from '@/lib/mock-db/products'
 import { readCombos } from '@/lib/mock-db/combos'
 import { getReviewsByProduct, getProductRatingSummary } from '@/lib/mock-db/reviews'
@@ -108,8 +108,6 @@ export default async function ProductDetailPage({
       c.items.every((it) => (stockById[it.productId] ?? 0) > 0),
   )
 
-  const recentlyViewed = getRecentlyViewed(id)
-
   return (
     // pt-14: ruang untuk AppBar fixed (h-14). pb-24: ruang agar konten tak tertutup bilah aksi bawah.
     <main className="flex flex-1 flex-col bg-brand-surface pt-14 pb-24">
@@ -140,8 +138,8 @@ export default async function ProductDetailPage({
           {/* 4 — Rekomendasi paket kombo hemat (real dari Supabase, clickable) */}
           <BundleOffer combos={productCombos} imageById={imageById} />
 
-          {/* 6 — "Kamu Sempat Lihat Ini" */}
-          <RecentlyViewed products={recentlyViewed} />
+          {/* 6 — "Produk yang Pernah Anda Lihat" (dari localStorage real-time) */}
+          <RecentlyViewed currentProductId={id} allProducts={allProducts} />
 
           {/* 7 — Ulasan pembeli: skor ringkas, filter, daftar komentar */}
           <ProductReviews
