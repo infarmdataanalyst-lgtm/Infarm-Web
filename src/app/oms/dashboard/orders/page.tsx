@@ -182,6 +182,61 @@ function OrdersContent() {
     updateFilters({ status: tab === 'Semua' ? null : tab })
   }
 
+  // === Helper: Ekspor pesanan ter-filter ke CSV ===
+  // Mengekspor `orders` (sudah difilter server-side sesuai filter aktif) sebagai file CSV.
+  function exportCsv() {
+    if (orders.length === 0) return
+
+    // Bungkus nilai dengan tanda kutip + escape kutip ganda (aman untuk koma/newline)
+    const esc = (val: string | number | undefined | null): string => {
+      const s = String(val ?? '')
+      return `"${s.replace(/"/g, '""')}"`
+    }
+
+    const headers = [
+      'No. Invoice',
+      'Customer',
+      'Telepon',
+      'Total',
+      'Kurir',
+      'Layanan',
+      'No. Resi',
+      'Pembayaran',
+      'Status',
+      'Tanggal',
+    ]
+
+    const rows = orders.map((o) =>
+      [
+        formatInvoice(o.orderId),
+        o.customerName,
+        o.customerPhone ?? '',
+        o.totalAmount,
+        o.logistics?.courier ?? '',
+        o.logistics?.service ?? '',
+        o.trackingNumber ?? '',
+        o.paymentStatus,
+        o.status ?? '',
+        formatDate(o.date),
+      ]
+        .map(esc)
+        .join(','),
+    )
+
+    // BOM (﻿) agar Excel membaca UTF-8 dengan benar (karakter Indonesia)
+    const csv = '﻿' + [headers.map(esc).join(','), ...rows].join('\r\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+
+    // Nama file mengandung rentang tanggal filter bila ada, agar mudah dibedakan
+    const rangeLabel = dari || sampai ? `_${dari || 'awal'}_sd_${sampai || 'kini'}` : ''
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `pesanan${rangeLabel}.csv`
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+
   return (
     <>
       <OmsHeader title="Pesanan" notificationCount={3} />
@@ -197,7 +252,9 @@ function OrdersContent() {
           </div>
           <button
             type="button"
-            className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-800"
+            onClick={exportCsv}
+            disabled={loading || orders.length === 0}
+            className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Download className="h-4 w-4" />
             Ekspor Laporan
@@ -216,7 +273,7 @@ function OrdersContent() {
                 type="date"
                 value={dari}
                 onChange={(e) => updateFilters({ dari: e.target.value || null })}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
               />
               {/* Date shortcuts */}
               <div className="mt-2 flex gap-1.5 flex-wrap">
@@ -248,7 +305,7 @@ function OrdersContent() {
                 type="date"
                 value={sampai}
                 onChange={(e) => updateFilters({ sampai: e.target.value || null })}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
               />
             </div>
 
@@ -260,7 +317,7 @@ function OrdersContent() {
               <select
                 value={kurir}
                 onChange={(e) => updateFilters({ kurir: e.target.value || null })}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
               >
                 <option value="">Semua Kurir</option>
                 {couriers.map((c) => (
@@ -279,7 +336,7 @@ function OrdersContent() {
               <select
                 value={pembayaran || ''}
                 onChange={(e) => updateFilters({ pembayaran: e.target.value || null })}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
               >
                 <option value="">Semua Status</option>
                 <option value="Menunggu">Menunggu</option>
@@ -295,7 +352,7 @@ function OrdersContent() {
             <select
               value={sortBy || 'tanggal'}
               onChange={(e) => updateFilters({ sortBy: e.target.value })}
-              className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+              className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-900"
             >
               <option value="tanggal">Tanggal</option>
               <option value="total">Total Pesanan</option>
