@@ -39,7 +39,7 @@ export default function RecentlyViewed({
       .filter((id) => id !== currentProductId) // exclude produk saat ini
       .map((id) => byId.get(id))
       .filter((p): p is Product => Boolean(p))
-      .slice(0, 6) // limit 6 (grid 4 col max)
+      .slice(0, 4) // limit 4 produk
   }, [viewedIds, allProducts, currentProductId])
 
   // Min 2 produk → jangan render jika kurang
@@ -49,10 +49,10 @@ export default function RecentlyViewed({
     <section className="bg-white px-4 py-4">
       <h2 className="mb-3 text-lg font-bold text-zinc-800">Produk yang Pernah Anda Lihat</h2>
 
-      {/* Grid responsive: 1 mobile, 2 tablet, 4 desktop */}
-      <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      {/* Horizontal scroll mobile (2.5 card visible), desktop 4-column grid (no scroll) */}
+      <ul className="flex gap-3 overflow-x-auto scrollbar-hide lg:grid lg:grid-cols-4 lg:overflow-x-visible">
         {products.map((product) => (
-          <li key={product.id}>
+          <li key={product.id} className="flex-shrink-0 w-[calc(40vw-6px)] lg:w-auto">
             <RecentCard product={product} />
           </li>
         ))}
