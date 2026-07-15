@@ -5,6 +5,14 @@ meng-*update* kolom **Status** & **Terakhir diverifikasi**. Jangan pernah mendau
 temuan baru memakai nomor lanjutan. Detail lengkap tiap audit ada di snapshot bertanggal
 (`audit-YYYY-MM-DD.md`) yang bersifat arsip (tidak diubah setelah dibuat).
 
+> ### 📌 Aturan update (SATU tempat saja)
+> Saat sebuah temuan diperbaiki, **edit file INI saja** — dua bagian:
+> 1. **Tabel Status** → ubah kolom Status (mis. → ✅ Selesai) + tanggal "Terakhir diverifikasi".
+> 2. **Log progres** → tambah 1 baris bertanggal (apa yang diperbaiki + bukti verifikasi).
+>
+> **Jangan** mengubah file `audit-YYYY-MM-DD.md` — itu arsip beku (foto temuan saat audit).
+> Riwayat perbaikan = **Log progres** di bawah; history mutlak = `git log docs/security/`.
+
 - **Cakupan:** OWASP Top 10 + kerentanan umum web app.
 - **ID stabil:** prefix = severity saat ditemukan (K=Kritis, T=Tinggi, S=Sedang, R=Rendah).
 - **Kadens audit:** tiap rilis besar / bulanan, **dan wajib** setelah menambah endpoint API baru.
