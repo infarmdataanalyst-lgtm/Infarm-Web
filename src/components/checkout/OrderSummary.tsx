@@ -9,12 +9,12 @@ import { formatRupiah } from '@/lib/format'
 export default function OrderSummary({
   subtotal,
   shipping,
-  discount,
+  discount = 0,
   total,
 }: {
   subtotal: number
   shipping: number | null
-  discount: number
+  discount?: number
   total: number
 }) {
   return (
@@ -32,8 +32,10 @@ export default function OrderSummary({
         ) : (
           <Row label="Ongkos Kirim" value={formatRupiah(shipping)} />
         )}
-        {/* Diskon ditampilkan hijau dengan tanda minus */}
-        <Row label="Diskon" value={`- ${formatRupiah(discount)}`} valueClassName="text-brand-primary" />
+        {/* Diskon ditampilkan hijau dengan tanda minus — hanya bila ada diskon */}
+        {discount > 0 && (
+          <Row label="Diskon" value={`- ${formatRupiah(discount)}`} valueClassName="text-brand-primary" />
+        )}
 
         <div className="my-2 border-t border-dashed border-zinc-200" />
 

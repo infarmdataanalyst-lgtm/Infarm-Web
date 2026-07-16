@@ -134,5 +134,3 @@ export const ORDER_SUBTOTAL = DUMMY_ORDER_ITEMS.reduce(
   0,
 )
 
-// Diskon tetap (dummy) yang mengurangi total
-export const ORDER_DISCOUNT = 15000

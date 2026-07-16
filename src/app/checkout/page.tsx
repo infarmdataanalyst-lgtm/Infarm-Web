@@ -30,7 +30,6 @@ import {
 import {
   DUMMY_ORDER_ITEMS,
   PAYMENT_METHODS,
-  ORDER_DISCOUNT,
   type CheckoutItem,
 } from '@/lib/data/dummy-checkout'
 
@@ -149,7 +148,7 @@ export default function CheckoutPage() {
 
   // === Kalkulasi biaya: ongkir dari kurir terpilih (null bila belum pilih) ===
   const shipping = selectedCourier ? selectedCourier.price : null
-  const total = subtotal + (selectedCourier?.price ?? 0) - ORDER_DISCOUNT
+  const total = subtotal + (selectedCourier?.price ?? 0)
 
   // Tombol bayar aktif hanya bila alamat valid DAN kurir sudah dipilih
   const canPay = isAddressValid && selectedCourier !== null
@@ -201,7 +200,6 @@ export default function CheckoutPage() {
           // Server menghitung ulang total dari harga DB + ongkir + diskon (totalAmount client diabaikan)
           totalAmount: total, // dikirim untuk kompatibilitas; server tetap hitung ulang
           shippingCost: selectedCourier.price,
-          discount: ORDER_DISCOUNT,
           logistics: { courier: selectedCourier.name, service: selectedCourier.estimatedDate },
           // Alamat terstruktur dari form + hasil search Mengantar
           address: {
@@ -266,7 +264,6 @@ export default function CheckoutPage() {
         <OrderSummary
           subtotal={subtotal}
           shipping={shipping}
-          discount={ORDER_DISCOUNT}
           total={total}
         />
       </main>
