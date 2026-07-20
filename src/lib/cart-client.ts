@@ -116,6 +116,14 @@ export function addComboToCart(
   return cart
 }
 
+// Menghapus SEMUA produk yang termasuk sebuah combo (dicocokkan lewat comboId) dari keranjang.
+// Dipakai saat user meng-uncheck sebuah paket combo. Mengembalikan keranjang terbaru.
+export function removeComboFromCart(comboId: string): CartItem[] {
+  const cart = getCart().filter((i) => i.comboId !== comboId)
+  writeCart(cart)
+  return cart
+}
+
 // Mengubah jumlah (quantity) satu produk di keranjang. Jumlah < 1 akan menghapus item.
 // Mengembalikan keranjang terbaru.
 export function updateQuantity(productId: string, quantity: number): CartItem[] {

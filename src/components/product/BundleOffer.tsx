@@ -2,18 +2,38 @@
 
 // src/components/product/BundleOffer.tsx
 // Seksi "Beli Kombo Lebih Hemat" di halaman detail produk. Menampilkan paket/combo REAL dari
-// Supabase yang memuat produk ini (data disiapkan server di page.tsx). Klik kartu = tambahkan
-// seluruh produk combo ke keranjang dengan harga combo (alokasi per produk) + tandai comboId.
+// Supabase yang memuat produk ini (data disiapkan server di page.tsx).
+// Checkbox di pojok kiri atas tiap kartu: dicentang = seluruh produk combo masuk keranjang
+// (harga combo, ditandai comboId); di-uncheck = seluruh produk combo dihapus dari keranjang.
+// Status checked disinkron reaktif dengan isi keranjang (via useSyncExternalStore) → tetap sinkron
+// setelah reload halaman.
 
 import Image from 'next/image'
+import { useSyncExternalStore } from 'react'
 import { calcNormalPrice, type ProductCombo } from '@/types/combo'
 import { formatRupiah } from '@/lib/format'
-import { addComboToCart, showCartToast, CART_BUMP_EVENT } from '@/lib/cart-client'
+import {
+  addComboToCart,
+  removeComboFromCart,
+  showCartToast,
+  CART_BUMP_EVENT,
+  subscribeCart,
+  getCartSnapshot,
+  getServerCartSnapshot,
+} from '@/lib/cart-client'
 import { allocateComboPrices } from '@/lib/promo-cart'
+import type { CartItem } from '@/types/cart'
 
 const PLACEHOLDER = '/images/product-placeholder.png'
 
-// Menampilkan kartu combo hemat yang clickable; klik = tambahkan seluruh produk combo ke keranjang.
+// Sebuah combo dianggap "ada di keranjang" bila SEMUA produknya ada di keranjang & ditandai comboId ini.
+function isComboInCart(combo: ProductCombo, cart: CartItem[]): boolean {
+  return combo.items.every((it) =>
+    cart.some((c) => c.productId === it.productId && c.comboId === combo.id),
+  )
+}
+
+// Menampilkan daftar kartu combo hemat; centang checkbox = tambah seluruh produk combo ke keranjang.
 export default function BundleOffer({
   combos,
   imageById,
@@ -21,14 +41,22 @@ export default function BundleOffer({
   combos: ProductCombo[]
   imageById: Record<string, string>
 }) {
+  // Baca keranjang secara reaktif dari cookie (snapshot server kosong agar tidak mismatch saat hidrasi).
+  const cart = useSyncExternalStore(subscribeCart, getCartSnapshot, getServerCartSnapshot)
+
   if (combos.length === 0) return null
 
-  // Tambahkan satu paket combo ke keranjang (harga combo dialokasikan ke tiap produk), lalu pop + toast.
-  function handleAddCombo(combo: ProductCombo) {
-    const allocated = allocateComboPrices(combo.items, combo.comboPrice)
-    addComboToCart(combo.id, allocated)
-    window.dispatchEvent(new CustomEvent(CART_BUMP_EVENT))
-    showCartToast('Paket kombo berhasil ditambahkan ke keranjang!')
+  // Centang: tambahkan seluruh produk combo (harga combo dialokasikan per produk) + toast.
+  // Uncheck: hapus seluruh produk combo dari keranjang.
+  function toggleCombo(combo: ProductCombo, checked: boolean) {
+    if (checked) {
+      const allocated = allocateComboPrices(combo.items, combo.comboPrice)
+      addComboToCart(combo.id, allocated)
+      window.dispatchEvent(new CustomEvent(CART_BUMP_EVENT))
+      showCartToast('Paket kombo berhasil ditambahkan ke keranjang!')
+    } else {
+      removeComboFromCart(combo.id)
+    }
   }
 
   return (
@@ -39,14 +67,24 @@ export default function BundleOffer({
         {combos.map((combo) => {
           const normal = calcNormalPrice(combo.items)
           const savings = Math.max(0, normal - combo.comboPrice)
+          const checked = isComboInCart(combo, cart)
 
           return (
-            <button
+            <div
               key={combo.id}
-              type="button"
-              onClick={() => handleAddCombo(combo)}
-              className="flex w-full items-center gap-3 rounded-xl border border-brand-light bg-brand-surface p-3 text-left transition hover:brightness-95 active:scale-[0.99]"
+              className={`relative flex items-center gap-3 rounded-xl border bg-brand-surface p-3 pl-9 transition ${
+                checked ? 'border-brand-primary' : 'border-brand-light'
+              }`}
             >
+              {/* Checkbox pojok kiri atas — kontrol utama tambah/hapus combo */}
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={(e) => toggleCombo(combo, e.target.checked)}
+                aria-label={`Tambahkan ${combo.name} ke keranjang`}
+                className="absolute left-3 top-3 h-4 w-4 shrink-0 cursor-pointer accent-brand-primary"
+              />
+
               {/* Foto produk-produk combo, dipisah ikon plus (maks 3) */}
               <div className="flex shrink-0 items-center gap-1">
                 {combo.items.slice(0, 3).map((item, idx) => (
@@ -57,7 +95,7 @@ export default function BundleOffer({
                 ))}
               </div>
 
-              {/* Info harga hemat */}
+              {/* Info harga hemat + rincian produk (collapsible) */}
               <div className="min-w-0 flex-1">
                 <p className="line-clamp-2 text-xs text-zinc-600">
                   Beli bareng <span className="font-semibold">{combo.name}</span>
@@ -70,11 +108,25 @@ export default function BundleOffer({
                     </span>
                   )}
                 </div>
+
+                {/* Rincian isi combo — collapsible agar kartu tetap ringkas (default tertutup) */}
+                <details className="mt-1 text-xs text-zinc-500">
+                  <summary className="cursor-pointer list-none font-medium text-brand-primary marker:hidden">
+                    Lihat isi paket ({combo.items.length} produk)
+                  </summary>
+                  <ul className="mt-1 space-y-0.5">
+                    {combo.items.map((item) => (
+                      <li key={item.productId} className="truncate">
+                        {item.name} <span className="text-zinc-400">x{item.quantity}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
               </div>
 
-              {/* Tanda centang penanda paket dapat dipilih */}
-              <CheckIcon className="shrink-0 text-zinc-400" />
-            </button>
+              {/* Tanda centang penanda status: hijau bila paket sudah di keranjang, abu bila belum */}
+              <CheckIcon className={`shrink-0 ${checked ? 'text-brand-primary' : 'text-zinc-400'}`} />
+            </div>
           )
         })}
       </div>
