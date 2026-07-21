@@ -4,7 +4,7 @@
 
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/oms-guard'
-import { revalidatePath } from 'next/cache'
+import { revalidatePath, revalidateTag } from 'next/cache'
 import { saveProduct } from '@/lib/mock-db/products'
 import { PRODUCT_CATEGORIES } from '@/lib/data/categories'
 import {
@@ -105,6 +105,8 @@ export async function POST(request: Request) {
   revalidatePath('/')
   revalidatePath('/products')
   revalidatePath('/produk/[id]', 'page')
+  // Invalidasi cache baca storefront (cached-reads) agar produk baru langsung muncul
+  revalidateTag('products', 'max')
 
   return NextResponse.json({ success: true, product: saved }, { status: 201 })
 }

@@ -3,7 +3,7 @@
 // Dipanggil POST dari halaman checkout ecommerce saat "Bayar Sekarang".
 
 import { NextResponse } from 'next/server'
-import { revalidatePath } from 'next/cache'
+import { revalidatePath, revalidateTag } from 'next/cache'
 import { saveOrder, OrderStockError } from '@/lib/mock-db/orders'
 import { readProducts } from '@/lib/mock-db/products'
 import type { CreateOrderInput, OrderItem, OrderShippingAddress } from '@/types/order'
@@ -110,6 +110,9 @@ export async function POST(request: Request) {
     revalidatePath('/')
     revalidatePath('/products')
     for (const it of pricedItems) revalidatePath(`/produk/${it.productId}`)
+    // Invalidasi cache baca storefront: stok (products) & jumlah terjual (sales) berubah
+    revalidateTag('products', 'max')
+    revalidateTag('sales', 'max')
 
     // invoice dikembalikan agar checkout bisa redirect ke ?invoice=...
     return NextResponse.json({ success: true, invoice: saved.orderId, order: saved }, { status: 201 })

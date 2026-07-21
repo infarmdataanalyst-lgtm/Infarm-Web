@@ -6,14 +6,26 @@
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 
-// Halaman detail di-cache & revalidasi tiap 60 detik (ISR). Update/hapus/arsip produk di OMS
-// memicu revalidatePath('/produk/[id]', 'page') → halaman detail langsung diperbarui.
-export const revalidate = 60
+// Halaman detail di-cache & revalidasi tiap 30 detik (ISR). Baca data lewat wrapper BER-CACHE
+// (cached-reads) agar query Supabase tak lagi memaksa halaman jadi dynamic. Update produk/ulasan/
+// combo/stok di OMS memicu revalidateTag(...) → cache langsung diperbarui tanpa tunggu 30 detik.
+export const revalidate = 30
+// Aktifkan ISR untuk route dinamis: tanpa ini Next 16 menandai [id] sebagai fully dynamic.
+// Return [] = tidak ada halaman di-prebuild saat build; tiap id di-render on-demand lalu
+// di-cache (ISR blocking) sesuai `revalidate`/`revalidateTag`.
+export const dynamicParams = true
+export function generateStaticParams(): { id: string }[] {
+  return []
+}
 import { getProductDetail } from '@/lib/data/dummy-product-details'
-import { getProductById, readProducts } from '@/lib/mock-db/products'
-import { readCombos } from '@/lib/mock-db/combos'
-import { getReviewsByProduct, getProductRatingSummary } from '@/lib/mock-db/reviews'
-import { getSalesCountByProduct } from '@/lib/mock-db/orders'
+import {
+  getCachedProductById,
+  getCachedProducts,
+  getCachedCombos,
+  getCachedReviewsByProduct,
+  getCachedRatingSummary,
+  getCachedSalesCountByProduct,
+} from '@/lib/mock-db/cached-reads'
 import type { StoredProduct, ProductDetail, ProductReview } from '@/types/product'
 import ProductImageSlider from '@/components/product/ProductImageSlider'
 import ProductInfo from '@/components/product/ProductInfo'
@@ -58,7 +70,7 @@ export async function generateMetadata({
   params: Promise<{ id: string }>
 }): Promise<Metadata> {
   const { id } = await params
-  const stored = await getProductById(id)
+  const stored = await getCachedProductById(id)
   const name = stored && !stored.archived ? stored.name : getProductDetail(id)?.name
   if (!name) return { title: 'Produk — infarm.id' }
   return {
@@ -78,13 +90,13 @@ export default async function ProductDetailPage({
 
   // Sumber utama: produk OMS dari Supabase (sembunyikan yang diarsipkan dari storefront).
   // Fallback: produk dummy lama agar halaman contoh tetap bisa dibuka.
-  const stored = await getProductById(id)
+  const stored = await getCachedProductById(id)
   let product: ProductDetail | null
   if (stored && !stored.archived) {
     // Ambil ulasan tampil & rating agregat untuk produk ini
     const [reviews, summary] = await Promise.all([
-      getReviewsByProduct(stored.id),
-      getProductRatingSummary(stored.id),
+      getCachedReviewsByProduct(stored.id),
+      getCachedRatingSummary(stored.id),
     ])
     product = toProductDetail(stored, reviews, summary)
   } else {
@@ -94,9 +106,9 @@ export default async function ProductDetailPage({
 
   // Paket combo REAL (Supabase) yang aktif, memuat produk ini, & semua produknya masih ada stok.
   const [allCombos, allProducts, salesCounts] = await Promise.all([
-    readCombos(),
-    readProducts(),
-    getSalesCountByProduct(),
+    getCachedCombos(),
+    getCachedProducts(),
+    getCachedSalesCountByProduct(),
   ])
   const soldCount = salesCounts[product.id] ?? 0
   const stockById: Record<string, number> = {}

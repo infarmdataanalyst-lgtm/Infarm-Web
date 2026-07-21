@@ -2,7 +2,7 @@
 // API menulis ulasan baru ke Supabase. Dipanggil POST dari form /review.
 
 import { NextResponse } from 'next/server'
-import { revalidatePath } from 'next/cache'
+import { revalidatePath, revalidateTag } from 'next/cache'
 import { createReview, DuplicateReviewError } from '@/lib/mock-db/reviews'
 import type { CreateReviewInput } from '@/lib/mock-db/reviews'
 import { getOrderByOrderId } from '@/lib/mock-db/orders'
@@ -73,6 +73,7 @@ export async function POST(request: Request) {
     const id = await createReview({ ...body, orderInvoice: invoice })
     // Segarkan halaman detail produk agar ulasan baru langsung tampil
     revalidatePath(`/produk/${body.productId}`)
+    revalidateTag('reviews', 'max')
     return NextResponse.json({ success: true, id }, { status: 201 })
   } catch (err) {
     // Produk pada pesanan ini sudah pernah diulas → tolak duplikat

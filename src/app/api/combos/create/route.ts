@@ -2,6 +2,7 @@
 // API membuat paket/combo baru di Supabase. Dipanggil POST dari ComboForm (mode buat).
 
 import { NextResponse } from 'next/server'
+import { revalidateTag } from 'next/cache'
 import { requireAdmin } from '@/lib/oms-guard'
 import { createCombo } from '@/lib/mock-db/combos'
 import { validateComboInput } from '@/lib/combo-validation'
@@ -27,5 +28,7 @@ export async function POST(request: Request) {
   }
 
   const combo = await createCombo(result.value)
+  // Invalidasi cache combo storefront (rekomendasi paket di detail produk)
+  revalidateTag('combos', 'max')
   return NextResponse.json({ success: true, combo }, { status: 201 })
 }

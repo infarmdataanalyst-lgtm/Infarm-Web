@@ -3,7 +3,7 @@
 
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/oms-guard'
-import { revalidatePath } from 'next/cache'
+import { revalidatePath, revalidateTag } from 'next/cache'
 import { updateProduct } from '@/lib/mock-db/products'
 import { PRODUCT_CATEGORIES } from '@/lib/data/categories'
 import type { StoredProduct } from '@/types/product'
@@ -64,6 +64,8 @@ export async function PATCH(request: Request) {
   revalidatePath('/')
   revalidatePath('/products')
   revalidatePath(`/produk/${body.id}`)
+  // Invalidasi cache baca storefront (cached-reads) agar perubahan harga/stok/arsip langsung tampil
+  revalidateTag('products', 'max')
 
   return NextResponse.json({ success: true, product: updated })
 }

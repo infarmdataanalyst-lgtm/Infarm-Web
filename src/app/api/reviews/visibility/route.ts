@@ -2,6 +2,7 @@
 // API menyetel apakah sebuah ulasan tampil di storefront (moderasi OMS).
 
 import { NextResponse } from 'next/server'
+import { revalidateTag } from 'next/cache'
 import { requireAdmin } from '@/lib/oms-guard'
 import { setReviewVisibility } from '@/lib/mock-db/reviews'
 
@@ -31,6 +32,9 @@ export async function POST(request: Request) {
   if (!ok) {
     return NextResponse.json({ error: 'Gagal mengubah visibilitas ulasan.' }, { status: 500 })
   }
+
+  // Invalidasi cache baca ulasan storefront agar perubahan visibilitas langsung tampil
+  revalidateTag('reviews', 'max')
 
   return NextResponse.json({ success: true })
 }

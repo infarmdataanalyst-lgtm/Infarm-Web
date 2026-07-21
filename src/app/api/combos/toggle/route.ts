@@ -2,6 +2,7 @@
 // API mengaktifkan / menonaktifkan combo (kolom is_active). Dipanggil PATCH dari daftar combo OMS.
 
 import { NextResponse } from 'next/server'
+import { revalidateTag } from 'next/cache'
 import { requireAdmin } from '@/lib/oms-guard'
 import { setComboActive } from '@/lib/mock-db/combos'
 
@@ -32,5 +33,7 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: 'Combo tidak ditemukan.' }, { status: 404 })
   }
 
+  // Invalidasi cache combo storefront
+  revalidateTag('combos', 'max')
   return NextResponse.json({ success: true, combo })
 }

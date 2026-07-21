@@ -4,7 +4,7 @@
 
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/oms-guard'
-import { revalidatePath } from 'next/cache'
+import { revalidatePath, revalidateTag } from 'next/cache'
 import { deleteProduct } from '@/lib/mock-db/products'
 
 export const runtime = 'nodejs'
@@ -36,6 +36,8 @@ export async function POST(request: Request) {
   revalidatePath('/')
   revalidatePath('/products')
   revalidatePath(`/produk/${body.id}`)
+  // Invalidasi cache baca storefront (cached-reads) agar produk terhapus langsung hilang
+  revalidateTag('products', 'max')
 
   return NextResponse.json({ success: true })
 }

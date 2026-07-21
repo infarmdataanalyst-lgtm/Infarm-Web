@@ -2,6 +2,7 @@
 // API menyimpan/menghapus balasan admin pada sebuah ulasan (moderasi OMS).
 
 import { NextResponse } from 'next/server'
+import { revalidateTag } from 'next/cache'
 import { requireAdmin } from '@/lib/oms-guard'
 import { setReviewReply } from '@/lib/mock-db/reviews'
 
@@ -32,6 +33,9 @@ export async function POST(request: Request) {
   if (!ok) {
     return NextResponse.json({ error: 'Gagal menyimpan balasan.' }, { status: 500 })
   }
+
+  // Invalidasi cache baca ulasan storefront agar balasan admin langsung tampil
+  revalidateTag('reviews', 'max')
 
   return NextResponse.json({ success: true })
 }
