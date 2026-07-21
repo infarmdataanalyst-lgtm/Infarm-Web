@@ -5,7 +5,7 @@
 
 'use client'
 
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -14,13 +14,13 @@ import type { Product } from '@/types/product'
 import { formatRupiah } from '@/lib/format'
 import { useDebounce } from '@/hooks/use-debounce'
 
-// Jeda debounce (ms) sebelum daftar saran diperbarui
+// Jeda debounce (ms) sebelum saran diambil dari server
 const DEBOUNCE_DELAY = 350
-// Maksimal jumlah saran yang ditampilkan di dropdown
-const MAX_SUGGESTIONS = 6
 
-// Input pencarian produk dengan saran autocomplete. `products` = seluruh produk (OMS + dummy).
-export default function HeroSearchBar({ products }: { products: Product[] }) {
+// Input pencarian produk dengan saran autocomplete.
+// Saran diambil dari server (GET /api/products/search) saat mengetik — TIDAK lagi mengirim
+// seluruh katalog ke client (payload beranda jauh lebih ringan).
+export default function HeroSearchBar() {
   const router = useRouter()
   const containerRef = useRef<HTMLDivElement>(null)
   const listboxId = useId()
@@ -28,33 +28,43 @@ export default function HeroSearchBar({ products }: { products: Product[] }) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false) // dropdown terbuka (input difokus & ada teks)
   const [activeIndex, setActiveIndex] = useState(-1) // saran yang sedang disorot (keyboard)
+  const [suggestions, setSuggestions] = useState<Product[]>([])
+  const [fetching, setFetching] = useState(false) // sedang mengambil saran dari server
 
-  // Debounce nilai ter-trim agar filter tak jalan tiap ketukan
+  // Debounce nilai ter-trim agar request tak jalan tiap ketukan
   const debouncedQuery = useDebounce(query.trim(), DEBOUNCE_DELAY)
-  // Sedang menunggu jeda debounce → tampilkan indikator loading
-  const isSearching = query.trim().length > 0 && query.trim() !== debouncedQuery
+  // Sedang menunggu jeda debounce ATAU sedang fetch → tampilkan indikator loading
+  const isSearching =
+    (query.trim().length > 0 && query.trim() !== debouncedQuery) || fetching
 
-  // === Logika filter (case-insensitive, cocokkan nama atau kategori) ===
-  const suggestions = useMemo(() => {
-    if (!debouncedQuery) return []
-    const keyword = debouncedQuery.toLowerCase()
-    return products
-      .filter((product) => {
-        const name = product.name.toLowerCase()
-        const category = product.category.toLowerCase()
-        // Cocokkan juga kategori tanpa tanda hubung (mis. "pupuk-nutrisi" → "pupuk nutrisi")
-        return (
-          name.includes(keyword) ||
-          category.includes(keyword) ||
-          category.replace(/-/g, ' ').includes(keyword)
-        )
+  // === Ambil saran dari server saat query (ter-debounce) berubah ===
+  // AbortController membatalkan request lama agar hasil basi tak menimpa hasil terbaru (race).
+  useEffect(() => {
+    if (!debouncedQuery) {
+      setSuggestions([])
+      setFetching(false)
+      return
+    }
+    const controller = new AbortController()
+    setFetching(true)
+    fetch(`/api/products/search?q=${encodeURIComponent(debouncedQuery)}`, {
+      signal: controller.signal,
+    })
+      .then((res) => res.json())
+      .then((data: { products?: Product[] }) => {
+        setSuggestions(data.products ?? [])
+        setActiveIndex(-1)
       })
-      .slice(0, MAX_SUGGESTIONS)
-  }, [products, debouncedQuery])
+      .catch(() => {
+        // Abort (query berubah) diabaikan; error lain → kosongkan saran
+      })
+      .finally(() => setFetching(false))
+    return () => controller.abort()
+  }, [debouncedQuery])
 
   // Dropdown tampil saat fokus & input terisi
   const showDropdown = open && query.trim().length > 0
-  // Pesan kosong hanya setelah debounce selesai (bukan saat masih mengetik)
+  // Pesan kosong hanya setelah selesai mencari (bukan saat masih mengetik/fetch)
   const showEmpty = showDropdown && !isSearching && debouncedQuery.length > 0 && suggestions.length === 0
 
   // Tutup dropdown saat klik di luar komponen
