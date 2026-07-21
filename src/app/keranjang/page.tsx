@@ -49,18 +49,36 @@ export default function CartPage() {
   // Riwayat "pernah dilihat" (localStorage, sisi-klien). Kosong bila belum ada/disabled.
   const [viewedIds, setViewedIds] = useState<string[]>([])
 
-  // === Ambil produk real dari API saat halaman dibuka ===
-  useEffect(() => {
-    fetch('/api/products/list')
-      .then((res) => res.json())
-      .then((data) => setOmsProducts(data.products ?? []))
-      .catch(() => setOmsProducts([]))
-  }, [])
-
   // Baca riwayat lihat produk sekali saat mount (client only)
   useEffect(() => {
     setViewedIds(getRecentlyViewedIds())
   }, [])
+
+  // === Id produk yang perlu di-resolve dari server: item keranjang + riwayat lihat (gabung unik) ===
+  // Key stabil (diurut) supaya effect hanya refetch saat kumpulan id benar-benar berubah.
+  const idsKey = useMemo(() => {
+    const s = new Set<string>()
+    for (const c of cookieCart) s.add(c.productId)
+    for (const v of viewedIds) s.add(v)
+    return Array.from(s).sort().join(',')
+  }, [cookieCart, viewedIds])
+
+  // === Resolve HANYA produk yang dibutuhkan (bukan seluruh katalog) lewat /api/products/by-ids ===
+  // Endpoint ini ber-cache (revalidate 30s) → jauh lebih cepat dari menarik semua produk tiap buka.
+  useEffect(() => {
+    if (!idsKey) {
+      setOmsProducts([])
+      return
+    }
+    const controller = new AbortController()
+    fetch(`/api/products/by-ids?ids=${encodeURIComponent(idsKey)}`, { signal: controller.signal })
+      .then((res) => res.json())
+      .then((data: { products?: StoredProduct[] }) => setOmsProducts(data.products ?? []))
+      .catch(() => {
+        // Abort (id berubah) diabaikan; error lain → biarkan daftar produk apa adanya
+      })
+    return () => controller.abort()
+  }, [idsKey])
 
   // === Ambil promo aktif (server-side filter). Gagal fetch → section promo kosong, halaman aman. ===
   useEffect(() => {
