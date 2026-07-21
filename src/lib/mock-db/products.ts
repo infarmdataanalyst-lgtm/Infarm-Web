@@ -44,9 +44,11 @@ async function uploadImageIfDataUrl(value: string): Promise<string> {
   const path = `products/${randomUUID()}.${ext}`
 
   const supabase = createAdminClient()
+  // cacheControl '3600' → CDN Supabase (Cloudflare) menyimpan gambar 1 jam. Gambar produk
+  // jarang berubah (URL baru per upload), jadi aman di-cache lama. Hanya berlaku untuk upload baru.
   const { error } = await supabase.storage
     .from(IMAGE_BUCKET)
-    .upload(path, buffer, { contentType: mime, upsert: false })
+    .upload(path, buffer, { contentType: mime, upsert: false, cacheControl: '3600' })
 
   if (error) {
     console.error('Gagal upload gambar ke Storage:', error.message)

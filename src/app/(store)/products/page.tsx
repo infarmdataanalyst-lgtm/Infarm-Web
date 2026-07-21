@@ -6,6 +6,11 @@ import { Suspense } from 'react'
 import CategoryFilterTabs from '@/components/product/CategoryFilterTabs'
 import ProductCatalog from '@/components/product/ProductCatalog'
 
+// Revalidasi shell halaman tiap 60 detik (ISR). Catatan: daftar produk di-fetch sisi-klien
+// via /api/products/list (force-dynamic), jadi isi katalog selalu segar; revalidate ini hanya
+// untuk shell statis halaman agar konsisten dengan halaman listing lain.
+export const revalidate = 60
+
 export default function ProductsPage() {
   return (
     // pt-14: ruang untuk AppBar fixed (h-14) yang dirender di layout (store)

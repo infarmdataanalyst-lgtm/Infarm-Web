@@ -59,9 +59,11 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: 'Produk tidak ditemukan.' }, { status: 404 })
   }
 
-  // Segarkan cache storefront agar perubahan langsung tampil di ecommerce
+  // Segarkan cache storefront agar perubahan (harga/stok/arsip) langsung tampil di ecommerce.
+  // id produk diketahui → revalidasi halaman detail spesifik + beranda + katalog.
   revalidatePath('/')
-  revalidatePath('/produk')
+  revalidatePath('/products')
+  revalidatePath(`/produk/${body.id}`)
 
   return NextResponse.json({ success: true, product: updated })
 }

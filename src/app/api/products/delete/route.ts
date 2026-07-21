@@ -31,9 +31,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Produk tidak ditemukan.' }, { status: 404 })
   }
 
-  // Segarkan cache storefront agar produk yang dihapus hilang dari ecommerce
+  // Segarkan cache storefront agar produk yang dihapus hilang dari ecommerce.
+  // id diketahui → revalidasi halaman detail spesifik + beranda + katalog.
   revalidatePath('/')
-  revalidatePath('/produk')
+  revalidatePath('/products')
+  revalidatePath(`/produk/${body.id}`)
 
   return NextResponse.json({ success: true })
 }

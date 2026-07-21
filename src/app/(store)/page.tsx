@@ -8,8 +8,9 @@ import CategoryGrid from '@/components/home/CategoryGrid'
 import BestSellingProducts from '@/components/home/BestSellingProducts'
 import Footer from '@/components/home/Footer'
 
-// Membaca produk OMS dari mock DB (fs) → selalu segarkan agar produk baru langsung tampil
-export const dynamic = 'force-dynamic'
+// Halaman di-cache & revalidasi tiap 60 detik (ISR). Data produk tak berubah tiap detik, jadi
+// cukup segar per menit. Perubahan produk dari OMS memicu revalidatePath('/') → cache langsung fresh.
+export const revalidate = 60
 
 // Homepage publik infarm — merakit Hero, value proposition, kategori, produk terlaris, dan footer
 // menjadi satu halaman yang menyesuaikan diri di berbagai ukuran layar.

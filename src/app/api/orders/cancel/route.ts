@@ -5,6 +5,7 @@
 // Keamanan: setiap akses WAJIB membawa token yang cocok dengan orderId (lihat lib/order-token.ts).
 
 import { NextResponse } from 'next/server'
+import { revalidatePath } from 'next/cache'
 import { getOrderByOrderId, updateOrderStatus } from '@/lib/mock-db/orders'
 import { restoreStock } from '@/lib/mock-db/products'
 import { verifyCancelToken } from '@/lib/order-token'
@@ -103,6 +104,11 @@ export async function PATCH(request: Request) {
 
   // Lepaskan kembali stok yang dialokasikan untuk pesanan ini (produk OMS).
   await restoreStock(order.items.map((i) => ({ productId: i.productId, quantity: i.quantity })))
+
+  // Stok kembali → segarkan cache storefront agar stok tampil akurat.
+  revalidatePath('/')
+  revalidatePath('/products')
+  for (const i of order.items) revalidatePath(`/produk/${i.productId}`)
 
   return NextResponse.json({ success: true, order: toPublicOrder(updated) })
 }

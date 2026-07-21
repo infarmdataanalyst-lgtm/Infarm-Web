@@ -100,9 +100,11 @@ export async function POST(request: Request) {
 
   const saved = await saveProduct(result.input)
 
-  // Segarkan cache halaman storefront agar produk baru langsung tampil saat navigasi
+  // Segarkan cache halaman storefront agar produk baru langsung tampil saat navigasi.
+  // '/produk/[id]' butuh arg 'page' karena route dinamis (revalidasi semua halaman detail).
   revalidatePath('/')
-  revalidatePath('/produk')
+  revalidatePath('/products')
+  revalidatePath('/produk/[id]', 'page')
 
   return NextResponse.json({ success: true, product: saved }, { status: 201 })
 }

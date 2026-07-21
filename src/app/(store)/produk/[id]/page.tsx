@@ -5,6 +5,10 @@
 
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
+
+// Halaman detail di-cache & revalidasi tiap 60 detik (ISR). Update/hapus/arsip produk di OMS
+// memicu revalidatePath('/produk/[id]', 'page') → halaman detail langsung diperbarui.
+export const revalidate = 60
 import { getProductDetail } from '@/lib/data/dummy-product-details'
 import { getProductById, readProducts } from '@/lib/mock-db/products'
 import { readCombos } from '@/lib/mock-db/combos'
