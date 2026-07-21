@@ -2,8 +2,10 @@
 
 // src/components/home/BestSellingProducts.tsx
 // Section beranda "Katalog Terlaris": grid produk diurut penjualan, dengan INFINITE SCROLL.
-// Client Component — paginasi via GET /api/products/best-selling-catalog (page/pageSize),
-// trigger fetch berikutnya pakai IntersectionObserver native (tanpa library).
+// Client Component. HALAMAN PERTAMA di-render SERVER (via props initialProducts) sehingga sudah
+// jadi bagian HTML ISR beranda → saat kembali ke beranda card langsung tampil TANPA skeleton/fetch.
+// Halaman berikutnya (2+) tetap diambil client via GET /api/products/best-selling-catalog,
+// trigger pakai IntersectionObserver native (tanpa library).
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
@@ -12,10 +14,19 @@ import ProductCard from '@/components/product/ProductCard'
 
 const PAGE_SIZE = 10
 
-export default function BestSellingProducts() {
-  const [products, setProducts] = useState<Product[]>([]) // akumulasi semua produk
-  const [page, setPage] = useState(0) // halaman berikutnya yang akan diambil
-  const [hasMore, setHasMore] = useState(true) // masih ada produk?
+export default function BestSellingProducts({
+  initialProducts = [],
+  initialHasMore = true,
+}: {
+  initialProducts?: Product[]
+  initialHasMore?: boolean
+}) {
+  // State awal dari data server (halaman 0). page mulai dari 1 karena 0 sudah ter-render server.
+  const [products, setProducts] = useState<Product[]>(initialProducts)
+  // Bila server mengirim halaman 0 (initialProducts terisi) → mulai fetch dari page 1.
+  // Bila kosong (fallback, mis. server gagal) → mulai dari page 0 agar halaman pertama tak terlewat.
+  const [page, setPage] = useState(initialProducts.length > 0 ? 1 : 0)
+  const [hasMore, setHasMore] = useState(initialHasMore)
   const [isLoading, setIsLoading] = useState(false) // sedang fetch?
   const [error, setError] = useState(false)
 
@@ -43,11 +54,8 @@ export default function BestSellingProducts() {
     }
   }, [page, hasMore])
 
-  // Muat halaman pertama saat mount
-  useEffect(() => {
-    loadMore()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  // Halaman pertama (page 0) sudah di-render server via initialProducts → tak perlu fetch saat mount.
+  // Halaman berikutnya diambil oleh IntersectionObserver di bawah.
 
   // IntersectionObserver: fetch berikutnya saat sentinel mendekati viewport
   useEffect(() => {

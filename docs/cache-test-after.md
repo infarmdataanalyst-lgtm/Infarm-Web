@@ -52,36 +52,45 @@ Optimasi yang sudah diterapkan (lihat commit):
 
 ---
 
-## 2. Halaman Detail Produk (`/produk/399424a8-...`)
+## 2. Halaman Detail Produk (`/produk/399424a8-...`) — SETELAH `unstable_cache` + `generateStaticParams`
 
-| Request ke- | Time Total | TTFB | Status Cache |
-|:-----------:|:----------:|:----:|:------------:|
-| 1 | 4.290166s | 4.151945s | MISS |
-| 2 | 3.455369s | 3.274348s | MISS |
-| 3 | 2.631046s | 2.381548s | MISS |
-| 4 | 2.607464s | 2.370732s | MISS |
-| 5 | 3.159593s | 2.801622s | MISS |
-| 6 | 3.567094s | 3.283169s | MISS |
-| 7 | 2.212918s | 1.961569s | MISS |
-| 8 | 2.303121s | 1.989967s | MISS |
-| 9 | 1.776582s | 1.614978s | MISS |
-| 10 | 3.596962s | 3.384056s | MISS |
+Pengujian ulang **21 Juli 2026, 11:49 WITA** setelah deploy optimasi lanjutan (bungkus baca data
+di `unstable_cache` revalidate 30s + `generateStaticParams` untuk mengaktifkan ISR pada route dinamis).
+
+| Request ke- | Time Total | TTFB | Status Cache | Age |
+|:-----------:|:----------:|:----:|:------------:|:---:|
+| 1 | 5.548209s | 5.524045s | MISS (cold render pertama) | 0 |
+| 2 | 1.022379s | 0.898604s | MISS (propagasi edge) | 1 |
+| 3 | 0.429222s | 0.405412s | **HIT** | 1 |
+| 4 | 0.501197s | 0.477561s | **HIT** | 2 |
+| 5 | 0.413099s | 0.390092s | **HIT** | 2 |
+| 6 | 0.187610s | 0.160003s | **HIT** | 3 |
+| 7 | 0.256209s | 0.205359s | **HIT** | 3 |
+| 8 | 0.187397s | 0.159877s | **HIT** | 3 |
+| 9 | 0.204456s | 0.177948s | **HIT** | 4 |
+| 10 | 0.259958s | 0.223133s | **HIT** | 4 |
 
 **Ringkasan (rata-rata request ke-2 s/d ke-10):**
-- Rata-rata Time Total: **2.8122s** (baseline 2.5079s → tidak membaik / sedikit lebih lambat karena variasi jaringan)
-- Rata-rata TTFB: **2.5624s** (baseline 2.2679s)
+- Rata-rata Time Total: **0.3846s** (baseline 2.5079s → **~85% lebih cepat**)
+- Rata-rata TTFB: **0.3442s** (baseline 2.2679s → **~85% lebih cepat**)
+- Rata-rata HIT saja (req ke-3 s/d ke-10): Total **0.3049s**, TTFB **0.2749s**
 
-> ⚠️ **BELUM di-cache — masih `MISS` di semua request** (`Cache-Control: private, no-store`).
-> Ini SESUAI dengan yang diprediksi sebelum deploy: `export const revalidate = 60` **sudah
-> terpasang** di halaman ini, TAPI tidak berlaku karena Server Component-nya memanggil query
-> Supabase (`getProductById`, `getReviewsByProduct`, `getProductRatingSummary`, `readCombos`,
-> `readProducts`, `getSalesCountByProduct`) yang memakai `fetch` **uncached (no-store default
-> di Next 16)** → memaksa route jadi **dynamic**, menimpa `revalidate`.
+> ✅ **BERHASIL di-cache.** Dari `MISS` konsisten (~2.8s) → sekarang `HIT` mulai request ke-3,
+> turun drastis ke ~0.3s. Header `Age` naik 0→4 = bukti ISR revalidasi ~30 detik.
 >
-> **Solusi (langkah lanjutan, belum dikerjakan — butuh persetujuan):** bungkus fungsi baca
-> data di `src/lib/mock-db/*` dengan `unstable_cache` (+ `revalidateTag` saat mutasi). Ini
-> mengubah data layer, di luar cakupan "hanya cache config" pada task sebelumnya.
-> Variasi angka (2.2s–3.6s) murni fluktuasi jaringan/beban, bukan efek cache.
+> Yang membuatnya jalan (dua kunci):
+> 1. **`unstable_cache`** (`src/lib/mock-db/cached-reads.ts`, revalidate 30s + tags
+>    `products`/`reviews`/`combos`/`sales`) membungkus semua baca Supabase → fetch tak lagi
+>    `no-store`, jadi route berhenti dipaksa dynamic.
+> 2. **`generateStaticParams` (return `[]`) + `dynamicParams`** → mengaktifkan ISR untuk route
+>    dinamis `[id]`; tanpa ini Next 16 tetap menandai route fully dynamic (`ƒ`).
+>
+> **Catatan cold-start:** request 1 (`MISS`, 5.5s) = render pertama on-demand + isi cache;
+> request 2 masih `MISS` karena propagasi antar-edge Vercel; stabil `HIT` sejak request 3.
+>
+> **Freshness dijaga:** `revalidateTag('products'|'reviews'|'combos'|'sales', 'max')` dipanggil
+> di semua API mutasi (produk create/update/delete, order create/cancel, review, combo) →
+> perubahan admin langsung meng-invalidasi cache tanpa menunggu 30 detik.
 
 ---
 
@@ -164,7 +173,7 @@ Optimasi yang sudah diterapkan (lihat commit):
 | Halaman | Avg Total (before → after) | Avg TTFB (before → after) | Cache (before → after) |
 |---------|:--------------------------:|:-------------------------:|------------------------|
 | **Beranda `/`** | 1.1501s → **0.5629s** ✅ | 0.9503s → **0.4381s** ✅ | MISS → **HIT** |
-| **Detail produk** | 2.5079s → 2.8122s ⚠️ | 2.2679s → 2.5624s ⚠️ | MISS → **MISS (belum)** |
+| **Detail produk** | 2.5079s → **0.3846s** ✅ | 2.2679s → **0.3442s** ✅ | MISS → **HIT** (~85% lebih cepat) |
 | **Katalog `/products`** | (baru) → 0.2302s ✅ | (baru) → 0.2219s ✅ | — → **HIT** |
 | **Gambar Storage** | 0.3094s → 0.2546s | 0.2323s → 0.2104s | HIT → HIT |
 | **Checkout (kontrol)** | 0.1491s → 0.2323s | 0.1467s → 0.2286s | HIT → HIT (tak berubah) |
@@ -175,10 +184,16 @@ Optimasi yang sudah diterapkan (lihat commit):
 - ✅ **Katalog**: sukses ter-cache (shell), respons ~0.23s dari edge.
 - ✅ **Gambar Storage**: tetap optimal (CDN Cloudflare HIT). Parameter cacheControl baru untuk upload berikutnya.
 - ✅ **Checkout (kontrol)**: perilaku tidak berubah — optimasi tidak merusak halaman dinamis.
-- ⚠️ **Detail produk**: **BELUM ter-cache** (`MISS` konsisten). `revalidate = 60` terpasang tapi
-  ditimpa oleh query Supabase uncached (no-store) di Server Component. **Ini kandidat optimasi
-  berikutnya**: bungkus baca data (`src/lib/mock-db/*`) dengan `unstable_cache` + `revalidateTag`.
-  Karena mengubah data layer, perlu persetujuan sebelum dikerjakan.
+- ✅ **Detail produk**: **BERHASIL ter-cache** setelah optimasi lanjutan (`unstable_cache` +
+  `generateStaticParams`). `MISS` (~2.8s) → `HIT` (~0.3s), **~85% lebih cepat**. Freshness
+  dijaga `revalidateTag(..., 'max')` di semua titik mutasi (produk/order/review/combo).
 
-**Halaman ber-status MISS terus-menerus (cache belum aktif):** hanya **Detail produk** —
-sisanya sudah `HIT`/ter-cache sesuai target (checkout memang sengaja tidak diubah).
+**Halaman ber-status MISS terus-menerus (cache belum aktif):** TIDAK ADA. Semua halaman target
+sudah `HIT`/ter-cache (checkout memang sengaja tidak diubah & tetap dinamis by design).
+
+### Catatan versi Next 16.2.7
+- `revalidateTag` di versi ini **wajib 2 argumen**: `revalidateTag(tag, 'max')` (`'max'` =
+  stale-while-revalidate, rekomendasi resmi).
+- `unstable_cache` masih dipakai (belum migrasi ke `use cache` / Cache Components — flag itu
+  belum diaktifkan di `next.config.ts`). Bila nanti Cache Components diaktifkan, wrapper di
+  `cached-reads.ts` perlu dimigrasi ke `use cache` + `cacheTag`/`cacheLife`.

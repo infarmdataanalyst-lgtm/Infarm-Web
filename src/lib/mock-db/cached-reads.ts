@@ -21,6 +21,7 @@ import { readProducts, getProductById } from './products'
 import { getReviewsByProduct, getProductRatingSummary } from './reviews'
 import { readCombos } from './combos'
 import { getSalesCountByProduct } from './orders'
+import type { Product } from '@/types/product'
 
 // Durasi cache storefront (detik). Data e-commerce tak berubah tiap detik; 30s cukup segar.
 const REVALIDATE = 30
@@ -66,4 +67,36 @@ export function getCachedRatingSummary(id: string) {
     revalidate: REVALIDATE,
     tags: ['reviews'],
   })()
+}
+
+// Satu halaman "Katalog Terlaris" (produk non-arsip diurut penjualan terbanyak; tie-break terbaru).
+// Memakai data BER-CACHE (getCachedProducts + getCachedSalesCountByProduct) → sort/slice di memori
+// (murah). Dipakai bersama oleh API infinite-scroll & render server halaman pertama di beranda.
+export async function getBestSellingCatalogPage(
+  page: number,
+  pageSize: number,
+): Promise<{ products: Product[]; hasMore: boolean; page: number }> {
+  const [all, sold] = await Promise.all([getCachedProducts(), getCachedSalesCountByProduct()])
+  const active = all.filter((p) => !p.archived)
+
+  const sorted = active
+    .map((p, index) => ({ p, index, s: sold[p.id] ?? 0 }))
+    .sort((a, b) => b.s - a.s || a.index - b.index)
+    .map((x) => x.p)
+
+  const start = page * pageSize
+  const slice = sorted.slice(start, start + pageSize)
+
+  // Kirim hanya field kartu produk (buang galeri/stock agar payload ringan)
+  const products: Product[] = slice.map((p) => ({
+    id: p.id,
+    name: p.name,
+    originalPrice: p.originalPrice,
+    promoPrice: p.promoPrice,
+    imageUrl: p.imageUrl,
+    category: p.category,
+    badge: p.badge,
+  }))
+
+  return { products, hasMore: start + pageSize < sorted.length, page }
 }
