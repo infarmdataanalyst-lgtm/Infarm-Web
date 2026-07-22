@@ -153,9 +153,12 @@ src/
 │   │   ├── page.tsx              # Guest checkout
 │   │   └── success/page.tsx      # Order Confirmed (+ tombol batalkan pesanan)
 │   ├── order-cancellation/page.tsx  # Pembatalan pesanan Guest (token-protected, dari link email/sukses)
-│   ├── review/                   # Form review produk (+ /submitted)
+│   ├── review/page.tsx           # Beri Review by NO. TELEPON (pembeli terverifikasi; ganti flow invoice lama)
+│   │                             #   (ReviewForm.tsx/ReviewProductCard.tsx = flow invoice lama, kini dead code)
 │   ├── track/page.tsx            # Lacak pesanan by NOMOR INVOICE (dipakai untuk detail timeline ?order=)
 │   ├── track-order/page.tsx      # Lacak pesanan by NO. TELEPON (entry utama; honeypot + auto-recognize cookie)
+│   ├── cancel-order/page.tsx     # Batalkan pesanan by NO. TELEPON — 2 langkah (verifikasi ulang phone ke DB)
+│   ├── pesanan-saya/page.tsx     # Hub "Pesanan Saya": kartu lacak / batalkan / review (ikon profil header → sini)
 │   ├── dev/email-preview/        # Preview template email (route handler, isi placeholder data contoh)
 │   ├── oms/                      # OMS / back office
 │   │   ├── login/page.tsx
@@ -164,8 +167,10 @@ src/
 │   ├── api/                      # Route Handlers (runtime nodejs)
 │   │   ├── products/             # create | update | delete | list | check-sku | best-selling |
 │   │   │                         #   sales-count | best-selling-catalog | search (autocomplete) | by-ids (resolve keranjang)
-│   │   ├── orders/               # create | list (filter+sort+CSV OMS) | get | cancel (GET+PATCH) | track-by-phone
-│   │   ├── reviews/              # create | list | reply | visibility
+│   │   ├── orders/               # create | list (filter+sort+CSV OMS) | get | cancel (GET+PATCH token) |
+│   │   │                         #   track-by-phone | verify-cancel | cancel-by-phone (batalkan by no_telepon)
+│   │   ├── reviews/              # create (invoice) | list | reply | visibility | reviewed |
+│   │   │                         #   reviewable-by-phone | create-by-phone (review terverifikasi via no_telepon)
 │   │   ├── combos/              # create | update | delete | toggle | list | active (storefront)
 │   │   ├── promotions/          # create | update | delete | toggle | list | active (storefront)
 │   │   └── mengantar/address/search  # Proxy search alamat Mengantar (wilayah.id CORS-blocked → proxied)
@@ -373,22 +378,38 @@ sesi disimpan sebagai **cookie httpOnly bertanda tangan HMAC** (bukan lagi penan
     `Diproses`. Status `Dikirim`/`Selesai` ditolak (terkunci)
 - Halaman `src/app/order-cancellation/page.tsx` (server tipis) → `OrderCancellationView` (client)
 
-## Lacak Pesanan by No. Telepon (guest) — sudah terpasang (rate-limit menyusul)
+## Layanan Pesanan Guest by No. Telepon (lacak / batalkan / review) — sudah terpasang
 
-Mekanisme lacak **kedua** (berdampingan dengan `/track` by nomor invoice). Entry utama "Lacak Pesanan"
-(AppBar, halaman sukses, CTA cancellation) mengarah ke `/track-order`.
+Keluarga fitur guest yang mengidentifikasi pesanan lewat **no_telepon** (bukan login). Entry lewat
+**hub `/pesanan-saya`** (ikon profil header → hub; badge dot merah bila cookie `infarm_phone` ada).
+Semua berbagi pola: input phone → `getOrdersByPhone` (`mock-db/orders.ts`, `.eq('no_telepon')`) →
+output NON-SENSITIF; **honeypot** field `website`; **auto-recognize** cookie `infarm_phone` (Opsi A:
+auto-cari tanpa ketik). **Rate-limit (5/IP/jam) DITUNDA** di semua endpoint ini (`TODO(rate-limit)`;
+saat ditambah: in-memory Map seperti `/api/oms/login` — per-instance/bocor di Vercel — atau tabel Supabase).
 
-- **Halaman `/track-order`** (client): input **no_telepon** → tampil daftar pesanan (bisa >1).
-  Auto-recognize cookie `infarm_phone` (Opsi A): ada & valid → **auto-cari** tanpa ketik; tidak ada → manual.
-- **API `POST /api/orders/track-by-phone`**: honeypot field `website` (bot → balas kosong senyap),
-  validasi format phone, panggil `getOrdersByPhone` (`mock-db/orders.ts`, `.eq('no_telepon')`).
-  Kembalikan **HANYA info non-sensitif**: nomor invoice, status, resi, kurir, tanggal, ringkasan item
-  (nama+qty), nama **di-mask** (`lib/mask.ts`). TIDAK ada alamat/email/nama penuh.
-- **Keamanan (kompensasi karena hanya no_telepon, lebih lemah dari token HMAC)**: honeypot + masking +
-  query ulang DB. **Rate-limit (maks 5/IP/jam) DITUNDA** — ada `TODO(rate-limit)` di route handler;
-  saat ditambah bisa in-memory Map (seperti `/api/oms/login`, per-instance/bocor di Vercel) atau tabel Supabase.
-- `/cancel-order` (batalkan by no_telepon, 2 langkah) — **belum dibuat** (roadmap tahap berikutnya).
-- Detail timeline lengkap tetap via `/track?order=INV-…` (by invoice) — kartu hasil `/track-order` menautkannya.
+### Lacak — `/track-order` (berdampingan dengan `/track` by invoice)
+- `POST /api/orders/track-by-phone`: kembalikan info non-sensitif (invoice, status, resi, kurir, tanggal,
+  item nama+qty+foto), nama **di-mask** (`lib/mask.ts`). Detail timeline lengkap tetap via `/track?order=INV-…`.
+
+### Batalkan — `/cancel-order` (2 LANGKAH)
+- LANGKAH 1: cari by phone (reuse `track-by-phone`) → daftar ringkas → pilih satu.
+- LANGKAH 2: **ketik ULANG no_telepon** (tak di-prefill) → `POST /api/orders/verify-cancel` (query ulang
+  DB: cocokkan phone↔order + cek status cancellable) → cocok & boleh → tombol "Ya, Batalkan Pesanan".
+- Eksekusi: `POST /api/orders/cancel-by-phone` — **RE-verifikasi phone↔order ke DB** (tak percaya client),
+  status boleh cancel (`Menunggu Pembayaran`/`Diproses`; tolak `Dikirim`/`Selesai`/`Dibatalkan`),
+  `updateOrderStatus('Dibatalkan')` + `restoreStock` + revalidate/tag. (Alur token `/order-cancellation` tetap ada.)
+
+### Review terverifikasi — `/review` (GANTI flow invoice lama)
+- `/review` kini **by no_telepon** (pembeli terverifikasi lewat riwayat beli). `POST /api/reviews/reviewable-by-phone`:
+  kumpulkan produk BELUM diulas dari semua pesanan phone (exclude `Dibatalkan` & yang sudah diulas via
+  `getReviewedProductIds` per invoice). Pilih produk → form rating/komentar/nama (auto-fill, editable).
+- `POST /api/reviews/create-by-phone`: **verifikasi server phone↔order (query ulang DB)** + produk∈order +
+  not cancelled + dedup (`order_invoice`+product, unique index). Submit lama `create` (invoice) masih ada.
+- **Badge "Pembeli Terverifikasi"**: `ProductReview.verified = Boolean(order_invoice)` (`getReviewsByProduct`),
+  dirender di `ProductReviews.tsx` (`BadgeCheck`). Ulasan lama `order_invoice` NULL → tanpa badge.
+- **Schema**: TANPA kolom baru — reuse `order_invoice` (TEXT) + unique index yang sudah ada (bukan `order_id` UUID).
+- Halaman sukses & hub mengarah ke `/review` polos (phone auto-fill cookie). `ReviewForm.tsx`/`ReviewProductCard.tsx`
+  (flow invoice `?order=` lama) kini **dead code** (tak di-link).
 
 ## Mengantar (Logistik) — sudah terpasang sebagian
 
@@ -590,10 +611,11 @@ deskripsi 20–2000, harga 100–99.999.999, stok 0–999.999, `MAX_PRODUCT_IMAG
 - [x] Detail produk: galeri foto multi (maks 9) + harga coret
 - [x] Promo & paket combo REAL di keranjang (dari Supabase via `/api/{promotions,combos}/active`)
 - [x] Halaman guest checkout (`/checkout` + `/checkout/success`)
-- [x] Halaman review produk (`/review`)
+- [x] Hub "Pesanan Saya" (`/pesanan-saya`) — kartu lacak/batalkan/review; ikon profil header + badge cookie
+- [x] Beri Review Produk by no_telepon (`/review`) — pembeli terverifikasi (riwayat beli) + badge "Pembeli Terverifikasi"
 - [x] Halaman lacak pesanan by nomor invoice (`/track`) + by no_telepon (`/track-order`, honeypot + auto-recognize cookie)
-- [x] Halaman pembatalan pesanan Guest (`/order-cancellation`) — token-protected
-- [ ] Halaman batalkan by no_telepon 2 langkah (`/cancel-order`) — roadmap; rate-limit lacak/batalkan menyusul
+- [x] Halaman pembatalan pesanan Guest (`/order-cancellation` token) + by no_telepon 2 langkah (`/cancel-order`)
+- [~] Rate-limit (5/IP/jam) untuk lacak/batalkan/review by no_telepon — DITUNDA (honeypot aktif; `TODO(rate-limit)` di endpoint)
 - [x] Search alamat + **cek ongkir** Mengantar di checkout (client; ongkir masuk ke total)
 - [x] Validasi form checkout (nama/telepon/email/alamat/kurir) + gating tombol "Bayar Sekarang"
 - [x] Template email konfirmasi pesanan (`src/emails/`, preview di `/dev/email-preview`)

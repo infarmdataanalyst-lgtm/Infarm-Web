@@ -6,7 +6,7 @@
 
 import Image from 'next/image'
 import { useMemo, useState } from 'react'
-import { Star } from 'lucide-react'
+import { Star, BadgeCheck } from 'lucide-react'
 import type { ProductReview } from '@/types/product'
 import StarRating from '@/components/product/StarRating'
 
@@ -181,7 +181,7 @@ function FilterPill({
 
 // Satu baris ulasan: avatar inisial, nama, tanggal, bintang, komentar, foto (opsional), dan balasan admin (opsional)
 function ReviewItem({ review }: { review: ProductReview }) {
-  const { authorName, rating, date, comment, imageUrls, reply } = review
+  const { authorName, rating, date, comment, imageUrls, reply, verified } = review
 
   return (
     <div>
@@ -191,7 +191,16 @@ function ReviewItem({ review }: { review: ProductReview }) {
           {authorName.charAt(0)}
         </span>
         <div>
-          <p className="text-sm font-semibold text-zinc-800">{authorName}</p>
+          <p className="flex items-center gap-1.5 text-sm font-semibold text-zinc-800">
+            {authorName}
+            {/* Badge "Pembeli Terverifikasi" — hanya untuk ulasan yang terikat ke pesanan */}
+            {verified && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-brand-light/40 px-2 py-0.5 text-[10px] font-semibold text-brand-primary">
+                <BadgeCheck className="h-3 w-3" />
+                Pembeli Terverifikasi
+              </span>
+            )}
+          </p>
           <p className="text-xs text-zinc-400">{formatReviewDate(date)}</p>
         </div>
       </div>

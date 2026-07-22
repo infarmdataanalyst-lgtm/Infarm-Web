@@ -168,9 +168,10 @@ export default async function CheckoutSuccessPage({
               <MapPin className="h-4 w-4" />
               Lacak Pesanan
             </Link>
-            {/* Arahkan ke halaman ulasan dengan membawa Order ID agar item yang diulas sesuai pesanan ini */}
+            {/* Halaman ulasan kini berbasis no_telepon (verified) — cukup arahkan ke /review;
+                nomor telepon auto-fill dari cookie checkout untuk menampilkan produk yang bisa diulas. */}
             <Link
-              href={`/review?order=${encodeURIComponent(data.orderId)}`}
+              href="/review"
               className="flex items-center justify-center gap-2 rounded-xl border border-white/40 bg-white/5 py-3 text-sm font-semibold text-white transition hover:bg-white/15"
             >
               <Star className="h-4 w-4" />

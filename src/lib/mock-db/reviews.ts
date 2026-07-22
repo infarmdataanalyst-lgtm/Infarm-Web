@@ -24,6 +24,7 @@ type ReviewRow = {
   reply: string | null
   visible: boolean
   created_at: string
+  order_invoice: string | null // terisi = ulasan dari pembeli terverifikasi (terikat ke pesanan)
 }
 
 // Baris reviews + data produk hasil join (untuk tampilan OMS)
@@ -91,6 +92,7 @@ export async function getReviewsByProduct(productId: string): Promise<ProductRev
     category: r.category ?? 'Umum',
     imageUrls: r.image_urls?.length ? r.image_urls : undefined,
     reply: r.reply ?? undefined,
+    verified: Boolean(r.order_invoice), // order_invoice terisi → pembeli terverifikasi
   }))
 }
 

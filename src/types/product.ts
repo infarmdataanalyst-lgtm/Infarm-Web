@@ -61,6 +61,7 @@ export type ProductReview = {
   category: string // kategori filter ulasan, mis. 'Kualitas' | 'Pengiriman'
   imageUrls?: string[] // foto ulasan (opsional)
   reply?: string // balasan admin (opsional)
+  verified?: boolean // true bila ulasan terikat ke pesanan (order_invoice terisi) → "Pembeli Terverifikasi"
 }
 
 // Produk lengkap untuk Halaman Detail Produk — memperluas Product dengan galeri foto,
