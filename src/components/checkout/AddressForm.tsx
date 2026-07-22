@@ -38,6 +38,7 @@ export type AddressFormState = {
 // API imperatif yang dibuka ke parent: tampilkan semua error & scroll ke field pertama yang invalid.
 export type AddressFormHandle = {
   revealErrors: () => boolean // mengembalikan true bila valid
+  focusPhone: () => void // scroll + fokus ke field nomor telepon (mis. dari popup konfirmasi "Kembali")
 }
 
 // Tombol kontrol yang tidak boleh diblok di input telepon
@@ -89,6 +90,7 @@ const AddressForm = forwardRef<AddressFormHandle, {
   // Ref tiap field untuk auto-scroll ke field pertama yang belum valid
   const recipientNameRef = useRef<HTMLDivElement>(null)
   const phoneRef = useRef<HTMLDivElement>(null)
+  const phoneInputRef = useRef<HTMLInputElement>(null)
   const emailRef = useRef<HTMLDivElement>(null)
   const addressRef = useRef<HTMLDivElement>(null)
   const streetRef = useRef<HTMLDivElement>(null)
@@ -232,6 +234,11 @@ const AddressForm = forwardRef<AddressFormHandle, {
         }
         return result.valid
       },
+      focusPhone() {
+        phoneRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        // Fokus input setelah scroll agar cursor langsung di field nomor telepon
+        phoneInputRef.current?.focus()
+      },
     }),
     // fieldRefs stabil (ref); cukup bergantung pada form
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -262,6 +269,7 @@ const AddressForm = forwardRef<AddressFormHandle, {
           <Field label="Nomor Telepon Aktif">
             <div className="relative">
               <input
+                ref={phoneInputRef}
                 type="tel"
                 inputMode="numeric"
                 value={phoneInput}

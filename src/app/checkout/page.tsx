@@ -18,6 +18,7 @@ import OrderSummary from '@/components/checkout/OrderSummary'
 import CheckoutBottomBar from '@/components/checkout/CheckoutBottomBar'
 import ShippingOptions from '@/components/checkout/ShippingOptions'
 import PaymentModal from '@/components/checkout/PaymentModal'
+import PhoneConfirmModal from '@/components/checkout/PhoneConfirmModal'
 import { validateAddress } from '@/lib/checkout-validation'
 import { type ShippingCourier } from '@/lib/mengantar'
 import { dummyProducts } from '@/lib/data/dummy-products'
@@ -42,6 +43,7 @@ export default function CheckoutPage() {
 
   // === State tampilan modal ===
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false)
+  const [isPhoneConfirmOpen, setIsPhoneConfirmOpen] = useState(false) // popup konfirmasi no. telepon
   const [isPaying, setIsPaying] = useState(false) // mencegah double submit saat memproses bayar
 
   // === Alamat pengiriman: diangkat dari AddressForm agar nama/telepon/email/alamat & destination_id dipakai saat order ===
@@ -181,6 +183,15 @@ export default function CheckoutPage() {
       return
     }
 
+    // Validasi lolos → JANGAN langsung bayar. Tampilkan popup konfirmasi nomor telepon dulu.
+    // Proses bayar sebenarnya dijalankan proceedPayment() saat user tekan "Lanjutkan Checkout".
+    setIsPhoneConfirmOpen(true)
+  }
+
+  // Proses bayar sebenarnya — dipanggil dari popup konfirmasi ("Lanjutkan Checkout").
+  async function proceedPayment() {
+    if (isPaying || !selectedCourier) return
+    setIsPhoneConfirmOpen(false)
     setIsPaying(true)
 
     try {
@@ -290,6 +301,18 @@ export default function CheckoutPage() {
         methods={PAYMENT_METHODS}
         selectedId={selectedPaymentId}
         onSelect={setSelectedPaymentId}
+      />
+
+      {/* === Popup konfirmasi nomor telepon (setelah validasi lolos, sebelum bayar) === */}
+      {/* "Kembali" / klik luar / X → tutup + kembalikan fokus ke field telepon untuk dikoreksi */}
+      <PhoneConfirmModal
+        open={isPhoneConfirmOpen}
+        phone={address.phone}
+        onBack={() => {
+          setIsPhoneConfirmOpen(false)
+          addressFormRef.current?.focusPhone()
+        }}
+        onConfirm={proceedPayment}
       />
     </div>
   )
