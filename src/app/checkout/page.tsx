@@ -27,6 +27,7 @@ import {
   getServerCheckoutSnapshot,
   clearCart,
 } from '@/lib/cart-client'
+import { setGuestPhone } from '@/lib/guest-phone'
 import {
   DUMMY_ORDER_ITEMS,
   PAYMENT_METHODS,
@@ -222,7 +223,9 @@ export default function CheckoutPage() {
         return
       }
 
-      // Order berhasil → kosongkan keranjang lalu ke halaman sukses
+      // Order berhasil → simpan no_telepon ke cookie (auto-recognize di /track-order & /cancel-order),
+      // kosongkan keranjang, lalu ke halaman sukses.
+      setGuestPhone(address.phone)
       clearCart()
       router.push(`/checkout/success?invoice=${encodeURIComponent(data.invoice)}`)
     } catch {

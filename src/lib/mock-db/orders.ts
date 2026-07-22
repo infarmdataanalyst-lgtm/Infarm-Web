@@ -325,6 +325,41 @@ export async function getOrderByOrderId(orderId: string): Promise<Order | null> 
   return rowToOrder(row, itemRows.map((ir) => itemRowToItem(ir, info)))
 }
 
+// Membaca SEMUA pesanan milik satu nomor telepon (untuk lacak/batalkan by no_telepon).
+// phone di-cocokkan APA ADANYA (pemanggil wajib menormalkan dulu via normalizePhone).
+// Terbaru dulu. Array kosong bila tak ada / error. Server-only.
+export async function getOrdersByPhone(phone: string): Promise<Order[]> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('orders')
+    .select('*')
+    .eq('no_telepon', phone)
+    .order('created_at', { ascending: false })
+
+  if (error) {
+    console.error('Gagal membaca pesanan (by phone) dari Supabase:', error.message)
+    return []
+  }
+  const rows = (data as OrderRow[]) ?? []
+  if (rows.length === 0) return []
+
+  // Ambil item semua order tsekaligus lalu kelompokkan (sama pola readOrders)
+  const { data: itemData } = await supabase
+    .from('order_items')
+    .select('order_id, product_id, quantity, price_at_purchase')
+    .in('order_id', rows.map((r) => r.id))
+  const itemRows = (itemData as OrderItemRow[]) ?? []
+  const info = await resolveProductInfo(supabase, itemRows.map((r) => r.product_id))
+  const itemsByOrder = new Map<string, OrderItem[]>()
+  for (const ir of itemRows) {
+    const list = itemsByOrder.get(ir.order_id) ?? []
+    list.push(itemRowToItem(ir, info))
+    itemsByOrder.set(ir.order_id, list)
+  }
+
+  return rows.map((r) => rowToOrder(r, itemsByOrder.get(r.id) ?? []))
+}
+
 // === Tulis ===
 
 // Menyimpan pesanan baru + item + kurangi stok, ATOMIK lewat Postgres RPC

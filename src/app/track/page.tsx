@@ -147,7 +147,7 @@ function TrackResult({ order }: { order: Order }) {
       </section>
 
       <div className="pt-1 text-center">
-        <Link href="/track" className="text-sm font-medium text-brand-primary transition hover:brightness-90">
+        <Link href="/track-order" className="text-sm font-medium text-brand-primary transition hover:brightness-90">
           ← Lacak pesanan lain
         </Link>
       </div>

@@ -162,7 +162,7 @@ export default async function CheckoutSuccessPage({
           {/* Tombol aksi */}
           <div className="mt-5 space-y-3">
             <Link
-              href="/track"
+              href="/track-order"
               className="flex items-center justify-center gap-2 rounded-xl border border-white/40 bg-white/5 py-3 text-sm font-semibold text-white transition hover:bg-white/15"
             >
               <MapPin className="h-4 w-4" />

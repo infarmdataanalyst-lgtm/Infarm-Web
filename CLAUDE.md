@@ -59,6 +59,14 @@ Tandai jelas mana yang sudah ada vs masih rencana saat menulis kode.
 - **Rencana:** helper baca keranjang dari Server Component (`cookies()` dari `next/headers`)
   akan ditaruh di `src/lib/cart.ts` — belum dibuat.
 
+**Cookie tambahan `infarm_phone` (auto-recognize lacak/batalkan pesanan):**
+- Ditulis setelah checkout sukses (`setGuestPhone` di `src/lib/guest-phone.ts`) — HANYA no_telepon
+  (`08xxx`), 30 hari, plain cookie (bukan base64). Bukan data sensitif kritis (no. HP milik user
+  sendiri di device-nya); TIDAK menyimpan status/alamat/isi pesanan.
+- Dibaca di `/track-order` (& nanti `/cancel-order`) untuk **auto-fill + auto-cari** (Opsi A):
+  cookie ada & valid → langsung tampil pesanan tanpa ketik; kedaluwarsa/tak ada → input manual.
+- **Cookie = sumber IDENTITAS saja; status pesanan SELALU di-fetch fresh dari server.**
+
 **Catatan sinkronisasi "Beli Langsung" vs "Checkout":**
 - Halaman `/checkout` membaca cookie **`infarm_checkout`** (bukan `infarm_cart`).
 - Setiap aksi yang menuju checkout (tombol Checkout di keranjang **maupun** "Beli Langsung"
@@ -80,8 +88,11 @@ Tandai jelas mana yang sudah ada vs masih rencana saat menulis kode.
 ### Integrasi yang sudah terpasang (sebagian)
 - **Logistik / Pengiriman**: Mengantar — **search alamat + cek ongkir di checkout sudah jalan**
   (client-side via `src/lib/mengantar.ts`). Tracking/booking kurir masih roadmap.
-- **Analytics**: Google Analytics 4 via `@next/third-parties` — `<GoogleAnalytics>` di
-  `src/app/layout.tsx` (render kondisional bila `NEXT_PUBLIC_GA_ID` terisi).
+- **Analytics**: Google Analytics 4 via `@next/third-parties` — dipasang lewat
+  `<GoogleAnalyticsGate>` (`src/components/analytics/`) di `src/app/layout.tsx`: render kondisional
+  bila `NEXT_PUBLIC_GA_ID` terisi, dan di-gate agar TIDAK aktif di area `/oms` (tak melacak admin).
+  Event GA4 (`view_item`, `add_to_cart`) via `src/lib/analytics.ts`. Strategi load = `afterInteractive`
+  (default @next/third-parties) — disengaja demi akurasi analytics (tak di-defer ke `lazyOnload`).
 
 ### Roadmap integrasi (belum terpasang)
 - **Auth admin real**: Supabase Auth (client sudah ada, login OMS belum terhubung)
@@ -95,7 +106,12 @@ Tandai jelas mana yang sudah ada vs masih rencana saat menulis kode.
   sebelum menyentuh routing, caching, atau network boundary
 - **Middleware dihapus** — gunakan `proxy.ts`, bukan `middleware.ts`. **Sudah ada** di
   `src/proxy.ts` (sejajar `app/`): guard area `/oms/dashboard/*` (lihat "Auth Guard OMS")
-- **Cache Components** — gunakan `use cache` dan PPR, bukan `revalidate` lama
+- **Cache Components (`use cache`/PPR) BELUM diaktifkan** di `next.config.ts` (config masih kosong).
+  Jadi **caching yang dipakai sekarang = klasik**: `export const revalidate` (ISR) + `unstable_cache`
+  + `revalidateTag`/`revalidatePath`. Lihat bagian "Caching & Revalidasi (storefront)". Bila nanti
+  Cache Components diaktifkan, wrapper `unstable_cache` di `cached-reads.ts` perlu dimigrasi ke `use cache`.
+- **`revalidateTag` di Next 16.2.7 WAJIB 2 argumen**: `revalidateTag(tag, 'max')` (`'max'` =
+  stale-while-revalidate, rekomendasi resmi). Memanggil dengan 1 argumen = error TypeScript.
 - **Turbopack aktif by default** — tidak perlu flag `--turbo`
 
 **Jangan tambahkan library berikut tanpa diminta:**
@@ -136,18 +152,19 @@ src/
 │   ├── checkout/
 │   │   ├── page.tsx              # Guest checkout
 │   │   └── success/page.tsx      # Order Confirmed (+ tombol batalkan pesanan)
-│   ├── order-cancellation/page.tsx  # Pembatalan pesanan Guest (token-protected)
+│   ├── order-cancellation/page.tsx  # Pembatalan pesanan Guest (token-protected, dari link email/sukses)
 │   ├── review/                   # Form review produk (+ /submitted)
-│   ├── track/page.tsx            # Lacak pesanan
+│   ├── track/page.tsx            # Lacak pesanan by NOMOR INVOICE (dipakai untuk detail timeline ?order=)
+│   ├── track-order/page.tsx      # Lacak pesanan by NO. TELEPON (entry utama; honeypot + auto-recognize cookie)
 │   ├── dev/email-preview/        # Preview template email (route handler, isi placeholder data contoh)
 │   ├── oms/                      # OMS / back office
 │   │   ├── login/page.tsx
 │   │   └── dashboard/            # dashboard, products (+upload), orders, reviews,
 │   │       │                     #   paket-combo (+baru, [id]/edit), promosi (+baru, [id]/edit)
 │   ├── api/                      # Route Handlers (runtime nodejs)
-│   │   ├── products/             # create | update | delete | list | check-sku |
-│   │   │                         #   best-selling | sales-count | best-selling-catalog
-│   │   ├── orders/               # create | list | get | cancel (GET+PATCH)
+│   │   ├── products/             # create | update | delete | list | check-sku | best-selling |
+│   │   │                         #   sales-count | best-selling-catalog | search (autocomplete) | by-ids (resolve keranjang)
+│   │   ├── orders/               # create | list (filter+sort+CSV OMS) | get | cancel (GET+PATCH) | track-by-phone
 │   │   ├── reviews/              # create | list | reply | visibility
 │   │   ├── combos/              # create | update | delete | toggle | list | active (storefront)
 │   │   ├── promotions/          # create | update | delete | toggle | list | active (storefront)
@@ -168,7 +185,8 @@ src/
 │   ├── oms/                      # Sidebar, header, chart, ComboForm, PromotionForm
 │   └── ui/                       # Komponen UI generik (AppBar, dll)
 ├── lib/
-│   ├── cart-client.ts            # Helper keranjang sisi-klien (cookie base64) + addComboToCart + snapshot promo + clearCart
+│   ├── cart-client.ts            # Helper keranjang sisi-klien (cookie base64) + addComboToCart + removeComboFromCart + snapshot promo + clearCart
+│   ├── guest-phone.ts            # Cookie client no_telepon (infarm_phone) untuk auto-recognize lacak/batalkan
 │   ├── recently-viewed.ts        # Riwayat "pernah dilihat" (guest, localStorage, maks 10)
 │   ├── promo-cart.ts             # Helper murni: progres/hadiah promo + relevansi & alokasi harga combo (keranjang)
 │   ├── product-validation.ts     # Validasi form produk (SKU, nama, kategori, harga jual/asli, stok, deskripsi, foto)
@@ -182,6 +200,7 @@ src/
 │   ├── order-token.ts            # Token HMAC tautan pembatalan (server-only)
 │   ├── supabase/                 # Client Supabase: server.ts (admin/SSR) + browser.ts
 │   ├── mock-db/                  # Akses data Supabase: products, orders, reviews, combos, promotions (server only)
+│   │                             #   + cached-reads.ts (wrapper unstable_cache storefront: revalidate 30s + tags)
 │   └── data/                     # Dummy data tampilan pelengkap (dummy-*.ts)
 ├── emails/                       # Template HTML email (order-confirmation.html) — placeholder {{...}}
 ├── hooks/                        # use-debounce.ts, dll
@@ -275,6 +294,36 @@ Tulis komentar untuk memudahkan maintenance. Ikuti aturan berikut:
 
 ---
 
+## Caching & Revalidasi (storefront) — sudah terpasang
+
+Cache Components (`use cache`/PPR) **belum aktif** → pakai caching klasik Next 16 (`revalidate` + `unstable_cache` + `revalidateTag`). Tujuan: halaman publik cepat (edge cache) tanpa mengorbankan kesegaran data OMS/admin.
+
+- **ISR halaman**: `export const revalidate` di `(store)/page.tsx` (beranda), `(store)/products/page.tsx`
+  (katalog), `(store)/produk/[id]/page.tsx` (detail, 30s + `generateStaticParams` return `[]` +
+  `dynamicParams` agar route dinamis tetap bisa ISR). Beranda: halaman pertama "Katalog Terlaris"
+  di-**render server** (bukan client-fetch) → kembali ke beranda tak flash/refetch.
+- **`unstable_cache` (server-only)** di `src/lib/mock-db/cached-reads.ts` — membungkus baca Supabase
+  KHUSUS storefront (revalidate 30s + tags `products`/`reviews`/`combos`/`sales`). Tanpa ini, query
+  supabase-js = `fetch` no-store → memaksa halaman jadi dynamic (revalidate diabaikan).
+  Fungsi: `getCachedProducts`, `getCachedProductById`, `getCachedReviewsByProduct`,
+  `getCachedRatingSummary`, `getCachedCombos`, `getCachedSalesCountByProduct`, `getBestSellingCatalogPage`.
+- **PENTING — jangan blanket-cache fungsi dasar `mock-db/*`**: API OMS & `orders/create` WAJIB baca
+  data FRESH (validasi stok/harga otoritatif). Storefront pakai wrapper cached; OMS/order pakai fungsi dasar.
+- **Invalidasi saat mutasi**: tiap API tulis memanggil `revalidateTag(tag, 'max')` + `revalidatePath`:
+  produk create/update/delete → `products`; order create/cancel → `products`+`sales` (stok/terjual);
+  review create/reply/visibility → `reviews`; combo create/update/delete/toggle → `combos`.
+  **Kalau nambah titik mutasi baru, WAJIB tambah `revalidateTag` yang sesuai** (kalau bolong → data basi).
+- **Resolusi produk hemat**: keranjang pakai `GET /api/products/by-ids?ids=` (cached), autocomplete
+  hero pakai `GET /api/products/search?q=` (cached, maks 8) — BUKAN lagi tarik seluruh katalog via
+  `/api/products/list`. `/api/products/list` (full, tanpa cache) tetap dipakai OMS & sebagian storefront
+  lama (checkout/ProductCatalog/ReviewForm) — kandidat migrasi ke by-ids/paginasi saat katalog membesar.
+- **Storage**: upload gambar baru pakai `cacheControl: '3600'` (`mock-db/products.ts`); efek hanya untuk upload baru.
+- **Catatan**: `revalidate`/`revalidateTag`/`x-vercel-cache` hanya efektif di **production Vercel**
+  (bukan `next dev`). API route handler selalu `x-vercel-cache: MISS` (tak di-CDN-cache) walau data
+  internalnya cached — itu normal. Baseline & hasil uji: `docs/cache-test-*.md`.
+
+---
+
 ## Supabase (sudah terpasang)
 
 - **Client**: server `src/lib/supabase/server.ts` (`createClient` anon/SSR + `createAdminClient`
@@ -323,6 +372,23 @@ sesi disimpan sebagai **cookie httpOnly bertanda tangan HMAC** (bukan lagi penan
     lalu `restoreStock` (lepas stok kembali). Status yang boleh dibatalkan: `Menunggu Pembayaran`,
     `Diproses`. Status `Dikirim`/`Selesai` ditolak (terkunci)
 - Halaman `src/app/order-cancellation/page.tsx` (server tipis) → `OrderCancellationView` (client)
+
+## Lacak Pesanan by No. Telepon (guest) — sudah terpasang (rate-limit menyusul)
+
+Mekanisme lacak **kedua** (berdampingan dengan `/track` by nomor invoice). Entry utama "Lacak Pesanan"
+(AppBar, halaman sukses, CTA cancellation) mengarah ke `/track-order`.
+
+- **Halaman `/track-order`** (client): input **no_telepon** → tampil daftar pesanan (bisa >1).
+  Auto-recognize cookie `infarm_phone` (Opsi A): ada & valid → **auto-cari** tanpa ketik; tidak ada → manual.
+- **API `POST /api/orders/track-by-phone`**: honeypot field `website` (bot → balas kosong senyap),
+  validasi format phone, panggil `getOrdersByPhone` (`mock-db/orders.ts`, `.eq('no_telepon')`).
+  Kembalikan **HANYA info non-sensitif**: nomor invoice, status, resi, kurir, tanggal, ringkasan item
+  (nama+qty), nama **di-mask** (`lib/mask.ts`). TIDAK ada alamat/email/nama penuh.
+- **Keamanan (kompensasi karena hanya no_telepon, lebih lemah dari token HMAC)**: honeypot + masking +
+  query ulang DB. **Rate-limit (maks 5/IP/jam) DITUNDA** — ada `TODO(rate-limit)` di route handler;
+  saat ditambah bisa in-memory Map (seperti `/api/oms/login`, per-instance/bocor di Vercel) atau tabel Supabase.
+- `/cancel-order` (batalkan by no_telepon, 2 langkah) — **belum dibuat** (roadmap tahap berikutnya).
+- Detail timeline lengkap tetap via `/track?order=INV-…` (by invoice) — kartu hasil `/track-order` menautkannya.
 
 ## Mengantar (Logistik) — sudah terpasang sebagian
 
@@ -408,6 +474,12 @@ validasi server di `src/lib/*-validation.ts`, UI lewat API Routes (BUKAN server 
 - UI: `CartPromoList`, `CartComboList`, `CartPaymentSummary`. Tombol "Tambah Paket ke Keranjang"
   memakai `addComboToCart` (`cart-client.ts`) — produk yang sudah ada quantity-nya DISESUAIKAN,
   harga = harga combo, item ditandai `comboId`.
+- **Section "Beli Kombo Lebih Hemat" di DETAIL produk** (`BundleOffer`, `components/product/`):
+  tiap kartu combo punya **checkbox pojok kiri atas** — centang = seluruh produk combo masuk keranjang
+  (`addComboToCart`, harga combo); uncheck = `removeComboFromCart(comboId)` (`cart-client.ts`).
+  Status checked **disinkron reaktif** dengan isi keranjang (`useSyncExternalStore`) → tetap sinkron
+  setelah reload. Rincian isi paket (nama ×qty) tampil di `<details>` collapsible (kartu tetap ringkas).
+  Checkmark kanan = indikator status (hijau bila sudah di keranjang).
 - Saat menuju checkout, snapshot promo/combo disimpan ke cookie `infarm_checkout_promo`
   (`setCheckoutPromo`, tipe `CheckoutPromoSnapshot`) untuk diteruskan ke order nanti *(wiring ke
   tabel orders masih roadmap)*.
@@ -470,8 +542,10 @@ tidak perlu berubah saat skema DB berganti.
   ketatkan ke `status_pembayaran = PAID` (order baru masih `PENDING` sampai pembayaran real).
 - Fungsi: `getBestSellingProducts({limit, from, to})` dan `getSalesCountByProduct({from, to})`.
 - **OMS** halaman produk: kolom "Terjual" + selektor rentang waktu.
-- **Storefront**: section "Produk Terlaris" homepage (`BestSellingProducts`, client, infinite scroll
-  via `IntersectionObserver` native, paginasi `/api/products/best-selling-catalog`); "N terjual"
+- **Storefront**: section "Produk Terlaris" homepage (`BestSellingProducts`). **Halaman pertama
+  di-render SERVER** (props `initialProducts` dari `getBestSellingCatalogPage`, cached) → jadi bagian
+  HTML ISR, tak flash saat kembali ke beranda. Halaman berikutnya = infinite scroll client via
+  `IntersectionObserver` native + `/api/products/best-selling-catalog` (cached). "N terjual"
   di detail produk (di samping rating).
 
 ## Validasi Form Produk (OMS)
@@ -517,8 +591,9 @@ deskripsi 20–2000, harga 100–99.999.999, stok 0–999.999, `MAX_PRODUCT_IMAG
 - [x] Promo & paket combo REAL di keranjang (dari Supabase via `/api/{promotions,combos}/active`)
 - [x] Halaman guest checkout (`/checkout` + `/checkout/success`)
 - [x] Halaman review produk (`/review`)
-- [x] Halaman lacak pesanan (`/track`)
+- [x] Halaman lacak pesanan by nomor invoice (`/track`) + by no_telepon (`/track-order`, honeypot + auto-recognize cookie)
 - [x] Halaman pembatalan pesanan Guest (`/order-cancellation`) — token-protected
+- [ ] Halaman batalkan by no_telepon 2 langkah (`/cancel-order`) — roadmap; rate-limit lacak/batalkan menyusul
 - [x] Search alamat + **cek ongkir** Mengantar di checkout (client; ongkir masuk ke total)
 - [x] Validasi form checkout (nama/telepon/email/alamat/kurir) + gating tombol "Bayar Sekarang"
 - [x] Template email konfirmasi pesanan (`src/emails/`, preview di `/dev/email-preview`)
@@ -531,7 +606,9 @@ deskripsi 20–2000, harga 100–99.999.999, stok 0–999.999, `MAX_PRODUCT_IMAG
 - [x] Dashboard OMS (`/oms/dashboard`)
 - [x] Manajemen produk (list, upload/create, update, delete) via API + Supabase — multi-foto (maks 9),
       harga jual/asli (coret), validasi form, kolom "Terjual" + rentang waktu
-- [x] Manajemen order (`/oms/dashboard/orders`)
+- [x] Manajemen order (`/oms/dashboard/orders`) — filter tanggal (range + shortcut)/kurir/status pembayaran,
+      sort Total & Tanggal, kombinasi filter tersimpan di URL query params, Reset Filter, ekspor CSV
+      (server-side via `readOrdersFiltered`/`getDistinctCouriers`, `OrderFilterOptions`)
 - [x] Manajemen review (`/oms/dashboard/reviews`) — create/list/reply/visibility
 - [x] Manajemen Paket & Combo (`/oms/dashboard/paket-combo`) — create/list/update/delete/toggle
 - [x] Manajemen Promosi (`/oms/dashboard/promosi`) — create/list/update/delete/toggle

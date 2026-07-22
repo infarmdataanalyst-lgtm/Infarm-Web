@@ -235,7 +235,7 @@ export default function OrderCancellationView({
                     )}
                   </button>
                   <Link
-                    href="/track"
+                    href="/track-order"
                     className="flex w-full items-center justify-center rounded-xl bg-slate-100 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-200"
                   >
                     Kembali ke Pelacakan
@@ -253,7 +253,7 @@ export default function OrderCancellationView({
                   </p>
                 </div>
                 <Link
-                  href="/track"
+                  href="/track-order"
                   className="mt-5 flex w-full items-center justify-center rounded-xl bg-slate-100 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-200"
                 >
                   Kembali ke Pelacakan
@@ -299,7 +299,7 @@ function ErrorState({ message }: { message: string }) {
       <h2 className="mt-5 text-lg font-bold">Pesanan tidak dapat dibuka</h2>
       <p className="mt-2 max-w-xs text-sm text-zinc-500">{message}</p>
       <Link
-        href="/track"
+        href="/track-order"
         className="mt-6 flex w-full max-w-xs items-center justify-center rounded-xl bg-slate-100 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-200"
       >
         Kembali ke Pelacakan
@@ -329,7 +329,7 @@ function SuccessState({ order }: { order: CancellationOrder | null }) {
 
       <div className="mt-6 w-full max-w-xs space-y-3">
         <Link
-          href="/track"
+          href="/track-order"
           className="flex w-full items-center justify-center rounded-xl bg-slate-100 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-200"
         >
           Lacak Pesanan
