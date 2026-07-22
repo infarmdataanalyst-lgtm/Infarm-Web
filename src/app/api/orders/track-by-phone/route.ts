@@ -27,7 +27,7 @@ type PublicTrackOrder = {
   courier: string | null
   date: string
   customerNameMasked: string
-  items: { name: string; quantity: number }[]
+  items: { name: string; quantity: number; imageUrl: string | null }[]
 }
 
 export async function POST(request: Request) {
@@ -64,7 +64,11 @@ export async function POST(request: Request) {
     courier: o.logistics?.courier || null,
     date: o.date,
     customerNameMasked: maskName(o.customerName),
-    items: o.items.map((it) => ({ name: it.name, quantity: it.quantity })),
+    items: o.items.map((it) => ({
+      name: it.name,
+      quantity: it.quantity,
+      imageUrl: it.imageUrl ?? null, // foto produk (dari products.image_url) — non-sensitif
+    })),
   }))
 
   return NextResponse.json({ orders: publicOrders })

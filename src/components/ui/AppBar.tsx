@@ -6,6 +6,7 @@
 import Link from 'next/link'
 import Image from 'next/image'
 import CartIconLink from '@/components/ui/CartIconLink'
+import ProfileIconLink from '@/components/ui/ProfileIconLink'
 
 // Menampilkan app bar global: grup kiri (menu + logo + nama brand) dan aksi search/cart/profile (kanan)
 export default function AppBar() {
@@ -44,9 +45,8 @@ export default function AppBar() {
           </button>
           {/* Ikon keranjang + badge jumlah reaktif (client component) */}
           <CartIconLink />
-          <Link href="/track-order" aria-label="Lacak Pesanan" className="p-1">
-            <ProfileIcon />
-          </Link>
+          {/* Ikon profil → hub "Pesanan Saya" + badge bila ada jejak checkout (client component) */}
+          <ProfileIconLink />
         </nav>
       </div>
     </header>
@@ -71,15 +71,6 @@ function SearchIcon() {
     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <circle cx="11" cy="11" r="7" />
       <line x1="21" y1="21" x2="16.65" y2="16.65" />
-    </svg>
-  )
-}
-
-function ProfileIcon() {
-  return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <circle cx="12" cy="8" r="4" />
-      <path d="M4 21c0-4 3.6-7 8-7s8 3 8 7" />
     </svg>
   )
 }
