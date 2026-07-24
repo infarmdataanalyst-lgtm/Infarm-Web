@@ -36,6 +36,8 @@ export default function CancelOrderPage() {
   const [orders, setOrders] = useState<PublicTrackOrder[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  // true = nomor dikenali dari cookie → sembunyikan form & nomor di langkah 1, langsung tampilkan hasil.
+  const [recognized, setRecognized] = useState(false)
 
   // Langkah 2
   const [selected, setSelected] = useState<PublicTrackOrder | null>(null)
@@ -76,9 +78,18 @@ export default function CancelOrderPage() {
     const saved = getGuestPhone()
     if (saved && isValidPhone(saved)) {
       setPhone(saved)
+      setRecognized(true) // sembunyikan nomor & form langkah 1 — langsung tampilkan hasil
       runSearch(saved, '')
     }
   }, [runSearch])
+
+  // Klik "Cari nomor lain": tampilkan kembali form kosong (nomor cookie TIDAK ditampilkan/di-prefill)
+  function handleUseOtherNumber() {
+    setRecognized(false)
+    setPhone('')
+    setOrders(null)
+    setError('')
+  }
 
   function handlePhoneChange(e: React.ChangeEvent<HTMLInputElement>) {
     setPhone(e.target.value.replace(/\D/g, '').slice(0, 12))
@@ -182,36 +193,52 @@ export default function CancelOrderPage() {
         {/* === LANGKAH 1: cari === */}
         {step === 'search' && (
           <>
-            <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
-              <h1 className="text-xl font-bold text-gray-900">Cari Pesanan</h1>
-              <p className="mt-2 text-sm text-gray-500">
-                Masukkan nomor telepon yang Anda gunakan saat checkout untuk menemukan pesanan yang ingin dibatalkan.
-              </p>
-              <form onSubmit={handleSearch} className="mt-5 space-y-3">
-                <Honeypot value={honeypot} onChange={setHoneypot} />
-                <div>
-                  <label htmlFor="phone" className="mb-1 block text-sm font-medium text-gray-700">Nomor Telepon</label>
-                  <input
-                    id="phone"
-                    type="tel"
-                    inputMode="numeric"
-                    placeholder="08xxxxxxxxxx"
-                    value={phone}
-                    onChange={handlePhoneChange}
-                    className="w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm text-gray-900 focus:border-brand-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
-                  />
-                  {error && <p className="mt-1.5 text-sm text-rose-600">{error}</p>}
-                </div>
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-primary py-3 text-sm font-bold text-white transition hover:brightness-90 active:scale-[0.99] disabled:opacity-50"
-                >
-                  <Search className="h-4 w-4" />
-                  {loading ? 'Mencari…' : 'Cari Pesanan'}
-                </button>
-              </form>
-            </div>
+            {/* === Nomor dikenali dari cookie: sembunyikan form & nomor, langsung tampilkan hasil === */}
+            {recognized ? (
+              <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
+                <p className="text-sm text-gray-600">
+                  Menampilkan pesanan untuk nomor Anda ·{' '}
+                  <button
+                    type="button"
+                    onClick={handleUseOtherNumber}
+                    className="font-semibold text-brand-primary underline transition hover:no-underline"
+                  >
+                    Cari nomor lain
+                  </button>
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
+                <h1 className="text-xl font-bold text-gray-900">Cari Pesanan</h1>
+                <p className="mt-2 text-sm text-gray-500">
+                  Masukkan nomor telepon yang Anda gunakan saat checkout untuk menemukan pesanan yang ingin dibatalkan.
+                </p>
+                <form onSubmit={handleSearch} className="mt-5 space-y-3">
+                  <Honeypot value={honeypot} onChange={setHoneypot} />
+                  <div>
+                    <label htmlFor="phone" className="mb-1 block text-sm font-medium text-gray-700">Nomor Telepon</label>
+                    <input
+                      id="phone"
+                      type="tel"
+                      inputMode="numeric"
+                      placeholder="08xxxxxxxxxx"
+                      value={phone}
+                      onChange={handlePhoneChange}
+                      className="w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm text-gray-900 focus:border-brand-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
+                    />
+                    {error && <p className="mt-1.5 text-sm text-rose-600">{error}</p>}
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-primary py-3 text-sm font-bold text-white transition hover:brightness-90 active:scale-[0.99] disabled:opacity-50"
+                  >
+                    <Search className="h-4 w-4" />
+                    {loading ? 'Mencari…' : 'Cari Pesanan'}
+                  </button>
+                </form>
+              </div>
+            )}
 
             {orders !== null && (
               <div className="mt-5 space-y-3">

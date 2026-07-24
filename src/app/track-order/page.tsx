@@ -31,6 +31,9 @@ export default function TrackOrderPage() {
   const [orders, setOrders] = useState<PublicTrackOrder[] | null>(null) // null = belum cari
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  // true = nomor dikenali dari cookie → sembunyikan form & nomor, langsung tampilkan hasil.
+  // User tetap bisa membuka form manual lewat link "Cari nomor lain" (lihat handleUseOtherNumber).
+  const [recognized, setRecognized] = useState(false)
 
   // Jalankan pencarian ke server untuk sebuah no_telepon. `hp` = nilai honeypot (kosong saat auto).
   const runSearch = useCallback(async (searchPhone: string, hp: string) => {
@@ -63,9 +66,18 @@ export default function TrackOrderPage() {
     const saved = getGuestPhone()
     if (saved && isValidPhone(saved)) {
       setPhone(saved)
+      setRecognized(true) // sembunyikan nomor & form — langsung tampilkan hasil
       runSearch(saved, '') // honeypot kosong pada pencarian otomatis
     }
   }, [runSearch])
+
+  // Klik "Cari nomor lain": tampilkan kembali form kosong (nomor cookie TIDAK ditampilkan/di-prefill)
+  function handleUseOtherNumber() {
+    setRecognized(false)
+    setPhone('')
+    setOrders(null)
+    setError('')
+  }
 
   // Hanya izinkan angka saat mengetik (konsisten dengan validasi checkout)
   function handlePhoneChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -98,54 +110,70 @@ export default function TrackOrderPage() {
       </header>
 
       <main className="mx-auto w-full max-w-md flex-1 px-4 py-5">
-        {/* === Form pencarian === */}
-        <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
-          <h1 className="text-xl font-bold text-gray-900">Lacak dengan Nomor Telepon</h1>
-          <p className="mt-2 text-sm text-gray-500">
-            Masukkan nomor telepon yang Anda gunakan saat checkout untuk melihat status pesanan.
-          </p>
+        {/* === Nomor dikenali dari cookie: sembunyikan form & nomor, langsung tampilkan hasil === */}
+        {recognized ? (
+          <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
+            <p className="text-sm text-gray-600">
+              Menampilkan pesanan untuk nomor Anda ·{' '}
+              <button
+                type="button"
+                onClick={handleUseOtherNumber}
+                className="font-semibold text-brand-primary underline transition hover:no-underline"
+              >
+                Cari nomor lain
+              </button>
+            </p>
+          </div>
+        ) : (
+          /* === Form pencarian manual === */
+          <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
+            <h1 className="text-xl font-bold text-gray-900">Lacak dengan Nomor Telepon</h1>
+            <p className="mt-2 text-sm text-gray-500">
+              Masukkan nomor telepon yang Anda gunakan saat checkout untuk melihat status pesanan.
+            </p>
 
-          <form onSubmit={handleSubmit} className="mt-5 space-y-3">
-            {/* Honeypot: tersembunyi dari user, hanya bot yang mengisi. aria-hidden + tabIndex -1. */}
-            <div aria-hidden className="absolute left-[-9999px] h-0 w-0 overflow-hidden" >
-              <label htmlFor="website">Website (jangan diisi)</label>
-              <input
-                id="website"
-                name="website"
-                type="text"
-                tabIndex={-1}
-                autoComplete="off"
-                value={honeypot}
-                onChange={(e) => setHoneypot(e.target.value)}
-              />
-            </div>
+            <form onSubmit={handleSubmit} className="mt-5 space-y-3">
+              {/* Honeypot: tersembunyi dari user, hanya bot yang mengisi. aria-hidden + tabIndex -1. */}
+              <div aria-hidden className="absolute left-[-9999px] h-0 w-0 overflow-hidden" >
+                <label htmlFor="website">Website (jangan diisi)</label>
+                <input
+                  id="website"
+                  name="website"
+                  type="text"
+                  tabIndex={-1}
+                  autoComplete="off"
+                  value={honeypot}
+                  onChange={(e) => setHoneypot(e.target.value)}
+                />
+              </div>
 
-            <div>
-              <label htmlFor="phone" className="mb-1 block text-sm font-medium text-gray-700">
-                Nomor Telepon
-              </label>
-              <input
-                id="phone"
-                type="tel"
-                inputMode="numeric"
-                placeholder="08xxxxxxxxxx"
-                value={phone}
-                onChange={handlePhoneChange}
-                className="w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm text-gray-900 focus:border-brand-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
-              />
-              {error && <p className="mt-1.5 text-sm text-rose-600">{error}</p>}
-            </div>
+              <div>
+                <label htmlFor="phone" className="mb-1 block text-sm font-medium text-gray-700">
+                  Nomor Telepon
+                </label>
+                <input
+                  id="phone"
+                  type="tel"
+                  inputMode="numeric"
+                  placeholder="08xxxxxxxxxx"
+                  value={phone}
+                  onChange={handlePhoneChange}
+                  className="w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm text-gray-900 focus:border-brand-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
+                />
+                {error && <p className="mt-1.5 text-sm text-rose-600">{error}</p>}
+              </div>
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-primary py-3 text-sm font-bold text-white transition hover:brightness-90 active:scale-[0.99] disabled:opacity-50"
-            >
-              <Search className="h-4 w-4" />
-              {loading ? 'Mencari…' : 'Cari Pesanan'}
-            </button>
-          </form>
-        </div>
+              <button
+                type="submit"
+                disabled={loading}
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-primary py-3 text-sm font-bold text-white transition hover:brightness-90 active:scale-[0.99] disabled:opacity-50"
+              >
+                <Search className="h-4 w-4" />
+                {loading ? 'Mencari…' : 'Cari Pesanan'}
+              </button>
+            </form>
+          </div>
+        )}
 
         {/* === Hasil === */}
         {orders !== null && (
