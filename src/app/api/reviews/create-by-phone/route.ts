@@ -3,13 +3,16 @@
 //  - no_telepon input WAJIB cocok dengan no_telepon pesanan (jangan percaya client),
 //  - pesanan tidak dibatalkan,
 //  - produk benar bagian dari pesanan.
-// Lalu simpan (dedup via order_invoice). Honeypot mencegah bot.
+// Lalu simpan (dedup via order_invoice). Honeypot mencegah bot + rate limit per-IP & per-nomor
+// (threshold ketat karena ini aksi tulis — lihat @/lib/rate-limit). Menutup temuan K-1 audit
+// keamanan 2026-07-24 (docs/security/audit-2026-07-24.md).
 
 import { NextResponse } from 'next/server'
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { createReview, DuplicateReviewError } from '@/lib/mock-db/reviews'
 import { getOrderByOrderId } from '@/lib/mock-db/orders'
 import { normalizePhone, isValidPhone } from '@/lib/phone'
+import { isRateLimited, getClientIp } from '@/lib/rate-limit'
 
 export const runtime = 'nodejs'
 
@@ -24,6 +27,15 @@ export async function POST(request: Request) {
   // Honeypot → tolak senyap
   if (typeof body.website === 'string' && body.website.trim().length > 0) {
     return NextResponse.json({ error: 'Permintaan tidak valid.' }, { status: 400 })
+  }
+
+  // Rate limit per-IP: aksi tulis → threshold lebih ketat dari endpoint baca
+  const ip = getClientIp(request)
+  if (isRateLimited(`create-by-phone:ip:${ip}`, 8, 15 * 60_000)) {
+    return NextResponse.json(
+      { error: 'Terlalu banyak percobaan. Coba lagi dalam beberapa menit.' },
+      { status: 429 },
+    )
   }
 
   const rawPhone = typeof body.phone === 'string' ? body.phone : ''
@@ -43,13 +55,22 @@ export async function POST(request: Request) {
     )
   }
 
+  // Rate limit per-nomor: cegah brute-force tertarget ke satu nomor dari banyak IP
+  const normalizedPhone = normalizePhone(rawPhone)
+  if (isRateLimited(`create-by-phone:phone:${normalizedPhone}`, 5, 60 * 60_000)) {
+    return NextResponse.json(
+      { error: 'Terlalu banyak percobaan untuk nomor ini. Coba lagi nanti.' },
+      { status: 429 },
+    )
+  }
+
   // === Verifikasi otoritatif ke DB ===
   const order = await getOrderByOrderId(orderInvoice)
   if (!order) {
     return NextResponse.json({ error: 'Pesanan tidak ditemukan.' }, { status: 404 })
   }
   // Kepemilikan: no_telepon input harus cocok dengan no_telepon pesanan
-  if (normalizePhone(rawPhone) !== normalizePhone(order.customerPhone ?? '')) {
+  if (normalizedPhone !== normalizePhone(order.customerPhone ?? '')) {
     return NextResponse.json(
       { error: 'Nomor telepon tidak cocok dengan pesanan ini.' },
       { status: 403 },

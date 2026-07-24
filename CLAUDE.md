@@ -386,8 +386,13 @@ Keluarga fitur guest yang mengidentifikasi pesanan lewat **no_telepon** (bukan l
 **hub `/pesanan-saya`** (ikon profil header → hub; badge dot merah bila cookie `infarm_phone` ada).
 Semua berbagi pola: input phone → `getOrdersByPhone` (`mock-db/orders.ts`, `.eq('no_telepon')`) →
 output NON-SENSITIF; **honeypot** field `website`; **auto-recognize** cookie `infarm_phone` (Opsi A:
-auto-cari tanpa ketik). **Rate-limit (5/IP/jam) DITUNDA** di semua endpoint ini (`TODO(rate-limit)`;
-saat ditambah: in-memory Map seperti `/api/oms/login` — per-instance/bocor di Vercel — atau tabel Supabase).
+auto-cari tanpa ketik). **Rate-limit sudah terpasang** di semua endpoint ini via `src/lib/rate-limit.ts`
+(in-memory Map per-instance, sama pola dengan `/api/oms/login` — belum terpusat lintas-instance Vercel,
+kandidat migrasi ke tabel Supabase/Redis nanti). Dua lapis: per-IP (throttle umum) + per-nomor-telepon
+dinormalisasi (cegah brute-force tertarget dari banyak IP ke satu nomor). Endpoint baca (`track-by-phone`,
+`verify-cancel`, `reviewable-by-phone`): 20/IP/15 menit + 15/nomor/jam. Endpoint tulis/destruktif
+(`cancel-by-phone`, `create-by-phone`): 8/IP/15 menit + 5/nomor/jam (lebih ketat). Balas `429` + pesan
+generik saat limit tercapai. Menutup temuan K-1 di `docs/security/audit-2026-07-24.md`.
 
 ### Lacak — `/track-order` (berdampingan dengan `/track` by invoice)
 - `POST /api/orders/track-by-phone`: kembalikan info non-sensitif (invoice, status, resi, kurir, tanggal,
@@ -625,7 +630,7 @@ deskripsi 20–2000, harga 100–99.999.999, stok 0–999.999, `MAX_PRODUCT_IMAG
 - [x] Beri Review Produk by no_telepon (`/review`) — pembeli terverifikasi (riwayat beli) + badge "Pembeli Terverifikasi"
 - [x] Halaman lacak pesanan by nomor invoice (`/track`) + by no_telepon (`/track-order`, honeypot + auto-recognize cookie)
 - [x] Halaman pembatalan pesanan Guest (`/order-cancellation` token) + by no_telepon 2 langkah (`/cancel-order`)
-- [~] Rate-limit (5/IP/jam) untuk lacak/batalkan/review by no_telepon — DITUNDA (honeypot aktif; `TODO(rate-limit)` di endpoint)
+- [x] Rate-limit untuk lacak/batalkan/review by no_telepon — in-memory per-IP + per-nomor (`src/lib/rate-limit.ts`); belum terpusat lintas-instance (kandidat migrasi Supabase/Redis)
 - [x] Search alamat + **cek ongkir** Mengantar di checkout (client; ongkir masuk ke total)
 - [x] Validasi form checkout (nama/telepon/email/alamat/kurir) + gating tombol "Bayar Sekarang"
 - [x] Template email konfirmasi pesanan (`src/emails/`, preview di `/dev/email-preview`)

@@ -6,13 +6,15 @@
 // Perlindungan (kompensasi karena identifikasi hanya via no_telepon):
 //  - Honeypot: field tersembunyi `website` — bila terisi → dianggap bot, balas kosong senyap.
 //  - Validasi format no_telepon di server.
-//  - TODO(rate-limit): batasi 5 percobaan / IP / jam (ditunda — akan ditambah kemudian,
-//    bisa in-memory Map seperti /api/oms/login atau tabel Supabase untuk konsistensi lintas instance).
+//  - Rate limit in-memory per-IP (anti brute-force umum) DAN per-nomor (anti brute-force
+//    tertarget dari banyak IP ke satu nomor) — lihat @/lib/rate-limit. Menutup temuan K-1
+//    audit keamanan 2026-07-24 (docs/security/audit-2026-07-24.md).
 
 import { NextResponse } from 'next/server'
 import { getOrdersByPhone } from '@/lib/mock-db/orders'
 import { normalizePhone, isValidPhone } from '@/lib/phone'
 import { maskName } from '@/lib/mask'
+import { isRateLimited, getClientIp } from '@/lib/rate-limit'
 
 // createAdminClient (Supabase) butuh runtime Node.js, bukan Edge
 export const runtime = 'nodejs'
@@ -44,6 +46,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ orders: [] })
   }
 
+  // Rate limit per-IP: batasi jumlah percobaan pencarian dari satu sumber (anti brute-force umum)
+  const ip = getClientIp(request)
+  if (isRateLimited(`track-by-phone:ip:${ip}`, 20, 15 * 60_000)) {
+    return NextResponse.json(
+      { error: 'Terlalu banyak percobaan. Coba lagi dalam beberapa menit.' },
+      { status: 429 },
+    )
+  }
+
   const rawPhone = typeof body.phone === 'string' ? body.phone : ''
   if (!isValidPhone(rawPhone)) {
     return NextResponse.json(
@@ -53,6 +64,15 @@ export async function POST(request: Request) {
   }
 
   const phone = normalizePhone(rawPhone)
+
+  // Rate limit per-nomor: cegah brute-force tertarget ke satu nomor dari banyak IP sekaligus
+  if (isRateLimited(`track-by-phone:phone:${phone}`, 15, 60 * 60_000)) {
+    return NextResponse.json(
+      { error: 'Terlalu banyak percobaan untuk nomor ini. Coba lagi nanti.' },
+      { status: 429 },
+    )
+  }
+
   const orders = await getOrdersByPhone(phone)
 
   // Petakan ke bentuk non-sensitif saja

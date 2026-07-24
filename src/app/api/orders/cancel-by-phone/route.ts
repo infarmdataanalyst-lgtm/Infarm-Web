@@ -3,7 +3,9 @@
 // (defense-in-depth — tidak percaya hasil verify sisi client) + cek status di server.
 // Set status 'Dibatalkan' + kembalikan stok. Aturan status = sama dengan alur token (/api/orders/cancel).
 //
-// Perlindungan: honeypot `website`. TODO(rate-limit): 5/IP/jam (ditunda).
+// Perlindungan: honeypot `website` + rate limit per-IP & per-nomor (threshold lebih ketat
+// karena ini aksi destruktif — lihat @/lib/rate-limit). Menutup temuan K-1 audit keamanan
+// 2026-07-24 (docs/security/audit-2026-07-24.md).
 
 import { NextResponse } from 'next/server'
 import { revalidatePath, revalidateTag } from 'next/cache'
@@ -11,6 +13,7 @@ import { getOrderByOrderId, updateOrderStatus } from '@/lib/mock-db/orders'
 import { restoreStock } from '@/lib/mock-db/products'
 import { normalizePhone, isValidPhone } from '@/lib/phone'
 import type { OrderFulfillmentStatus } from '@/types/order'
+import { isRateLimited, getClientIp } from '@/lib/rate-limit'
 
 export const runtime = 'nodejs'
 
@@ -29,6 +32,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Permintaan tidak valid.' }, { status: 400 })
   }
 
+  // Rate limit per-IP: aksi destruktif → threshold lebih ketat dari endpoint baca
+  const ip = getClientIp(request)
+  if (isRateLimited(`cancel-by-phone:ip:${ip}`, 8, 15 * 60_000)) {
+    return NextResponse.json(
+      { error: 'Terlalu banyak percobaan. Coba lagi dalam beberapa menit.' },
+      { status: 429 },
+    )
+  }
+
   const orderId = typeof body.orderId === 'string' ? body.orderId.trim().replace(/^#/, '') : ''
   const rawPhone = typeof body.phone === 'string' ? body.phone : ''
   if (!orderId) return NextResponse.json({ error: 'Pesanan tidak valid.' }, { status: 400 })
@@ -36,12 +48,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Nomor telepon tidak valid.' }, { status: 400 })
   }
 
+  // Rate limit per-nomor: cegah brute-force tertarget ke satu nomor dari banyak IP
+  const normalizedPhone = normalizePhone(rawPhone)
+  if (isRateLimited(`cancel-by-phone:phone:${normalizedPhone}`, 5, 60 * 60_000)) {
+    return NextResponse.json(
+      { error: 'Terlalu banyak percobaan untuk nomor ini. Coba lagi nanti.' },
+      { status: 429 },
+    )
+  }
+
   // Query ULANG dari DB
   const order = await getOrderByOrderId(orderId)
   if (!order) return NextResponse.json({ error: 'Pesanan tidak ditemukan.' }, { status: 404 })
 
   // RE-VERIFIKASI kepemilikan: no_telepon input WAJIB cocok dengan no_telepon order
-  if (normalizePhone(rawPhone) !== normalizePhone(order.customerPhone ?? '')) {
+  if (normalizedPhone !== normalizePhone(order.customerPhone ?? '')) {
     return NextResponse.json(
       { error: 'Nomor telepon tidak cocok dengan pesanan ini.' },
       { status: 403 },

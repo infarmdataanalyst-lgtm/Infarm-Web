@@ -3,12 +3,14 @@
 // BELUM diulas untuk tiap pesanan (cek order_invoice + product_id di tabel reviews). Pesanan yang
 // dibatalkan dikecualikan (tak bisa diulas). Output non-sensitif (foto+nama produk+invoice+nama untuk auto-fill).
 //
-// Perlindungan: honeypot `website`. TODO(rate-limit): 5/IP/jam (ditunda, seperti track/cancel).
+// Perlindungan: honeypot `website` + rate limit per-IP & per-nomor (lihat @/lib/rate-limit).
+// Menutup temuan K-1 audit keamanan 2026-07-24 (docs/security/audit-2026-07-24.md).
 
 import { NextResponse } from 'next/server'
 import { getOrdersByPhone } from '@/lib/mock-db/orders'
 import { getReviewedProductIds } from '@/lib/mock-db/reviews'
 import { normalizePhone, isValidPhone } from '@/lib/phone'
+import { isRateLimited, getClientIp } from '@/lib/rate-limit'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -35,6 +37,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ items: [] })
   }
 
+  // Rate limit per-IP: anti brute-force umum
+  const ip = getClientIp(request)
+  if (isRateLimited(`reviewable-by-phone:ip:${ip}`, 20, 15 * 60_000)) {
+    return NextResponse.json(
+      { error: 'Terlalu banyak percobaan. Coba lagi dalam beberapa menit.' },
+      { status: 429 },
+    )
+  }
+
   const rawPhone = typeof body.phone === 'string' ? body.phone : ''
   if (!isValidPhone(rawPhone)) {
     return NextResponse.json(
@@ -44,6 +55,15 @@ export async function POST(request: Request) {
   }
 
   const phone = normalizePhone(rawPhone)
+
+  // Rate limit per-nomor: cegah brute-force tertarget ke satu nomor dari banyak IP
+  if (isRateLimited(`reviewable-by-phone:phone:${phone}`, 15, 60 * 60_000)) {
+    return NextResponse.json(
+      { error: 'Terlalu banyak percobaan untuk nomor ini. Coba lagi nanti.' },
+      { status: 429 },
+    )
+  }
+
   const orders = await getOrdersByPhone(phone)
 
   const items: ReviewableItem[] = []
