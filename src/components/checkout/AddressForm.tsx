@@ -4,7 +4,7 @@
 // Form input alamat pengiriman. Wilayah diisi lewat SATU search combobox ke API Mengantar:
 // user mencari alamat → memilih hasil → Provinsi/Kota/Kecamatan/Kelurahan/Kode Pos terisi
 // otomatis (read-only) dan _id hasil disimpan sebagai destination_id (untuk cek ongkir).
-// Validasi field (nama, telepon, email, alamat terpilih, alamat lengkap) dilakukan client-side:
+// Validasi field (nama, telepon, alamat terpilih, alamat lengkap) dilakukan client-side:
 // per field saat onBlur, dan seluruhnya saat parent memanggil revealErrors() lewat ref.
 // TODO: validasi & simpan ke server saat alur order dibuat (lihat CLAUDE.md — validasi di server).
 
@@ -14,7 +14,6 @@ import { MapPin, CheckCircle2 } from 'lucide-react'
 import AddressSearchCombobox from '@/components/checkout/AddressSearchCombobox'
 import { toTitleCase, type MengantarAddress } from '@/lib/mengantar'
 import { normalizePhone, isValidPhone, getPhoneError, sanitizePhoneInput } from '@/lib/phone'
-import { normalizeEmail, isValidEmail, getEmailError } from '@/lib/email'
 import {
   validateAddress,
   type AddressFieldKey,
@@ -25,7 +24,6 @@ import {
 export type AddressFormState = {
   recipientName: string
   phone: string
-  email: string
   destination_id: string
   provinceName: string
   cityName: string
@@ -61,7 +59,6 @@ function initialForm(): AddressFormState {
   return {
     recipientName: '',
     phone: '',
-    email: '',
     destination_id: '',
     provinceName: '',
     cityName: '',
@@ -74,15 +71,14 @@ function initialForm(): AddressFormState {
 
 // Menampilkan form pengisian alamat pengiriman.
 // onChange: mengabarkan nilai form terbaru ke parent setiap ada perubahan
-// (agar data alamat, telepon, email & destination_id siap dipakai saat membuat order / cek ongkir).
+// (agar data alamat, telepon & destination_id siap dipakai saat membuat order / cek ongkir).
 const AddressForm = forwardRef<AddressFormHandle, {
   onChange?: (address: AddressFormState) => void
 }>(function AddressForm({ onChange }, ref) {
   const [form, setForm] = useState<AddressFormState>(initialForm)
 
-  // Teks yang ditampilkan untuk telepon & email (form.* menyimpan hasil normalisasi).
+  // Teks yang ditampilkan untuk telepon (form.phone menyimpan hasil normalisasi).
   const [phoneInput, setPhoneInput] = useState('')
-  const [emailInput, setEmailInput] = useState('')
 
   // Pesan error per field (kosong = tidak ada error). Mengatur juga border merah.
   const [errors, setErrors] = useState<AddressValidationResult['errors']>({})
@@ -91,13 +87,11 @@ const AddressForm = forwardRef<AddressFormHandle, {
   const recipientNameRef = useRef<HTMLDivElement>(null)
   const phoneRef = useRef<HTMLDivElement>(null)
   const phoneInputRef = useRef<HTMLInputElement>(null)
-  const emailRef = useRef<HTMLDivElement>(null)
   const addressRef = useRef<HTMLDivElement>(null)
   const streetRef = useRef<HTMLDivElement>(null)
   const fieldRefs: Record<AddressFieldKey, RefObject<HTMLDivElement | null>> = {
     recipientName: recipientNameRef,
     phone: phoneRef,
-    email: emailRef,
     destination_id: addressRef,
     street: streetRef,
   }
@@ -172,20 +166,6 @@ const AddressForm = forwardRef<AddressFormHandle, {
   }
 
   const phoneValid = isValidPhone(form.phone)
-
-  // === Email ===
-  function handleEmailChange(value: string) {
-    setEmailInput(value)
-    updateForm({ email: normalizeEmail(value) }) // simpan selalu lowercase
-    if (errors.email && isValidEmail(value)) setFieldError('email', '')
-  }
-  function handleEmailBlur() {
-    const error = getEmailError(emailInput)
-    setFieldError('email', error)
-    if (!error) setEmailInput(normalizeEmail(emailInput)) // rapikan tampilan ke lowercase
-  }
-
-  const emailValid = isValidEmail(form.email)
 
   // === Alamat (combobox Mengantar) ===
   const hasSelectedAddress = form.destination_id !== ''
@@ -287,28 +267,6 @@ const AddressForm = forwardRef<AddressFormHandle, {
             </div>
           </Field>
           <FieldError message={errors.phone} />
-        </div>
-
-        <div ref={emailRef}>
-          <Field label="Email">
-            <div className="relative">
-              <input
-                type="email"
-                inputMode="email"
-                value={emailInput}
-                onChange={(e) => handleEmailChange(e.target.value)}
-                onBlur={handleEmailBlur}
-                placeholder="Contoh: nama@email.com"
-                aria-invalid={Boolean(errors.email)}
-                className={`${inputClass(Boolean(errors.email))} ${emailValid ? 'pr-10' : ''}`}
-              />
-              {/* Indikator hijau saat email valid */}
-              {emailValid && (
-                <CheckCircle2 className="absolute right-3 top-1/2 h-5 w-5 -translate-y-1/2 text-brand-primary" />
-              )}
-            </div>
-          </Field>
-          <FieldError message={errors.email} />
         </div>
 
         {/* === Wilayah: mode pencarian ATAU ringkasan alamat terpilih === */}

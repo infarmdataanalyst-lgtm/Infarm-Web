@@ -46,12 +46,11 @@ export default function CheckoutPage() {
   const [isPhoneConfirmOpen, setIsPhoneConfirmOpen] = useState(false) // popup konfirmasi no. telepon
   const [isPaying, setIsPaying] = useState(false) // mencegah double submit saat memproses bayar
 
-  // === Alamat pengiriman: diangkat dari AddressForm agar nama/telepon/email/alamat & destination_id dipakai saat order ===
+  // === Alamat pengiriman: diangkat dari AddressForm agar nama/telepon/alamat & destination_id dipakai saat order ===
   // Seluruh field kosong di awal (tidak ada prefill default).
   const [address, setAddress] = useState<AddressFormState>({
     recipientName: '',
     phone: '',
-    email: '',
     destination_id: '',
     provinceName: '',
     cityName: '',
@@ -199,10 +198,9 @@ export default function CheckoutPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          // Nilai sudah divalidasi (telepon = angka bersih 08xx, email = lowercase)
+          // Nilai sudah divalidasi (telepon = angka bersih 08xx)
           customerName: address.recipientName.trim(),
           customerPhone: address.phone,
-          customerEmail: address.email,
           items: orderItems.map((item) => ({
             productId: item.id,
             name: item.name,

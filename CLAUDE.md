@@ -42,7 +42,10 @@ Tandai jelas mana yang sudah ada vs masih rencana saat menulis kode.
 - Pelanggan bisa menambahkan produk ke keranjang **tanpa login**
 - Data keranjang disimpan di **cookie browser** (bukan database, bukan localStorage)
 - Tetap tersedia halaman keranjang (`/keranjang`) untuk review sebelum checkout
-- Data yang dikumpulkan saat checkout: nama, alamat, nomor HP, email (untuk keperluan pengiriman & notifikasi)
+- Data yang dikumpulkan saat checkout: nama, alamat, nomor HP (untuk keperluan pengiriman & notifikasi).
+  Field email **sudah dihapus dari form checkout** — fokus identitas guest kini murni no_telepon
+  (selaras lacak/batalkan/review by phone). Kolom `customer_email` masih ada di DB (nullable) untuk
+  data lama, tapi order baru selalu mengirim `customerEmail: undefined` (lihat "Email Konfirmasi Pesanan").
 
 **Implementasi cookie keranjang (kondisi sekarang):**
 - Operasi keranjang dijalankan **sisi-klien** lewat `src/lib/cart-client.ts`
@@ -197,8 +200,7 @@ src/
 │   ├── product-validation.ts     # Validasi form produk (SKU, nama, kategori, harga jual/asli, stok, deskripsi, foto)
 │   ├── format.ts                 # Util format (mis. rupiah)
 │   ├── phone.ts                  # Validasi & normalisasi no. telepon ID (checkout)
-│   ├── email.ts                  # Validasi & normalisasi email (checkout)
-│   ├── checkout-validation.ts    # Validasi field alamat → status tombol "Bayar Sekarang"
+│   ├── checkout-validation.ts    # Validasi field alamat (nama/telepon/alamat) → status tombol "Bayar Sekarang"
 │   ├── combo-validation.ts       # Validasi server payload combo
 │   ├── promotion-validation.ts   # Validasi server payload promo
 │   ├── mengantar.ts              # Client: search alamat (via proxy) + cek ongkir (fetch langsung)
@@ -439,13 +441,20 @@ Section Alamat Pengiriman divalidasi di client sebelum request order dikirim. Lo
 - **Nama**: min 3 karakter. **Alamat lengkap**: min 10 karakter.
 - **Telepon** (`phone.ts`): hanya angka (non-digit diblok saat mengetik via onKeyDown/onChange),
   wajib diawali `08`, panjang 10–12 digit. Disimpan sebagai angka bersih `08xxxxxxxxx`.
-- **Email** (`email.ts`): validasi format (regex), disimpan **lowercase** (normalisasi).
+- **Email**: field ini **sudah dihapus dari form checkout** (`src/lib/email.ts` ikut dihapus, dead code).
+  `AddressFieldKey`/`AddressValidationInput` (`checkout-validation.ts`) tidak lagi punya `email`.
 - **Alamat**: wajib dipilih dari search Mengantar (`destination_id` tidak boleh kosong).
 - **Kurir**: wajib dipilih (`selected_courier`).
 - Tombol "Bayar Sekarang": disabled-visual + **guard di handler** (bukan hanya atribut `disabled`).
   Saat ditekan tapi belum lengkap → toast + auto-scroll ke field pertama yang invalid + border merah.
 
 ## Email Konfirmasi Pesanan
+
+> **Update**: form checkout **tidak lagi mengumpulkan email pembeli** (dihapus dari `AddressForm`;
+> fokus identitas guest = no_telepon). Order baru selalu mengirim `customerEmail: undefined` ke
+> `/api/orders/create`, jadi kolom `customer_email` akan **selalu NULL** untuk order baru. Fitur
+> kirim email otomatis di bawah ini masih roadmap dan sekarang **tidak punya alamat tujuan** kecuali
+> flow pengumpulan email dihidupkan kembali di kanal lain — tandai ini saat mengerjakan integrasi Xendit.
 
 - Template HTML: **`src/emails/order-confirmation.html`** — table-based + inline CSS (kompatibel
   Gmail/Outlook/Mail iOS), fluid `max-width:600px; margin:0 auto`, palet brand (`#46b33c`).
@@ -454,9 +463,10 @@ Section Alamat Pengiriman divalidasi di client sebelum request order dikirim. Lo
 - Aset gambar email di **`public/images/email/`** (mis. `logo-infarm.png`; lihat README folder tsb).
 - Preview lokal: **`/dev/email-preview`** (route handler membaca file template + isi placeholder
   dengan data contoh). Hanya untuk development.
-- Kolom **`customer_email`** (TEXT) sudah ada di tabel `orders`
-  (migration `supabase/migrations/20260624120000_add_orders_customer_email.sql`). `saveOrder` punya
-  fallback aman bila kolom belum di-migrate (cek kode error `PGRST204`/`42703`).
+- Kolom **`customer_email`** (TEXT, nullable) masih ada di tabel `orders`
+  (migration `supabase/migrations/20260624120000_add_orders_customer_email.sql`) untuk data lama —
+  **tidak perlu dihapus manual** (nullable, semua kode sudah memperlakukannya opsional). `saveOrder`
+  punya fallback aman bila kolom belum di-migrate (cek kode error `PGRST204`/`42703`).
 
 ## Paket & Combo dan Promosi (OMS + Storefront)
 
@@ -770,9 +780,10 @@ resi masih roadmap (dijalankan dengan mock).
 ### Alur Checkout & Pembayaran
 7. User klik "Checkout" / "Beli Langsung" → item terpilih disimpan ke cookie `infarm_checkout`
    (keduanya WAJIB `setCheckoutItems`); snapshot promo/combo tercapai → `infarm_checkout_promo`
-8. Halaman `/checkout`: form Nama, No. HP, Email, Alamat (search Mengantar → `destination_id`),
+8. Halaman `/checkout`: form Nama, No. HP, Alamat (search Mengantar → `destination_id`),
    lalu **cek ongkir otomatis** (pilih kurir → `selected_courier`, ongkir masuk total), Metode
    Pembayaran. Semua field & kurir divalidasi client; tombol "Bayar Sekarang" aktif hanya bila valid.
+   (Field email sudah dihapus dari form — lihat "Email Konfirmasi Pesanan".)
 9. User isi form → klik "Bayar Sekarang" → `POST /api/orders/create` → RPC atomik `create_order_with_items`
    (insert `orders` + `order_items` + kurangi stok; rollback bila stok kurang; nomor invoice `INV-…`)
 10. Backend **buat invoice** → hubungi Xendit API untuk generate link pembayaran *(roadmap)*
