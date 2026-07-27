@@ -118,11 +118,15 @@ export default async function CheckoutSuccessPage({
             </div>
           </div>
 
-          {/* Daftar item */}
+          {/* Daftar item — item promo (produk gratis) dipisahkan secara visual & harga "Gratis" */}
           <div className="mt-4 space-y-3 border-t border-dashed border-zinc-200 pt-4">
             {data.items.map((item) => (
-              <div key={item.productId} className="flex items-center gap-3">
-                <div className="relative h-11 w-11 flex-none overflow-hidden rounded-lg border border-zinc-100 bg-zinc-50">
+              <div key={`${item.productId}-${item.isPromoItem ? 'promo' : 'buy'}`} className="flex items-center gap-3">
+                <div
+                  className={`relative h-11 w-11 flex-none overflow-hidden rounded-lg border bg-zinc-50 ${
+                    item.isPromoItem ? 'border-brand-light' : 'border-zinc-100'
+                  }`}
+                >
                   <Image
                     src={item.imageUrl || '/images/product-placeholder.png'}
                     alt={item.name}
@@ -132,10 +136,18 @@ export default async function CheckoutSuccessPage({
                     className="object-cover"
                   />
                 </div>
-                <div>
-                  <p className="text-sm font-semibold text-zinc-900">{item.name}</p>
-                  <p className="text-xs text-zinc-400">{item.quantity}× item</p>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold text-zinc-900">
+                    {item.isPromoItem ? `🎁 ${item.name}` : item.name}
+                  </p>
+                  <p className="text-xs text-zinc-400">
+                    {item.isPromoItem ? 'Bonus Promo' : `${item.quantity}× item`}
+                  </p>
                 </div>
+                {/* Harga: item promo tertulis "Gratis" (bukan Rp0 polos) */}
+                {item.isPromoItem && (
+                  <span className="shrink-0 text-sm font-bold text-brand-primary">Gratis</span>
+                )}
               </div>
             ))}
           </div>

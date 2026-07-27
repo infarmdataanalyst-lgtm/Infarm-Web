@@ -13,15 +13,25 @@ export default function CheckoutProductSummary({ items }: { items: CheckoutItem[
 
       <ul className="space-y-3">
         {items.map((item) => (
-          <li key={item.id} className="flex gap-3">
+          <li key={`${item.id}-${item.isPromoItem ? 'promo' : 'buy'}`} className="flex gap-3">
             {/* Thumbnail persegi */}
-            <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-zinc-100 bg-zinc-50">
+            <div
+              className={`relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border bg-zinc-50 ${
+                item.isPromoItem ? 'border-brand-light' : 'border-zinc-100'
+              }`}
+            >
               {/* unoptimized: placeholder sementara */}
               <Image src={item.imageUrl} alt={item.name} fill unoptimized sizes="64px" className="object-cover" />
             </div>
 
             {/* Detail produk */}
             <div className="flex min-w-0 flex-1 flex-col">
+              {/* Item hadiah promo diberi badge "Bonus Promo" agar beda dari produk beli normal */}
+              {item.isPromoItem && (
+                <span className="mb-0.5 inline-flex w-fit items-center gap-1 rounded-full bg-brand-light/40 px-2 py-0.5 text-[11px] font-semibold text-brand-primary">
+                  🎁 Bonus Promo
+                </span>
+              )}
               <h3 className="line-clamp-2 text-sm font-medium leading-snug text-zinc-800">
                 {item.name}
               </h3>
@@ -29,9 +39,13 @@ export default function CheckoutProductSummary({ items }: { items: CheckoutItem[
                 <p className="mt-0.5 text-xs text-zinc-500">Varian: {item.variant}</p>
               )}
 
-              {/* Harga + kuantitas */}
+              {/* Harga + kuantitas — item promo tertulis "Gratis" (bukan Rp0 polos) */}
               <div className="mt-auto flex items-center justify-between pt-1">
-                <span className="text-sm font-bold text-red-500">{formatRupiah(item.price)}</span>
+                <span
+                  className={`text-sm font-bold ${item.isPromoItem ? 'text-brand-primary' : 'text-red-500'}`}
+                >
+                  {item.isPromoItem ? 'Gratis' : formatRupiah(item.price)}
+                </span>
                 <span className="text-xs text-zinc-500">x{item.quantity}</span>
               </div>
             </div>

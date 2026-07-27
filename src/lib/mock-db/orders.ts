@@ -91,6 +91,8 @@ type OrderItemRow = {
   product_id: string
   quantity: number
   price_at_purchase: number
+  is_promo_item?: boolean // penanda produk gratis promo (kolom baru; opsional untuk baris warisan)
+  promotion_id?: string | null // id promosi penyebab gratis (kolom baru)
 }
 
 // === Error khusus stok tidak cukup (dilempar dari saveOrder) ===
@@ -147,6 +149,8 @@ function itemRowToItem(row: OrderItemRow, info: Map<string, ResolvedProduct>): O
     price: row.price_at_purchase,
   }
   if (resolved?.imageUrl) item.imageUrl = resolved.imageUrl
+  if (row.is_promo_item) item.isPromoItem = true
+  if (row.promotion_id) item.promotionId = row.promotion_id
   return item
 }
 
@@ -249,7 +253,7 @@ export async function readOrdersFiltered(opts: OrderFilterOptions = {}): Promise
   // Ambil items & resolve produk (sama seperti readOrders)
   const { data: itemData } = await supabase
     .from('order_items')
-    .select('order_id, product_id, quantity, price_at_purchase')
+    .select('order_id, product_id, quantity, price_at_purchase, is_promo_item, promotion_id')
     .in('order_id', rows.map((r) => r.id))
   const itemRows = (itemData as OrderItemRow[]) ?? []
 
@@ -284,7 +288,7 @@ export async function readOrders(): Promise<Order[]> {
   // Ambil semua item untuk order-order ini dalam satu query, lalu kelompokkan
   const { data: itemData } = await supabase
     .from('order_items')
-    .select('order_id, product_id, quantity, price_at_purchase')
+    .select('order_id, product_id, quantity, price_at_purchase, is_promo_item, promotion_id')
     .in('order_id', rows.map((r) => r.id))
   const itemRows = (itemData as OrderItemRow[]) ?? []
 
@@ -317,7 +321,7 @@ export async function getOrderByOrderId(orderId: string): Promise<Order | null> 
   const row = data as OrderRow
   const { data: itemData } = await supabase
     .from('order_items')
-    .select('order_id, product_id, quantity, price_at_purchase')
+    .select('order_id, product_id, quantity, price_at_purchase, is_promo_item, promotion_id')
     .eq('order_id', row.id)
   const itemRows = (itemData as OrderItemRow[]) ?? []
   const info = await resolveProductInfo(supabase, itemRows.map((r) => r.product_id))
@@ -346,7 +350,7 @@ export async function getOrdersByPhone(phone: string): Promise<Order[]> {
   // Ambil item semua order tsekaligus lalu kelompokkan (sama pola readOrders)
   const { data: itemData } = await supabase
     .from('order_items')
-    .select('order_id, product_id, quantity, price_at_purchase')
+    .select('order_id, product_id, quantity, price_at_purchase, is_promo_item, promotion_id')
     .in('order_id', rows.map((r) => r.id))
   const itemRows = (itemData as OrderItemRow[]) ?? []
   const info = await resolveProductInfo(supabase, itemRows.map((r) => r.product_id))
@@ -373,6 +377,9 @@ export async function saveOrder(input: CreateOrderInput): Promise<Order> {
     product_id: it.productId,
     quantity: it.quantity,
     price_at_purchase: it.price,
+    // Penanda produk gratis promo (RPC menyimpan bila kolom sudah di-migrate; aman diabaikan bila belum)
+    is_promo_item: it.isPromoItem ?? false,
+    promotion_id: it.promotionId ?? null,
   }))
 
   // Coba beberapa kali untuk mengatasi tabrakan nomor_invoice acak (unique violation)

@@ -103,6 +103,7 @@ export type CheckoutItem = {
   quantity: number
   price: number
   imageUrl: string
+  isPromoItem?: boolean // true = produk GRATIS hadiah promo (harga 0, tampil "Gratis")
 }
 
 // Placeholder foto produk (TODO: ganti foto asli setelah OMS selesai)

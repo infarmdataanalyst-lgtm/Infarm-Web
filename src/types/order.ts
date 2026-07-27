@@ -10,7 +10,9 @@ export type OrderItem = {
   name: string // di-resolve dari tabel products saat baca (order_items tak menyimpan nama)
   imageUrl?: string // di-resolve dari products.image_url saat baca (order_items tak menyimpan foto)
   quantity: number
-  price: number // harga satuan saat checkout (snapshot = price_at_purchase)
+  price: number // harga satuan saat checkout (snapshot = price_at_purchase). 0 untuk produk gratis promo.
+  isPromoItem?: boolean // true = produk GRATIS hadiah promosi (type='free_product'); tak menambah subtotal
+  promotionId?: string | null // id promosi penyebab produk ini gratis (null untuk item normal)
 }
 
 // Status pembayaran pesanan (app-facing). DB: PENDING→Menunggu, PAID→Lunas, FAILED→Gagal.

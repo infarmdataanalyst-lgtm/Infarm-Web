@@ -28,6 +28,7 @@ import CartPromoList from '@/components/cart/CartPromoList'
 import CartItemRow from '@/components/cart/CartItemRow'
 import ProtectionInfo from '@/components/cart/ProtectionInfo'
 import CartRecentlyViewed from '@/components/cart/CartRecentlyViewed'
+import CartFreeItems, { type FreeItemView } from '@/components/cart/CartFreeItems'
 import CartCheckoutBar from '@/components/cart/CartCheckoutBar'
 
 export default function CartPage() {
@@ -60,8 +61,10 @@ export default function CartPage() {
     const s = new Set<string>()
     for (const c of cookieCart) s.add(c.productId)
     for (const v of viewedIds) s.add(v)
+    // Ikutkan id produk hadiah promo (type free_product) agar detail (nama/foto) siap saat promo tercapai
+    for (const p of promos) if (p.type === 'free_product' && p.freeProductId) s.add(p.freeProductId)
     return Array.from(s).sort().join(',')
-  }, [cookieCart, viewedIds])
+  }, [cookieCart, viewedIds, promos])
 
   // === Resolve HANYA produk yang dibutuhkan (bukan seluruh katalog) lewat /api/products/by-ids ===
   // Endpoint ini ber-cache (revalidate 30s) → jauh lebih cepat dari menarik semua produk tiap buka.
@@ -138,6 +141,27 @@ export default function CartPage() {
   const promoProgress = useMemo(() => computePromoProgress(promos, selectedTotal), [promos, selectedTotal])
   const promoRewards = useMemo(() => computePromoRewards(promos, selectedTotal), [promos, selectedTotal])
   const finalTotal = Math.max(0, selectedTotal - promoRewards.totalDiscount)
+
+  // === Produk gratis hadiah (free_product tercapai) → item terpisah Rp0 di keranjang ===
+  // Turunan reaktif dari promoRewards: muncul saat subtotal ≥ min_purchase, hilang saat turun.
+  // Detail (nama/foto) di-resolve dari produk terbaru; produk diarsipkan / stok habis dilewati.
+  const freeItems: FreeItemView[] = useMemo(() => {
+    return promoRewards.freeProducts.flatMap((fp) => {
+      const product =
+        omsProducts.find((p) => p.id === fp.id) ?? dummyProducts.find((p) => p.id === fp.id)
+      // Produk OMS diarsipkan atau stok habis → tak bisa jadi hadiah; lewati.
+      const stored = omsProducts.find((p) => p.id === fp.id)
+      if (stored && (stored.archived || stored.stock <= 0)) return []
+      return [
+        {
+          productId: fp.id,
+          name: product?.name ?? fp.name,
+          imageUrl: product?.imageUrl ?? '',
+          quantity: 1, // aturan promo: 1 produk hadiah
+        },
+      ]
+    })
+  }, [promoRewards.freeProducts, omsProducts])
 
   // === Aksi ===
 
@@ -247,6 +271,9 @@ export default function CartPage() {
         ) : (
           <p className="px-4 py-16 text-center text-sm text-zinc-400">Keranjang kamu masih kosong.</p>
         )}
+
+        {/* 3b — Produk gratis hadiah promo (muncul otomatis saat syarat min_purchase tercapai) */}
+        <CartFreeItems items={freeItems} />
 
         {/* 4 — Informasi perlindungan */}
         <ProtectionInfo />

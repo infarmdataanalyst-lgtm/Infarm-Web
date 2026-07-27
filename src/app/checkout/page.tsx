@@ -26,6 +26,7 @@ import {
   subscribeCheckout,
   getCheckoutSnapshot,
   getServerCheckoutSnapshot,
+  getCheckoutPromo,
   clearCart,
 } from '@/lib/cart-client'
 import { setGuestPhone, incrementActiveOrderCount } from '@/lib/guest-phone'
@@ -138,10 +139,48 @@ export default function CheckoutPage() {
     [orderItems],
   )
 
-  // Total berat (kg) untuk cek ongkir — minimal 1 kg
+  // Id produk gratis promo (dari snapshot keranjang). Server tetap otoritatif saat create order;
+  // ini hanya untuk TAMPILAN ringkasan & perhitungan berat kirim.
+  const [freeProductIds, setFreeProductIds] = useState<string[]>([])
+  useEffect(() => {
+    const snap = getCheckoutPromo()
+    setFreeProductIds(snap?.freeProductIds ?? [])
+  }, [])
+
+  // Item hadiah promo untuk DITAMPILKAN di ringkasan (harga 0, isPromoItem). Detail dari produk resolved.
+  // TIDAK dikirim ke API create (server evaluasi & inject sendiri) → cegah duplikasi/manipulasi.
+  const freeCheckoutItems: CheckoutItem[] = useMemo(() => {
+    return freeProductIds.flatMap((id) => {
+      const product = productById.get(id)
+      if (!product) return []
+      return [
+        {
+          id,
+          name: product.name,
+          quantity: 1,
+          price: 0,
+          imageUrl: product.imageUrl,
+          isPromoItem: true,
+        },
+      ]
+    })
+  }, [freeProductIds, productById])
+
+  // Daftar untuk ditampilkan di ringkasan = item beli + item hadiah promo.
+  const summaryItems = useMemo(
+    () => [...orderItems, ...freeCheckoutItems],
+    [orderItems, freeCheckoutItems],
+  )
+
+  // Total berat (kg) untuk cek ongkir — minimal 1 kg. Sertakan produk gratis promo (dikirim fisik).
   const shippingWeight = useMemo(
-    () => Math.max(1, orderItems.reduce((sum, item) => sum + item.quantity, 0) * WEIGHT_PER_ITEM_KG),
-    [orderItems],
+    () =>
+      Math.max(
+        1,
+        (orderItems.reduce((sum, item) => sum + item.quantity, 0) + freeCheckoutItems.length) *
+          WEIGHT_PER_ITEM_KG,
+      ),
+    [orderItems, freeCheckoutItems],
   )
 
   // === Turunan pilihan ===
@@ -253,7 +292,7 @@ export default function CheckoutPage() {
       {/* Konten — pb-24 agar tak tertutup bilah bayar bawah */}
       <main className="flex-1 space-y-2 pb-24">
         {/* 2 — Ringkasan produk yang dibeli (dari pilihan keranjang) */}
-        <CheckoutProductSummary items={orderItems} />
+        <CheckoutProductSummary items={summaryItems} />
 
         {/* 3 — Form input alamat pengiriman */}
         <AddressForm ref={addressFormRef} onChange={handleAddressChange} />

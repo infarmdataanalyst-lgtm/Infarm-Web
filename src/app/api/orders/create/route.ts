@@ -6,6 +6,8 @@ import { NextResponse } from 'next/server'
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { saveOrder, OrderStockError } from '@/lib/mock-db/orders'
 import { readProducts } from '@/lib/mock-db/products'
+import { readPromotions } from '@/lib/mock-db/promotions'
+import { isPromotionExpired } from '@/types/promotion'
 import type { CreateOrderInput, OrderItem, OrderShippingAddress } from '@/types/order'
 
 // createAdminClient (Supabase) butuh runtime Node.js, bukan Edge
@@ -87,6 +89,33 @@ export async function POST(request: Request) {
       name: prod.name,
       quantity: it.quantity,
       price: prod.promoPrice, // snapshot harga jual dari DB
+    })
+  }
+
+  // === Produk gratis promo (type='free_product') — OTORITATIF di server ===
+  // Client TIDAK dipercaya soal produk gratis. Server evaluasi ulang promo aktif berdasar `subtotal`
+  // hasil hitung sendiri (harga DB). Hanya promo yang benar-benar memenuhi syarat yang menambahkan
+  // produk gratis → cegah manipulasi dapat barang gratis tanpa memenuhi min_purchase.
+  // subtotal dihitung SEBELUM blok ini (item gratis harga 0 → tak mengubah subtotal).
+  const promotions = await readPromotions()
+  const nowMs = Date.now()
+  const addedFreeIds = new Set<string>()
+  for (const promo of promotions) {
+    if (promo.type !== 'free_product' || !promo.isActive || !promo.freeProductId) continue
+    if (isPromotionExpired(promo.endAt, nowMs)) continue // sudah kedaluwarsa
+    if (promo.startAt && new Date(promo.startAt).getTime() > nowMs) continue // belum mulai
+    if (subtotal < promo.minPurchase) continue // syarat belanja belum terpenuhi
+    if (addedFreeIds.has(promo.freeProductId)) continue // hindari duplikat produk gratis
+    const prod = byId.get(promo.freeProductId)
+    if (!prod || prod.archived || prod.stock <= 0) continue // hadiah tak tersedia → lewati diam-diam
+    addedFreeIds.add(promo.freeProductId)
+    pricedItems.push({
+      productId: promo.freeProductId,
+      name: prod.name,
+      quantity: 1, // aturan promo: 1 produk hadiah
+      price: 0, // GRATIS — tak menambah subtotal
+      isPromoItem: true,
+      promotionId: promo.id,
     })
   }
 
