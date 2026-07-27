@@ -22,6 +22,7 @@ import {
   getServerCartSnapshot,
 } from '@/lib/cart-client'
 import { allocateComboPrices } from '@/lib/promo-cart'
+import { trackComboAddToCart } from '@/lib/analytics'
 import type { CartItem } from '@/types/cart'
 
 const PLACEHOLDER = '/images/product-placeholder.png'
@@ -52,6 +53,17 @@ export default function BundleOffer({
     if (checked) {
       const allocated = allocateComboPrices(combo.items, combo.comboPrice)
       addComboToCart(combo.id, allocated)
+      // GA4 add_to_cart: SATU event berisi semua item combo (nama dari snapshot, harga hasil alokasi).
+      // Dikirim SETELAH item masuk cookie keranjang (konsisten dengan jalur produk tunggal).
+      trackComboAddToCart(
+        combo.comboPrice,
+        allocated.map((a) => ({
+          productId: a.productId,
+          name: combo.items.find((it) => it.productId === a.productId)?.name ?? '',
+          price: a.price,
+          quantity: a.quantity,
+        })),
+      )
       window.dispatchEvent(new CustomEvent(CART_BUMP_EVENT))
       showCartToast('Paket kombo berhasil ditambahkan ke keranjang!')
     } else {

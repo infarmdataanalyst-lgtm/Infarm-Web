@@ -57,3 +57,28 @@ export function trackAddToCart(product: AnalyticsProduct, quantity: number): voi
     items: [toItem(product, quantity)],
   })
 }
+
+// Satu item combo untuk event GA4. Snapshot combo TIDAK punya kategori/SKU →
+// item_category dikirim kosong, item_id fallback ke productId.
+export type AnalyticsComboItem = {
+  productId: string
+  name: string
+  price: number // harga per unit hasil alokasi harga combo
+  quantity: number
+}
+
+// add_to_cart untuk PAKET COMBO — sesuai rekomendasi GA4: SATU event berisi semua item combo,
+// value = harga paket (comboPrice). Dipanggil SETELAH combo masuk cookie keranjang.
+export function trackComboAddToCart(comboPrice: number, items: AnalyticsComboItem[]): void {
+  sendEvent('add_to_cart', {
+    currency: 'IDR',
+    value: comboPrice,
+    items: items.map((it) => ({
+      item_id: it.productId,
+      item_name: it.name,
+      item_category: '', // snapshot combo tak menyimpan kategori
+      price: it.price,
+      quantity: it.quantity,
+    })),
+  })
+}
