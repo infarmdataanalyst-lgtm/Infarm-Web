@@ -2,31 +2,34 @@
 
 // src/components/ui/ProfileIconLink.tsx
 // Ikon profil di header → menuju hub "Pesanan Saya" (/pesanan-saya).
-// Badge (dot merah) tampil bila ada jejak checkout di device ini (cookie infarm_phone).
-// Cek RINGAN dari cookie saja (tanpa query DB) agar tak membebani tiap render header.
+// Badge ANGKA menampilkan estimasi jumlah pesanan aktif dari cookie (infarm_active_orders).
+// HANYA baca cookie (tanpa query DB) agar header ringan. Angka di-refresh akurat saat buka
+// /pesanan-saya; di-increment saat checkout sukses. Event ACTIVE_ORDERS_EVENT memicu baca ulang.
 
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
-import { getGuestPhone } from '@/lib/guest-phone'
+import { getActiveOrderCount, ACTIVE_ORDERS_EVENT } from '@/lib/guest-phone'
 
 export default function ProfileIconLink() {
-  // Badge = ada no_telepon tersimpan (pernah checkout). Dibaca client setelah mount agar
-  // tidak mismatch hidrasi (server tak punya akses cookie ini lewat path client).
-  const [hasOrders, setHasOrders] = useState(false)
+  // Jumlah pesanan aktif (estimasi cookie). Dibaca client setelah mount agar tak mismatch hidrasi.
+  const [count, setCount] = useState(0)
 
   useEffect(() => {
-    setHasOrders(getGuestPhone().length > 0)
+    const read = () => setCount(getActiveOrderCount())
+    read()
+    // Update saat cookie berubah (checkout sukses / refresh di /pesanan-saya) tanpa reload halaman.
+    window.addEventListener(ACTIVE_ORDERS_EVENT, read)
+    return () => window.removeEventListener(ACTIVE_ORDERS_EVENT, read)
   }, [])
 
   return (
     <Link href="/pesanan-saya" aria-label="Pesanan Saya" className="relative p-1">
       <ProfileIcon />
-      {/* Dot merah penanda kemungkinan ada pesanan aktif (jejak checkout di device ini) */}
-      {hasOrders && (
-        <span
-          aria-hidden
-          className="absolute right-0 top-0 h-2.5 w-2.5 rounded-full border-2 border-brand-primary bg-red-500"
-        />
+      {/* Badge angka pesanan aktif — style konsisten dengan badge keranjang. Tersembunyi bila 0. */}
+      {count > 0 && (
+        <span className="absolute -right-1 -top-1 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white">
+          {count > 99 ? '99+' : count}
+        </span>
       )}
     </Link>
   )

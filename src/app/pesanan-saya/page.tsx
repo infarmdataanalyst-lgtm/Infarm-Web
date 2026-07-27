@@ -7,6 +7,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { Search, XCircle, Star, ChevronRight } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import ActiveOrdersSummary from '@/components/pesanan-saya/ActiveOrdersSummary'
 
 export const metadata: Metadata = {
   title: 'Pesanan Saya — infarm.id',
@@ -62,6 +63,9 @@ export default function PesananSayaPage() {
         <p className="mb-4 text-sm text-zinc-500">
           Kelola pesanan Anda: lacak pengiriman, batalkan, atau beri ulasan.
         </p>
+
+        {/* Ringkasan pesanan aktif (refresh akurat dari server + perbarui cookie badge header) */}
+        <ActiveOrdersSummary />
 
         <div className="space-y-3">
           {MENU.map((item) => (

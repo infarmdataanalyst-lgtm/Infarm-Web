@@ -164,6 +164,11 @@ export default function CartPage() {
     if (item) updateQuantity(productId, item.quantity - 1)
   }
 
+  // Set jumlah langsung (dari input ketik manual). Minimal 1 (di bawah itu di-clamp oleh pemanggil).
+  function setQuantity(productId: string, quantity: number) {
+    updateQuantity(productId, quantity)
+  }
+
   function remove(productId: string) {
     removeFromCart(productId)
   }
@@ -234,6 +239,7 @@ export default function CartPage() {
                 onToggleSelect={toggleSelect}
                 onIncrement={increment}
                 onDecrement={decrement}
+                onSetQuantity={setQuantity}
                 onRemove={remove}
               />
             ))}

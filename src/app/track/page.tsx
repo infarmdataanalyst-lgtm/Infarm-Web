@@ -44,7 +44,8 @@ export default async function TrackPage({ searchParams }: TrackPageProps) {
       {/* Header hijau brand + tombol kembali */}
       <header className="fixed inset-x-0 top-0 z-50 bg-brand-primary text-white shadow-sm">
         <div className="mx-auto flex h-14 max-w-3xl items-center gap-3 px-4">
-          <Link href="/" aria-label="Kembali ke beranda" className="rounded-md p-1 transition active:scale-95">
+          {/* Back → halaman Lacak Pesanan (satu halaman sebelumnya), bukan beranda */}
+          <Link href="/track-order" aria-label="Kembali ke Lacak Pesanan" className="rounded-md p-1 transition active:scale-95">
             <BackIcon />
           </Link>
           <Link href="/" className="flex items-center gap-2">

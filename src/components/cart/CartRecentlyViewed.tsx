@@ -15,7 +15,9 @@ export default function CartRecentlyViewed({ products }: { products: Product[] }
     <section className="mt-2 bg-white px-4 py-4">
       <h2 className="mb-3 text-lg font-bold text-zinc-800">Dilihat Sebelumnya</h2>
 
-      <ul className="grid grid-cols-2 gap-3">
+      {/* Kolom responsif: 2 di mobile → makin banyak di layar lebar agar kartu tak melebar berlebihan.
+          Maks 6 item → lg:grid-cols-6 muat satu baris di desktop. */}
+      <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
         {products.map((product) => (
           <li key={product.id}>
             <RecentCard product={product} />

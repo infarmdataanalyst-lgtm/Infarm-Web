@@ -2,7 +2,9 @@
 // Satu baris item keranjang: checkbox pilih, foto, nama, harga jual+coret, tombol hapus, dan
 // pengatur jumlah (- qty +). Presentational — semua aksi dikirim lewat callback dari parent.
 
+import { useEffect, useState } from 'react'
 import Image from 'next/image'
+import Link from 'next/link'
 import type { CartLineItem } from '@/types/cart'
 import { formatRupiah } from '@/lib/format'
 
@@ -12,15 +14,32 @@ export default function CartItemRow({
   onToggleSelect,
   onIncrement,
   onDecrement,
+  onSetQuantity,
   onRemove,
 }: {
   item: CartLineItem
   onToggleSelect: (productId: string) => void
   onIncrement: (productId: string) => void
   onDecrement: (productId: string) => void
+  onSetQuantity: (productId: string, quantity: number) => void
   onRemove: (productId: string) => void
 }) {
   const { productId, name, imageUrl, price, originalPrice, quantity, selected } = item
+
+  // State teks lokal agar user bisa mengetik bebas (mis. mengosongkan field lalu ketik "10").
+  // Disinkronkan bila quantity dari cookie berubah (mis. tombol +/-).
+  const [draft, setDraft] = useState(String(quantity))
+  useEffect(() => {
+    setDraft(String(quantity))
+  }, [quantity])
+
+  // Commit nilai ketikan → set jumlah. Kosong/0/invalid → kembalikan ke 1 (jangan hapus item).
+  function commitDraft() {
+    const parsed = parseInt(draft, 10)
+    const next = Number.isNaN(parsed) || parsed < 1 ? 1 : parsed
+    setDraft(String(next))
+    if (next !== quantity) onSetQuantity(productId, next)
+  }
 
   return (
     <div className="flex gap-3 bg-white px-4 py-4">
@@ -33,15 +52,26 @@ export default function CartItemRow({
         className="mt-1 h-5 w-5 shrink-0 accent-brand-primary"
       />
 
-      {/* Foto produk */}
-      <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-lg border border-zinc-100 bg-zinc-50">
+      {/* Foto produk — klik menuju halaman detail produk */}
+      <Link
+        href={`/produk/${productId}`}
+        aria-label={`Lihat detail produk ${name}`}
+        className="relative h-24 w-24 shrink-0 overflow-hidden rounded-lg border border-zinc-100 bg-zinc-50 transition hover:opacity-80"
+      >
         {/* unoptimized: placeholder SVG sementara */}
         <Image src={imageUrl} alt={name} fill unoptimized sizes="96px" className="object-cover" />
-      </div>
+      </Link>
 
       {/* Detail & kontrol */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <h3 className="line-clamp-2 text-sm leading-snug text-zinc-800">{name}</h3>
+        {/* Nama produk — klik menuju halaman detail produk */}
+        <Link
+          href={`/produk/${productId}`}
+          aria-label={`Lihat detail produk ${name}`}
+          className="w-fit transition hover:text-brand-primary"
+        >
+          <h3 className="line-clamp-2 text-sm leading-snug text-zinc-800">{name}</h3>
+        </Link>
 
         {/* Harga jual (merah) + harga coret */}
         <div className="mt-1 flex items-baseline gap-2">
@@ -72,9 +102,21 @@ export default function CartItemRow({
             >
               −
             </button>
-            <span className="min-w-[2.5rem] text-center text-sm font-semibold text-zinc-800">
-              {quantity}
-            </span>
+            {/* Input jumlah — bisa diketik langsung. inputMode=numeric → keyboard angka di mobile. */}
+            <input
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value.replace(/\D/g, ''))}
+              onFocus={(e) => e.target.select()}
+              onBlur={commitDraft}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') e.currentTarget.blur()
+              }}
+              aria-label={`Jumlah ${name}`}
+              className="min-w-[2.5rem] w-12 border-x border-zinc-300 bg-transparent py-1 text-center text-sm font-semibold text-zinc-800 focus:outline-none focus:bg-brand-surface"
+            />
             <button
               type="button"
               onClick={() => onIncrement(productId)}

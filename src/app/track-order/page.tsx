@@ -99,7 +99,8 @@ export default function TrackOrderPage() {
       {/* Header hijau brand */}
       <header className="fixed inset-x-0 top-0 z-50 bg-brand-primary text-white shadow-sm">
         <div className="mx-auto flex h-14 max-w-3xl items-center gap-3 px-4">
-          <Link href="/" aria-label="Kembali ke beranda" className="rounded-md p-1 transition active:scale-95">
+          {/* Back → hub "Pesanan Saya" (satu halaman sebelumnya), bukan beranda */}
+          <Link href="/pesanan-saya" aria-label="Kembali ke Pesanan Saya" className="rounded-md p-1 transition active:scale-95">
             <BackIcon />
           </Link>
           <Link href="/" className="flex items-center gap-2">
