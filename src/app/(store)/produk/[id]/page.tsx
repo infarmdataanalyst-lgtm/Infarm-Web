@@ -25,10 +25,12 @@ import {
   getCachedReviewsByProduct,
   getCachedRatingSummary,
   getCachedSalesCountByProduct,
+  getCachedVariantsByProduct,
 } from '@/lib/mock-db/cached-reads'
 import type { StoredProduct, ProductDetail, ProductReview } from '@/types/product'
 import ProductImageSlider from '@/components/product/ProductImageSlider'
 import ProductInfo from '@/components/product/ProductInfo'
+import VariantSelector from '@/components/product/VariantSelector'
 import BundleOffer from '@/components/product/BundleOffer'
 import ProductDescription from '@/components/product/ProductDescription'
 import RecentlyViewed from '@/components/product/RecentlyViewed'
@@ -105,11 +107,14 @@ export default async function ProductDetailPage({
   if (!product) notFound()
 
   // Paket combo REAL (Supabase) yang aktif, memuat produk ini, & semua produknya masih ada stok.
-  const [allCombos, allProducts, salesCounts] = await Promise.all([
+  // Varian produk (opsional): kosong bila produk tak bervarian → tampil seperti biasa.
+  const [allCombos, allProducts, salesCounts, variants] = await Promise.all([
     getCachedCombos(),
     getCachedProducts(),
     getCachedSalesCountByProduct(),
+    getCachedVariantsByProduct(product.id),
   ])
+  const hasVariants = variants.length > 0
   const soldCount = salesCounts[product.id] ?? 0
   const stockById: Record<string, number> = {}
   const imageById: Record<string, string> = {}
@@ -140,7 +145,9 @@ export default async function ProductDetailPage({
           {/* 3 — Informasi utama + deskripsi: mengisi kolom kanan di desktop */}
           <div className="flex flex-col gap-2">
             <div className="lg:overflow-hidden lg:rounded-xl">
-              <ProductInfo product={product} soldCount={soldCount} />
+              {/* Produk bervarian → harga disembunyikan di ProductInfo, ditampilkan VariantSelector */}
+              <ProductInfo product={product} soldCount={soldCount} showPrice={!hasVariants} />
+              {hasVariants && <VariantSelector productId={product.id} variants={variants} />}
             </div>
             {/* 5 — Deskripsi / spesifikasi produk (di bawah info, kolom kanan desktop) */}
             <div className="lg:overflow-hidden lg:rounded-xl">
@@ -173,6 +180,7 @@ export default async function ProductDetailPage({
         name={product.name}
         category={product.category}
         sku={product.sku}
+        variants={variants}
       />
 
       {/* Catat produk ini ke riwayat "pernah dilihat" (localStorage, sisi-klien) */}

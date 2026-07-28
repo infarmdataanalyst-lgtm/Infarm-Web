@@ -77,14 +77,16 @@ export function subscribeCart(callback: () => void): () => void {
 // === Tulis Cookie ===
 
 // Menambahkan produk ke keranjang lalu menyimpannya kembali ke cookie.
-// Jika produk sudah ada, jumlahnya diakumulasi. Mengembalikan keranjang terbaru.
+// Item dibedakan per (productId + variantId): produk sama beda varian = baris terpisah.
+// Jika kombinasi sudah ada, jumlahnya diakumulasi. Mengembalikan keranjang terbaru.
 export function addToCart(item: CartItem): CartItem[] {
   const cart = getCart()
-  const existing = cart.find((i) => i.productId === item.productId)
+  const existing = cart.find((i) => i.productId === item.productId && i.variantId === item.variantId)
 
   if (existing) {
     existing.quantity += item.quantity
     existing.price = item.price // sinkronkan harga terbaru
+    if (item.variantName) existing.variantName = item.variantName
   } else {
     cart.push(item)
   }
@@ -124,23 +126,24 @@ export function removeComboFromCart(comboId: string): CartItem[] {
   return cart
 }
 
-// Mengubah jumlah (quantity) satu produk di keranjang. Jumlah < 1 akan menghapus item.
-// Mengembalikan keranjang terbaru.
-export function updateQuantity(productId: string, quantity: number): CartItem[] {
+// Mengubah jumlah (quantity) satu baris keranjang (produk + varian tertentu). Jumlah < 1 menghapus
+// baris tsb. variantId dihilangkan → baris produk tanpa varian. Mengembalikan keranjang terbaru.
+export function updateQuantity(productId: string, quantity: number, variantId?: string): CartItem[] {
   let cart = getCart()
   if (quantity < 1) {
-    cart = cart.filter((i) => i.productId !== productId)
+    cart = cart.filter((i) => !(i.productId === productId && i.variantId === variantId))
   } else {
-    const item = cart.find((i) => i.productId === productId)
+    const item = cart.find((i) => i.productId === productId && i.variantId === variantId)
     if (item) item.quantity = quantity
   }
   writeCart(cart)
   return cart
 }
 
-// Menghapus satu produk dari keranjang. Mengembalikan keranjang terbaru.
-export function removeFromCart(productId: string): CartItem[] {
-  const cart = getCart().filter((i) => i.productId !== productId)
+// Menghapus satu baris keranjang (produk + varian tertentu). Bila variantId dihilangkan,
+// menghapus baris produk tanpa varian. Mengembalikan keranjang terbaru.
+export function removeFromCart(productId: string, variantId?: string): CartItem[] {
+  const cart = getCart().filter((i) => !(i.productId === productId && i.variantId === variantId))
   writeCart(cart)
   return cart
 }

@@ -6,10 +6,22 @@
 // SAAT animasi tiba di ikon (lihat handleFlyComplete).
 
 import { useRouter } from 'next/navigation'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { addToCart, setCheckoutItems, showCartToast, CART_BUMP_EVENT } from '@/lib/cart-client'
 import { trackAddToCart } from '@/lib/analytics'
+import { formatRupiah } from '@/lib/format'
 import FlyToCart, { type FlyPoint } from '@/components/product/FlyToCart'
+import BottomSheet from '@/components/checkout/BottomSheet'
+import VariantChips from '@/components/product/VariantChips'
+import type { ProductVariant } from '@/types/variant'
+import {
+  subscribeVariant,
+  getSelectedVariant,
+  getServerSelectedVariant,
+  setSelectedVariant,
+  pickDefaultVariant,
+  toSelectedVariant,
+} from '@/lib/variant-selection'
 
 // Satu partikel animasi yang sedang berjalan
 type Particle = { id: number; start: FlyPoint; end: FlyPoint }
@@ -21,12 +33,14 @@ export default function StickyBuyBar({
   name,
   category,
   sku,
+  variants = [],
 }: {
   productId: string
   price: number
   name: string // untuk payload GA4 add_to_cart
   category: string
   sku?: string
+  variants?: ProductVariant[] // varian produk (kosong = produk tak bervarian → perilaku lama)
 }) {
   const router = useRouter()
   const addButtonRef = useRef<HTMLButtonElement>(null)
@@ -34,19 +48,73 @@ export default function StickyBuyBar({
   const [particles, setParticles] = useState<Particle[]>([])
   const [justAdded, setJustAdded] = useState(false)
 
+  const hasVariants = variants.length > 0
+  const selectedStore = useSyncExternalStore(
+    subscribeVariant,
+    getSelectedVariant,
+    getServerSelectedVariant,
+  )
+
+  // Deteksi mobile (< lg) → di mobile, pilihan varian muncul lewat bottom-sheet, bukan inline.
+  const [isMobile, setIsMobile] = useState(false)
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 1023px)')
+    const update = () => setIsMobile(mq.matches)
+    update()
+    mq.addEventListener('change', update)
+    return () => mq.removeEventListener('change', update)
+  }, [])
+
+  // Bottom-sheet varian (mobile): intent 'add' (ke keranjang) atau 'buy' (beli langsung).
+  const [sheetIntent, setSheetIntent] = useState<'add' | 'buy' | null>(null)
+
+  // Seed varian default ke store (jaga-jaga bila StickyBuyBar ter-mount sebelum VariantSelector).
+  useEffect(() => {
+    if (!hasVariants) return
+    const def = pickDefaultVariant(variants)
+    if (def) setSelectedVariant(toSelectedVariant(productId, def))
+  }, [hasVariants, productId, variants])
+
+  // Varian aktif untuk produk ini (dari store, fallback default). null bila produk tak bervarian.
+  const activeVariant = hasVariants
+    ? selectedStore && selectedStore.productId === productId
+      ? selectedStore
+      : (() => {
+          const def = pickDefaultVariant(variants)
+          return def ? toSelectedVariant(productId, def) : null
+        })()
+    : null
+
+  // Harga efektif = harga varian bila bervarian, else harga produk. Stok habis → tombol nonaktif.
+  const effectivePrice = activeVariant ? activeVariant.price : price
+  const outOfStock = hasVariants && (!activeVariant || activeVariant.stock <= 0)
+  // Di mobile+bervarian, tombol bar SELALU aktif (pemilihan varian & cek stok terjadi di bottom-sheet).
+  const barOutOfStock = outOfStock && !(hasVariants && isMobile)
+
   // Menyimpan ke cookie + memicu efek pop pada ikon. Dipakai saat animasi tiba (atau fallback).
   const commitAdd = useCallback(() => {
-    addToCart({ productId, quantity: 1, price }) // tulis cookie → badge naik reaktif
+    addToCart({
+      productId,
+      quantity: 1,
+      price: effectivePrice,
+      variantId: activeVariant?.variantId,
+      variantName: activeVariant?.name,
+    })
     // GA4 add_to_cart: dikirim SETELAH item masuk cookie keranjang (bukan sebelum)
-    trackAddToCart({ id: productId, sku, name, category, price }, 1)
+    trackAddToCart({ id: productId, sku, name, category, price: effectivePrice }, 1)
     window.dispatchEvent(new CustomEvent(CART_BUMP_EVENT)) // pop ikon keranjang
     showCartToast() // toast sukses
     setJustAdded(true)
     window.setTimeout(() => setJustAdded(false), 1500)
-  }, [productId, price, sku, name, category])
+  }, [productId, effectivePrice, activeVariant, sku, name, category])
 
-  // Klik "+ Keranjang": hitung koordinat tombol → ikon keranjang, lalu luncurkan partikel.
+  // Klik "+ Keranjang": di mobile & produk bervarian → buka bottom-sheet pilih varian dulu.
   function handleAddToCart() {
+    if (hasVariants && isMobile) {
+      setSheetIntent('add')
+      return
+    }
+    if (outOfStock) return // varian terpilih habis → jangan tambah
     const cartEl = document.getElementById('cart-anchor')
     const button = addButtonRef.current
 
@@ -80,34 +148,71 @@ export default function StickyBuyBar({
   // setCheckoutItems wajib dipanggil karena halaman /checkout membaca cookie checkout (infarm_checkout),
   // bukan seluruh isi keranjang. Tanpa ini, checkout menampilkan snapshot lama / dummy (produk berbeda).
   function handleBuyNow() {
-    const item = { productId, quantity: 1, price }
+    if (hasVariants && isMobile) {
+      setSheetIntent('buy')
+      return
+    }
+    doBuyNow()
+  }
+
+  // Eksekusi beli langsung (dipakai tombol desktop & konfirmasi sheet mobile).
+  function doBuyNow() {
+    if (outOfStock) return // varian terpilih habis → jangan lanjut
+    const item = {
+      productId,
+      quantity: 1,
+      price: effectivePrice,
+      variantId: activeVariant?.variantId,
+      variantName: activeVariant?.name,
+    }
     addToCart(item)
     setCheckoutItems([item])
     router.push('/checkout')
+  }
+
+  // Konfirmasi dari bottom-sheet: jalankan aksi sesuai intent, lalu tutup sheet.
+  function confirmSheet() {
+    if (outOfStock) return
+    if (sheetIntent === 'buy') doBuyNow()
+    else commitAdd()
+    setSheetIntent(null)
   }
 
   return (
     <>
       <div className="fixed inset-x-0 bottom-0 z-40 border-t border-zinc-200 bg-white">
         <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
-          {/* Tombol "Beli Langsung" — putih, border hitam */}
-          <button
-            type="button"
-            onClick={handleBuyNow}
-            className="flex-1 rounded-xl border-2 border-zinc-900 bg-white py-3 text-base font-bold text-zinc-900 transition hover:bg-zinc-50 active:scale-[0.99]"
-          >
-            Beli Langsung
-          </button>
+          {barOutOfStock ? (
+            // Varian terpilih habis → satu tombol nonaktif "Stok Habis"
+            <button
+              type="button"
+              disabled
+              className="flex-1 cursor-not-allowed rounded-xl bg-zinc-200 py-3 text-base font-bold text-zinc-400"
+            >
+              Stok Habis
+            </button>
+          ) : (
+            <>
+              {/* Tombol "Beli Langsung" — putih, border hitam */}
+              <button
+                type="button"
+                onClick={handleBuyNow}
+                className="flex-1 rounded-xl border-2 border-zinc-900 bg-white py-3 text-base font-bold text-zinc-900 transition hover:bg-zinc-50 active:scale-[0.99]"
+              >
+                Beli Langsung
+              </button>
 
-          {/* Tombol "+ Keranjang" — hijau brand */}
-          <button
-            ref={addButtonRef}
-            type="button"
-            onClick={handleAddToCart}
-            className="flex-1 rounded-xl bg-brand-primary py-3 text-base font-bold text-white shadow-sm transition hover:brightness-90 active:scale-[0.99]"
-          >
-            {justAdded ? '✓ Ditambahkan' : '+ Keranjang'}
-          </button>
+              {/* Tombol "+ Keranjang" — hijau brand */}
+              <button
+                ref={addButtonRef}
+                type="button"
+                onClick={handleAddToCart}
+                className="flex-1 rounded-xl bg-brand-primary py-3 text-base font-bold text-white shadow-sm transition hover:brightness-90 active:scale-[0.99]"
+              >
+                {justAdded ? '✓ Ditambahkan' : '+ Keranjang'}
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -120,6 +225,52 @@ export default function StickyBuyBar({
           onComplete={() => handleFlyComplete(p.id)}
         />
       ))}
+
+      {/* Bottom-sheet pilih varian (mobile) — muncul saat menekan +Keranjang / Beli Langsung */}
+      {hasVariants && (
+        <BottomSheet open={sheetIntent !== null} onClose={() => setSheetIntent(null)}>
+          <div className="px-5 pb-6 pt-5">
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-base font-bold text-zinc-900">Pilih Varian</h3>
+                <p className="mt-0.5 text-sm text-zinc-500">{name}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSheetIntent(null)}
+                aria-label="Tutup"
+                className="rounded-full p-1 text-zinc-400 transition hover:bg-zinc-100"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Harga + stok varian terpilih */}
+            <div className="mb-4 flex flex-wrap items-baseline gap-x-2">
+              <span className="text-2xl font-bold text-red-500">{formatRupiah(effectivePrice)}</span>
+              <span className={`text-sm ${outOfStock ? 'text-red-500' : 'text-zinc-500'}`}>
+                {outOfStock ? 'Stok habis' : `Stok: ${activeVariant?.stock ?? 0}`}
+              </span>
+            </div>
+
+            <VariantChips productId={productId} variants={variants} />
+
+            {/* Tombol konfirmasi sesuai intent */}
+            <button
+              type="button"
+              onClick={confirmSheet}
+              disabled={outOfStock}
+              className="mt-5 w-full rounded-xl bg-brand-primary py-3 text-base font-bold text-white transition hover:brightness-90 active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-400"
+            >
+              {outOfStock
+                ? 'Stok Habis'
+                : sheetIntent === 'buy'
+                  ? 'Beli Sekarang'
+                  : 'Tambahkan ke Keranjang'}
+            </button>
+          </div>
+        </BottomSheet>
+      )}
     </>
   )
 }

@@ -104,6 +104,8 @@ export type CheckoutItem = {
   price: number
   imageUrl: string
   isPromoItem?: boolean // true = produk GRATIS hadiah promo (harga 0, tampil "Gratis")
+  variantId?: string // varian produk yang dipilih (produk bervarian)
+  variantName?: string // nama varian untuk tampilan, mis. "50 Biji"
 }
 
 // Placeholder foto produk (TODO: ganti foto asli setelah OMS selesai)

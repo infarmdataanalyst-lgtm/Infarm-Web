@@ -128,6 +128,8 @@ export default function CheckoutPage() {
           quantity: ci.quantity,
           price: ci.price,
           imageUrl: product.imageUrl,
+          variantId: ci.variantId,
+          variantName: ci.variantName,
         },
       ]
     })
@@ -244,7 +246,8 @@ export default function CheckoutPage() {
             productId: item.id,
             name: item.name,
             quantity: item.quantity,
-            price: item.price, // diabaikan server — harga otoritatif diambil dari DB (K-3)
+            price: item.price, // diabaikan server — harga otoritatif diambil dari DB/varian (K-3)
+            variantId: item.variantId, // server pakai untuk harga & stok varian (Tahap 4)
           })),
           // Server menghitung ulang total dari harga DB + ongkir + diskon (totalAmount client diabaikan)
           totalAmount: total, // dikirim untuk kompatibilitas; server tetap hitung ulang

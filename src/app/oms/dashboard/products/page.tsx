@@ -6,10 +6,11 @@
 // Produk hasil input OMS (mock DB) bisa diedit/dihapus permanen via API;
 // produk contoh bawaan (dummy) hanya bisa diubah sementara di layar.
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import OmsHeader from '@/components/oms/OmsHeader'
+import VariantManagerModal from '@/components/oms/VariantManagerModal'
 import { PRODUCT_CATEGORIES, getCategoryLabel } from '@/lib/data/categories'
 import {
   validateName,
@@ -59,6 +60,9 @@ type EditForm = {
 
 const LOW_STOCK_THRESHOLD = 10 // di bawah angka ini dianggap stok menipis
 const MAX_IMAGES = 9 // maksimal foto per produk (sesuai slider detail produk)
+
+// Ringkasan varian per produk (dari /api/variants/summary) — untuk tampilan harga & stok agregat.
+type VariantSummary = { count: number; totalStock: number; minPrice: number; maxPrice: number }
 
 // Pilihan rentang waktu untuk kolom "Terjual". days=null berarti sepanjang waktu.
 const SALES_RANGES: { label: string; days: number | null }[] = [
@@ -118,6 +122,19 @@ export default function ProductsPage() {
   // Modal Hapus
   const [deleteTarget, setDeleteTarget] = useState<Product | null>(null)
   const [deleting, setDeleting] = useState(false)
+
+  // Modal Kelola Varian + ringkasan varian per produk
+  const [variantTarget, setVariantTarget] = useState<Product | null>(null)
+  const [summaries, setSummaries] = useState<Record<string, VariantSummary>>({})
+
+  // Muat ringkasan varian (dipanggil saat mount & setiap kali varian berubah)
+  const loadSummaries = useCallback(() => {
+    fetch('/api/variants/summary')
+      .then((res) => res.json())
+      .then((data: { summaries?: Record<string, VariantSummary> }) => setSummaries(data.summaries ?? {}))
+      .catch(() => {})
+  }, [])
+  useEffect(() => loadSummaries(), [loadSummaries])
 
   // Data terjual per produk (peta productId → unit terjual) + rentang waktu terpilih
   const [soldCounts, setSoldCounts] = useState<Record<string, number>>({})
@@ -519,10 +536,23 @@ export default function ProductsPage() {
                         {product.categoryLabel}
                       </span>
                     </td>
-                    <td className={`px-5 py-4 text-gray-700 ${product.archived ? 'opacity-60' : ''}`}>{formatRupiah(product.price)}</td>
+                    <td className={`px-5 py-4 text-gray-700 ${product.archived ? 'opacity-60' : ''}`}>
+                      {summaries[product.id] ? (
+                        // Produk bervarian → tampilkan rentang harga varian (bukan harga produk)
+                        <span>
+                          {summaries[product.id].minPrice === summaries[product.id].maxPrice
+                            ? formatRupiah(summaries[product.id].minPrice)
+                            : `${formatRupiah(summaries[product.id].minPrice)} – ${formatRupiah(summaries[product.id].maxPrice)}`}
+                          <span className="ml-1 text-xs text-emerald-600">({summaries[product.id].count} varian)</span>
+                        </span>
+                      ) : (
+                        formatRupiah(product.price)
+                      )}
+                    </td>
                     <td className="px-5 py-4">
                       <div className="flex items-center gap-2">
-                        <StockBadge stock={product.stock} />
+                        {/* Produk bervarian → total stok semua varian */}
+                        <StockBadge stock={summaries[product.id]?.totalStock ?? product.stock} />
                         {/* Arsip cepat untuk produk stok habis yang belum diarsipkan */}
                         {product.stock === 0 && !product.archived && (
                           <button
@@ -554,6 +584,17 @@ export default function ProductsPage() {
                           <PencilIcon />
                           Edit
                         </button>
+                        {/* Kelola varian — hanya produk tersimpan (mock DB / Supabase), bukan produk contoh */}
+                        {product.persisted && (
+                          <button
+                            type="button"
+                            onClick={() => setVariantTarget(product)}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50"
+                          >
+                            <LayersIcon />
+                            Varian{summaries[product.id] ? ` (${summaries[product.id].count})` : ''}
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => toggleArchive(product)}
@@ -720,6 +761,16 @@ export default function ProductsPage() {
         </div>
       )}
 
+      {/* === Modal Kelola Varian === */}
+      {variantTarget && (
+        <VariantManagerModal
+          productId={variantTarget.id}
+          productName={variantTarget.name}
+          onClose={() => setVariantTarget(null)}
+          onChanged={loadSummaries}
+        />
+      )}
+
       {/* === Toast sukses === */}
       {toast && (
         <div className="fixed bottom-6 left-1/2 z-[60] -translate-x-1/2" role="status">
@@ -836,6 +887,16 @@ function TrashIcon() {
       <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
       <line x1="10" y1="11" x2="10" y2="17" />
       <line x1="14" y1="11" x2="14" y2="17" />
+    </svg>
+  )
+}
+
+function LayersIcon() {
+  return (
+    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="m12 2 9 5-9 5-9-5 9-5Z" />
+      <path d="m3 12 9 5 9-5" />
+      <path d="m3 17 9 5 9-5" />
     </svg>
   )
 }

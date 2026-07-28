@@ -93,6 +93,7 @@ type OrderItemRow = {
   price_at_purchase: number
   is_promo_item?: boolean // penanda produk gratis promo (kolom baru; opsional untuk baris warisan)
   promotion_id?: string | null // id promosi penyebab gratis (kolom baru)
+  variant_id?: string | null // varian produk yang dipilih (kolom baru; null bila tak bervarian)
 }
 
 // === Error khusus stok tidak cukup (dilempar dari saveOrder) ===
@@ -139,8 +140,27 @@ async function resolveProductInfo(
   return map
 }
 
-// Mengubah baris order_items → OrderItem (nama & foto di-resolve dari peta produk).
-function itemRowToItem(row: OrderItemRow, info: Map<string, ResolvedProduct>): OrderItem {
+// Mengambil nama varian untuk sekumpulan variant_id (order_items hanya simpan id). Map id→nama_varian.
+async function resolveVariantNames(
+  supabase: ReturnType<typeof createAdminClient>,
+  variantIds: (string | null | undefined)[],
+): Promise<Map<string, string>> {
+  const ids = [...new Set(variantIds)].filter((id): id is string => Boolean(id) && UUID_RE.test(id as string))
+  const map = new Map<string, string>()
+  if (ids.length === 0) return map
+  const { data } = await supabase.from('product_variants').select('id, nama_varian').in('id', ids)
+  for (const v of (data as { id: string; nama_varian: string }[] | null) ?? []) {
+    map.set(v.id, v.nama_varian)
+  }
+  return map
+}
+
+// Mengubah baris order_items → OrderItem (nama & foto di-resolve dari peta produk; nama varian dari peta varian).
+function itemRowToItem(
+  row: OrderItemRow,
+  info: Map<string, ResolvedProduct>,
+  variantInfo?: Map<string, string>,
+): OrderItem {
   const resolved = info.get(row.product_id)
   const item: OrderItem = {
     productId: row.product_id,
@@ -151,6 +171,11 @@ function itemRowToItem(row: OrderItemRow, info: Map<string, ResolvedProduct>): O
   if (resolved?.imageUrl) item.imageUrl = resolved.imageUrl
   if (row.is_promo_item) item.isPromoItem = true
   if (row.promotion_id) item.promotionId = row.promotion_id
+  if (row.variant_id) {
+    item.variantId = row.variant_id
+    const vname = variantInfo?.get(row.variant_id)
+    if (vname) item.variantName = vname
+  }
   return item
 }
 
@@ -253,15 +278,16 @@ export async function readOrdersFiltered(opts: OrderFilterOptions = {}): Promise
   // Ambil items & resolve produk (sama seperti readOrders)
   const { data: itemData } = await supabase
     .from('order_items')
-    .select('order_id, product_id, quantity, price_at_purchase, is_promo_item, promotion_id')
+    .select('order_id, product_id, quantity, price_at_purchase, is_promo_item, promotion_id, variant_id')
     .in('order_id', rows.map((r) => r.id))
   const itemRows = (itemData as OrderItemRow[]) ?? []
 
   const info = await resolveProductInfo(supabase, itemRows.map((r) => r.product_id))
+  const variantInfo = await resolveVariantNames(supabase, itemRows.map((r) => r.variant_id))
   const itemsByOrder = new Map<string, OrderItem[]>()
   for (const ir of itemRows) {
     const list = itemsByOrder.get(ir.order_id) ?? []
-    list.push(itemRowToItem(ir, info))
+    list.push(itemRowToItem(ir, info, variantInfo))
     itemsByOrder.set(ir.order_id, list)
   }
 
@@ -288,15 +314,16 @@ export async function readOrders(): Promise<Order[]> {
   // Ambil semua item untuk order-order ini dalam satu query, lalu kelompokkan
   const { data: itemData } = await supabase
     .from('order_items')
-    .select('order_id, product_id, quantity, price_at_purchase, is_promo_item, promotion_id')
+    .select('order_id, product_id, quantity, price_at_purchase, is_promo_item, promotion_id, variant_id')
     .in('order_id', rows.map((r) => r.id))
   const itemRows = (itemData as OrderItemRow[]) ?? []
 
   const info = await resolveProductInfo(supabase, itemRows.map((r) => r.product_id))
+  const variantInfo = await resolveVariantNames(supabase, itemRows.map((r) => r.variant_id))
   const itemsByOrder = new Map<string, OrderItem[]>()
   for (const ir of itemRows) {
     const list = itemsByOrder.get(ir.order_id) ?? []
-    list.push(itemRowToItem(ir, info))
+    list.push(itemRowToItem(ir, info, variantInfo))
     itemsByOrder.set(ir.order_id, list)
   }
 
@@ -321,12 +348,13 @@ export async function getOrderByOrderId(orderId: string): Promise<Order | null> 
   const row = data as OrderRow
   const { data: itemData } = await supabase
     .from('order_items')
-    .select('order_id, product_id, quantity, price_at_purchase, is_promo_item, promotion_id')
+    .select('order_id, product_id, quantity, price_at_purchase, is_promo_item, promotion_id, variant_id')
     .eq('order_id', row.id)
   const itemRows = (itemData as OrderItemRow[]) ?? []
   const info = await resolveProductInfo(supabase, itemRows.map((r) => r.product_id))
+  const variantInfo = await resolveVariantNames(supabase, itemRows.map((r) => r.variant_id))
 
-  return rowToOrder(row, itemRows.map((ir) => itemRowToItem(ir, info)))
+  return rowToOrder(row, itemRows.map((ir) => itemRowToItem(ir, info, variantInfo)))
 }
 
 // Membaca SEMUA pesanan milik satu nomor telepon (untuk lacak/batalkan by no_telepon).
@@ -350,14 +378,15 @@ export async function getOrdersByPhone(phone: string): Promise<Order[]> {
   // Ambil item semua order tsekaligus lalu kelompokkan (sama pola readOrders)
   const { data: itemData } = await supabase
     .from('order_items')
-    .select('order_id, product_id, quantity, price_at_purchase, is_promo_item, promotion_id')
+    .select('order_id, product_id, quantity, price_at_purchase, is_promo_item, promotion_id, variant_id')
     .in('order_id', rows.map((r) => r.id))
   const itemRows = (itemData as OrderItemRow[]) ?? []
   const info = await resolveProductInfo(supabase, itemRows.map((r) => r.product_id))
+  const variantInfo = await resolveVariantNames(supabase, itemRows.map((r) => r.variant_id))
   const itemsByOrder = new Map<string, OrderItem[]>()
   for (const ir of itemRows) {
     const list = itemsByOrder.get(ir.order_id) ?? []
-    list.push(itemRowToItem(ir, info))
+    list.push(itemRowToItem(ir, info, variantInfo))
     itemsByOrder.set(ir.order_id, list)
   }
 
@@ -380,6 +409,8 @@ export async function saveOrder(input: CreateOrderInput): Promise<Order> {
     // Penanda produk gratis promo (RPC menyimpan bila kolom sudah di-migrate; aman diabaikan bila belum)
     is_promo_item: it.isPromoItem ?? false,
     promotion_id: it.promotionId ?? null,
+    // Varian produk yang dipilih (null bila tak bervarian). RPC pakai ini untuk stok & simpan variant_id.
+    variant_id: it.variantId ?? null,
   }))
 
   // Coba beberapa kali untuk mengatasi tabrakan nomor_invoice acak (unique violation)

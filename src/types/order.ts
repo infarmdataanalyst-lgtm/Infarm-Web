@@ -13,6 +13,8 @@ export type OrderItem = {
   price: number // harga satuan saat checkout (snapshot = price_at_purchase). 0 untuk produk gratis promo.
   isPromoItem?: boolean // true = produk GRATIS hadiah promosi (type='free_product'); tak menambah subtotal
   promotionId?: string | null // id promosi penyebab produk ini gratis (null untuk item normal)
+  variantId?: string | null // varian produk yang dipilih (null bila produk tak bervarian)
+  variantName?: string // nama varian di-resolve saat baca (mis. "50 Biji") — untuk tampilan invoice
 }
 
 // Status pembayaran pesanan (app-facing). DB: PENDING→Menunggu, PAID→Lunas, FAILED→Gagal.

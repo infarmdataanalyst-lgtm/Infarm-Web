@@ -8,6 +8,8 @@ export type CartItem = {
   quantity: number
   price: number
   comboId?: string
+  variantId?: string // varian produk yang dipilih (produk bervarian); undefined bila tak bervarian
+  variantName?: string // nama varian untuk tampilan keranjang, mis. "50 Biji"
 }
 
 // Ringkasan promo/combo yang tercapai saat checkout — disimpan ke cookie agar bisa diteruskan
@@ -31,4 +33,6 @@ export type CartLineItem = {
   quantity: number
   selected: boolean
   badge?: string
+  variantId?: string // varian terpilih (produk bervarian)
+  variantName?: string // nama varian untuk tampilan, mis. "50 Biji"
 }

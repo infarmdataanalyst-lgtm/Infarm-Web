@@ -140,6 +140,10 @@ export default async function CheckoutSuccessPage({
                   <p className="truncate text-sm font-semibold text-zinc-900">
                     {item.isPromoItem ? `🎁 ${item.name}` : item.name}
                   </p>
+                  {/* Nama varian terpilih (produk bervarian) */}
+                  {item.variantName && (
+                    <p className="truncate text-xs font-medium text-brand-primary">Varian: {item.variantName}</p>
+                  )}
                   <p className="text-xs text-zinc-400">
                     {item.isPromoItem ? 'Bonus Promo' : `${item.quantity}× item`}
                   </p>

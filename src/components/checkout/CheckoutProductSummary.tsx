@@ -35,6 +35,10 @@ export default function CheckoutProductSummary({ items }: { items: CheckoutItem[
               <h3 className="line-clamp-2 text-sm font-medium leading-snug text-zinc-800">
                 {item.name}
               </h3>
+              {/* Nama varian terpilih (produk bervarian) */}
+              {item.variantName && (
+                <p className="mt-0.5 text-xs font-medium text-brand-primary">Varian: {item.variantName}</p>
+              )}
               {item.variant && (
                 <p className="mt-0.5 text-xs text-zinc-500">Varian: {item.variant}</p>
               )}

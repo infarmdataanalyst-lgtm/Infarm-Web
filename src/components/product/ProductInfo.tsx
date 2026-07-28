@@ -11,9 +11,11 @@ import StarRating from '@/components/product/StarRating'
 export default function ProductInfo({
   product,
   soldCount = 0,
+  showPrice = true,
 }: {
   product: ProductDetail
   soldCount?: number
+  showPrice?: boolean // false bila produk bervarian → harga ditampilkan oleh VariantSelector
 }) {
   const { name, originalPrice, promoPrice, rating, reviewCount } = product
 
@@ -28,21 +30,23 @@ export default function ProductInfo({
       {/* === Nama produk === */}
       <h1 className="text-base font-medium leading-snug text-zinc-800">{name}</h1>
 
-      {/* === Harga === */}
-      <div className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        {/* Harga jual efektif (promoPrice) — paling menonjol */}
-        <span className="text-2xl font-bold text-red-500">{formatRupiah(promoPrice)}</span>
-        {/* Harga asli (coret) */}
-        {originalPrice > promoPrice && (
-          <span className="text-sm text-zinc-400 line-through">{formatRupiah(originalPrice)}</span>
-        )}
-        {/* Badge persentase diskon */}
-        {discountPercent > 0 && (
-          <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs font-bold text-red-500">
-            -{discountPercent}%
-          </span>
-        )}
-      </div>
+      {/* === Harga === (disembunyikan bila produk bervarian; harga per-varian di VariantSelector) */}
+      {showPrice && (
+        <div className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          {/* Harga jual efektif (promoPrice) — paling menonjol */}
+          <span className="text-2xl font-bold text-red-500">{formatRupiah(promoPrice)}</span>
+          {/* Harga asli (coret) */}
+          {originalPrice > promoPrice && (
+            <span className="text-sm text-zinc-400 line-through">{formatRupiah(originalPrice)}</span>
+          )}
+          {/* Badge persentase diskon */}
+          {discountPercent > 0 && (
+            <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs font-bold text-red-500">
+              -{discountPercent}%
+            </span>
+          )}
+        </div>
+      )}
 
       {/* === Rating ringkas: bintang + angka rata-rata + jumlah ulasan === */}
       <div className="mt-2 flex items-center gap-2">

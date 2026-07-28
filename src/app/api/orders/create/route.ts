@@ -7,6 +7,7 @@ import { revalidatePath, revalidateTag } from 'next/cache'
 import { saveOrder, OrderStockError } from '@/lib/mock-db/orders'
 import { readProducts } from '@/lib/mock-db/products'
 import { readPromotions } from '@/lib/mock-db/promotions'
+import { getVariantsByIds } from '@/lib/mock-db/variants'
 import { isPromotionExpired } from '@/types/promotion'
 import type { CreateOrderInput, OrderItem, OrderShippingAddress } from '@/types/order'
 
@@ -29,13 +30,16 @@ function isValidPayload(body: unknown): body is CreateOrderInput {
   const itemsOk =
     Array.isArray(b.items) &&
     b.items.length > 0 &&
-    b.items.every(
-      (item) =>
-        typeof (item as OrderItem).productId === 'string' &&
-        typeof (item as OrderItem).quantity === 'number' &&
-        (item as OrderItem).quantity >= 1 &&
-        typeof (item as OrderItem).price === 'number',
-    )
+    b.items.every((item) => {
+      const it = item as OrderItem
+      return (
+        typeof it.productId === 'string' &&
+        typeof it.quantity === 'number' &&
+        it.quantity >= 1 &&
+        typeof it.price === 'number' &&
+        (it.variantId === undefined || it.variantId === null || typeof it.variantId === 'string')
+      )
+    })
 
   return (
     typeof b.customerName === 'string' &&
@@ -72,6 +76,12 @@ export async function POST(request: Request) {
   const products = await readProducts()
   const byId = new Map(products.map((p) => [p.id, p]))
 
+  // Varian yang dipilih (fresh, bukan cache) — untuk harga & validasi otoritatif produk bervarian.
+  const variantIds = body.items
+    .map((it) => (it as OrderItem).variantId)
+    .filter((v): v is string => typeof v === 'string' && v.length > 0)
+  const variantMap = await getVariantsByIds(variantIds)
+
   let subtotal = 0
   const pricedItems: OrderItem[] = []
   for (const it of body.items) {
@@ -83,13 +93,34 @@ export async function POST(request: Request) {
         { status: 422 },
       )
     }
-    subtotal += prod.promoPrice * it.quantity
-    pricedItems.push({
-      productId: it.productId,
-      name: prod.name,
-      quantity: it.quantity,
-      price: prod.promoPrice, // snapshot harga jual dari DB
-    })
+
+    if (it.variantId) {
+      // === Produk BERVARIAN: harga OTORITATIF dari varian (bukan dari payload) ===
+      const variant = variantMap.get(it.variantId)
+      // Varian wajib ada & benar-benar milik produk ini → cegah manipulasi (harga/varian palsu).
+      if (!variant || variant.productId !== it.productId) {
+        return NextResponse.json(
+          { error: 'Varian produk tidak valid. Muat ulang halaman lalu coba lagi.' },
+          { status: 422 },
+        )
+      }
+      subtotal += variant.price * it.quantity
+      pricedItems.push({
+        productId: it.productId,
+        name: prod.name,
+        quantity: it.quantity,
+        price: variant.price, // snapshot harga VARIAN dari DB
+        variantId: it.variantId,
+      })
+    } else {
+      subtotal += prod.promoPrice * it.quantity
+      pricedItems.push({
+        productId: it.productId,
+        name: prod.name,
+        quantity: it.quantity,
+        price: prod.promoPrice, // snapshot harga jual dari DB
+      })
+    }
   }
 
   // === Produk gratis promo (type='free_product') — OTORITATIF di server ===

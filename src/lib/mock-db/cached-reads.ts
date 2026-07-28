@@ -21,6 +21,7 @@ import { readProducts, getProductById } from './products'
 import { getReviewsByProduct, getProductRatingSummary } from './reviews'
 import { readCombos } from './combos'
 import { getSalesCountByProduct } from './orders'
+import { getVariantsByProduct } from './variants'
 import type { Product } from '@/types/product'
 
 // Durasi cache storefront (detik). Data e-commerce tak berubah tiap detik; 30s cukup segar.
@@ -50,6 +51,15 @@ export function getCachedProductById(id: string) {
   return unstable_cache(() => getProductById(id), ['storefront-product', id], {
     revalidate: REVALIDATE,
     tags: ['products'],
+  })()
+}
+
+// Varian sebuah produk (chip pilihan di detail produk). Kosong bila produk tak bervarian.
+// Tag 'variants' untuk revalidasi saat OMS kelola varian nanti (form OMS di luar scope sekarang).
+export function getCachedVariantsByProduct(id: string) {
+  return unstable_cache(() => getVariantsByProduct(id), ['storefront-variants', id], {
+    revalidate: REVALIDATE,
+    tags: ['variants'],
   })()
 }
 

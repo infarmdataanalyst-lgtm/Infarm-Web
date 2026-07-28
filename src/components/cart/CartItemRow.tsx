@@ -18,13 +18,13 @@ export default function CartItemRow({
   onRemove,
 }: {
   item: CartLineItem
-  onToggleSelect: (productId: string) => void
-  onIncrement: (productId: string) => void
-  onDecrement: (productId: string) => void
-  onSetQuantity: (productId: string, quantity: number) => void
-  onRemove: (productId: string) => void
+  onToggleSelect: (productId: string, variantId?: string) => void
+  onIncrement: (productId: string, variantId?: string) => void
+  onDecrement: (productId: string, variantId?: string) => void
+  onSetQuantity: (productId: string, quantity: number, variantId?: string) => void
+  onRemove: (productId: string, variantId?: string) => void
 }) {
-  const { productId, name, imageUrl, price, originalPrice, quantity, selected } = item
+  const { productId, name, imageUrl, price, originalPrice, quantity, selected, variantId, variantName } = item
 
   // State teks lokal agar user bisa mengetik bebas (mis. mengosongkan field lalu ketik "10").
   // Disinkronkan bila quantity dari cookie berubah (mis. tombol +/-).
@@ -38,7 +38,7 @@ export default function CartItemRow({
     const parsed = parseInt(draft, 10)
     const next = Number.isNaN(parsed) || parsed < 1 ? 1 : parsed
     setDraft(String(next))
-    if (next !== quantity) onSetQuantity(productId, next)
+    if (next !== quantity) onSetQuantity(productId, next, variantId)
   }
 
   return (
@@ -47,7 +47,7 @@ export default function CartItemRow({
       <input
         type="checkbox"
         checked={selected}
-        onChange={() => onToggleSelect(productId)}
+        onChange={() => onToggleSelect(productId, variantId)}
         aria-label={`Pilih ${name}`}
         className="mt-1 h-5 w-5 shrink-0 accent-brand-primary"
       />
@@ -73,6 +73,13 @@ export default function CartItemRow({
           <h3 className="line-clamp-2 text-sm leading-snug text-zinc-800">{name}</h3>
         </Link>
 
+        {/* Nama varian terpilih (bila produk bervarian) */}
+        {variantName && (
+          <span className="mt-1 w-fit rounded bg-brand-surface px-2 py-0.5 text-xs font-medium text-brand-primary">
+            Varian: {variantName}
+          </span>
+        )}
+
         {/* Harga jual (merah) + harga coret */}
         <div className="mt-1 flex items-baseline gap-2">
           <span className="text-base font-bold text-red-500">{formatRupiah(price)}</span>
@@ -85,7 +92,7 @@ export default function CartItemRow({
         <div className="mt-auto flex items-center justify-between pt-2">
           <button
             type="button"
-            onClick={() => onRemove(productId)}
+            onClick={() => onRemove(productId, variantId)}
             aria-label={`Hapus ${name}`}
             className="p-1 text-red-500 transition active:scale-95"
           >
@@ -96,7 +103,7 @@ export default function CartItemRow({
           <div className="flex items-center rounded-lg border border-zinc-300">
             <button
               type="button"
-              onClick={() => onDecrement(productId)}
+              onClick={() => onDecrement(productId, variantId)}
               aria-label="Kurangi jumlah"
               className="px-3 py-1 text-lg leading-none text-zinc-600 transition active:scale-95 disabled:opacity-40"
             >
@@ -119,7 +126,7 @@ export default function CartItemRow({
             />
             <button
               type="button"
-              onClick={() => onIncrement(productId)}
+              onClick={() => onIncrement(productId, variantId)}
               aria-label="Tambah jumlah"
               className="px-3 py-1 text-lg leading-none text-zinc-600 transition active:scale-95"
             >

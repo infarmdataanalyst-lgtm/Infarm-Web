@@ -31,6 +31,11 @@ import CartRecentlyViewed from '@/components/cart/CartRecentlyViewed'
 import CartFreeItems, { type FreeItemView } from '@/components/cart/CartFreeItems'
 import CartCheckoutBar from '@/components/cart/CartCheckoutBar'
 
+// Kunci unik satu baris keranjang (produk + varian). Tanpa varian → productId saja.
+function lineKey(productId: string, variantId?: string): string {
+  return variantId ? `${productId}::${variantId}` : productId
+}
+
 export default function CartPage() {
   const router = useRouter()
 
@@ -101,6 +106,7 @@ export default function CartPage() {
   }, [])
 
   // === Gabungkan item cookie dengan detail produk (nama, foto, harga coret, badge) ===
+  // Identitas baris = productId + variantId (produk sama beda varian = baris terpisah).
   const items: CartLineItem[] = useMemo(() => {
     return cookieCart.flatMap((ci) => {
       const product =
@@ -113,10 +119,13 @@ export default function CartPage() {
           name: product.name,
           imageUrl: product.imageUrl,
           price: ci.price,
-          originalPrice: product.originalPrice,
+          // Produk bervarian: harga = harga varian (ci.price), tanpa coret. Non-varian: pakai harga produk.
+          originalPrice: ci.variantId ? ci.price : product.originalPrice,
           quantity: ci.quantity,
-          selected: !excluded.has(ci.productId),
+          selected: !excluded.has(lineKey(ci.productId, ci.variantId)),
           badge: product.badge,
+          variantId: ci.variantId,
+          variantName: ci.variantName,
         },
       ]
     })
@@ -163,38 +172,39 @@ export default function CartPage() {
     })
   }, [promoRewards.freeProducts, omsProducts])
 
-  // === Aksi ===
+  // === Aksi === (identitas baris = productId + variantId)
 
-  function toggleSelect(productId: string) {
+  function toggleSelect(productId: string, variantId?: string) {
+    const key = lineKey(productId, variantId)
     setExcluded((prev) => {
       const next = new Set(prev)
-      if (next.has(productId)) next.delete(productId)
-      else next.add(productId)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
       return next
     })
   }
 
   function toggleSelectAll() {
-    setExcluded(allSelected ? new Set(items.map((i) => i.productId)) : new Set())
+    setExcluded(allSelected ? new Set(items.map((i) => lineKey(i.productId, i.variantId))) : new Set())
   }
 
-  function increment(productId: string) {
-    const item = cookieCart.find((i) => i.productId === productId)
-    if (item) updateQuantity(productId, item.quantity + 1)
+  function increment(productId: string, variantId?: string) {
+    const item = cookieCart.find((i) => i.productId === productId && i.variantId === variantId)
+    if (item) updateQuantity(productId, item.quantity + 1, variantId)
   }
 
-  function decrement(productId: string) {
-    const item = cookieCart.find((i) => i.productId === productId)
-    if (item) updateQuantity(productId, item.quantity - 1)
+  function decrement(productId: string, variantId?: string) {
+    const item = cookieCart.find((i) => i.productId === productId && i.variantId === variantId)
+    if (item) updateQuantity(productId, item.quantity - 1, variantId)
   }
 
   // Set jumlah langsung (dari input ketik manual). Minimal 1 (di bawah itu di-clamp oleh pemanggil).
-  function setQuantity(productId: string, quantity: number) {
-    updateQuantity(productId, quantity)
+  function setQuantity(productId: string, quantity: number, variantId?: string) {
+    updateQuantity(productId, quantity, variantId)
   }
 
-  function remove(productId: string) {
-    removeFromCart(productId)
+  function remove(productId: string, variantId?: string) {
+    removeFromCart(productId, variantId)
   }
 
   // Lanjut ke checkout: simpan item TERCENTANG + snapshot promo/combo yang tercapai.
@@ -203,6 +213,8 @@ export default function CartPage() {
       productId: i.productId,
       quantity: i.quantity,
       price: i.price,
+      variantId: i.variantId,
+      variantName: i.variantName,
     }))
     setCheckoutItems(chosen)
 
@@ -258,7 +270,7 @@ export default function CartPage() {
           <div className="mt-3 divide-y divide-zinc-100">
             {items.map((item) => (
               <CartItemRow
-                key={item.productId}
+                key={lineKey(item.productId, item.variantId)}
                 item={item}
                 onToggleSelect={toggleSelect}
                 onIncrement={increment}
