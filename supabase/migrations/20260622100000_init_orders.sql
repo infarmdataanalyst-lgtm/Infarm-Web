@@ -1,53 +1,45 @@
 -- supabase/migrations/20260622100000_init_orders.sql
--- Tabel orders (pesanan). Dipetakan dari tipe Order & OrderItem (src/types/order.ts).
--- Dijalankan via Dashboard -> SQL Editor.
+-- Tabel orders (pesanan) — SKEMA ASLI (kolom Bahasa Indonesia + enum English) sesuai data layer
+-- src/lib/mock-db/orders.ts (OrderRow) & RPC create_order_with_items.
 --
--- Catatan desain: items & logistik disimpan apa adanya agar bentuknya 1:1 dengan
--- tipe Order di aplikasi (mempermudah migrasi mock-db/orders.ts; signature tetap sama).
--- items berupa JSONB array: [{ "productId", "name", "quantity", "price" }, ...].
--- Bila nanti perlu query per-item (mis. laporan produk terlaris), bisa dinormalisasi
--- ke tabel order_items terpisah.
+-- Catatan sejarah: versi awal file ini memakai skema lama (order_id/items jsonb); skema asli dulu
+-- dibuat/diubah manual di Dashboard. File ini diselaraskan agar migrations bisa dijalankan dari nol
+-- di project Supabase baru. Enum disimpan sebagai text (English), dipetakan ke label Indonesia di app.
 
--- === Tabel orders ===
 create table if not exists public.orders (
-  id              uuid primary key default gen_random_uuid(),  -- id internal DB
-  order_id        text not null unique,                        -- nomor pesanan untuk pelanggan (mis. "INF...")
-  customer_name   text not null,
-  customer_phone  text,
-  order_date      timestamptz not null,                        -- tanggal pesan (dari payload checkout)
-  items           jsonb not null default '[]'::jsonb,          -- daftar item pesanan
-  total_amount    integer not null,                            -- total bayar (rupiah, tanpa desimal)
-  payment_status  text not null default 'Lunas',
-  status          text,                                        -- alur fulfillment; diisi aplikasi
-  courier         text,                                        -- logistics.courier (mis. "JNE")
-  service         text,                                        -- logistics.service (mis. "Reguler")
-  tracking_number text,                                        -- nomor resi
-  created_at      timestamptz not null default now(),          -- waktu insert ke DB
+  id                uuid primary key default gen_random_uuid(),
+  nomor_invoice     text unique,                    -- nomor pesanan pelanggan (INV-YYYYMMDD-XXXX)
+  email             text,                           -- opsional (order baru selalu null)
+  no_telepon        text,                           -- identitas guest (lacak/batalkan/review by phone)
+  nama_customer     text not null,
+  jumlah_total      integer not null,               -- total bayar (rupiah, tanpa desimal)
+  shipping_address  text,                           -- detail jalan/no rumah
+  provinsi          text,
+  kota              text,
+  kecamatan         text,
+  kelurahan         text,
+  kodepos           text,
+  nama_ekspedisi    text,                           -- logistics.courier (mis. "JNE")
+  jenis_layanan     text,                           -- logistics.service
+  no_tracking       text,                           -- nomor resi (diisi saat dikirim)
+  id_transaksi      text,                           -- id transaksi pembayaran (Xendit, nanti)
+  destination_id    text,                           -- _id kelurahan Mengantar (cek ongkir/booking)
+  status_pembayaran text not null default 'PENDING', -- PENDING|PAID|FAILED
+  order_status      text not null default 'PENDING', -- PENDING|PROCESSING|SHIPPED|COMPLETED|CANCELLED
+  created_at        timestamptz not null default now(),
 
-  -- Batasi status agar konsisten dengan OrderPaymentStatus & OrderFulfillmentStatus
-  constraint orders_payment_status_check check (
-    payment_status in ('Lunas', 'Menunggu', 'Gagal')
-  ),
-  constraint orders_status_check check (
-    status is null or status in (
-      'Menunggu Pembayaran',
-      'Diproses',
-      'Dikirim',
-      'Selesai',
-      'Dibatalkan'
-    )
+  constraint orders_status_pembayaran_check check (status_pembayaran in ('PENDING', 'PAID', 'FAILED')),
+  constraint orders_order_status_check check (
+    order_status in ('PENDING', 'PROCESSING', 'SHIPPED', 'COMPLETED', 'CANCELLED')
   )
 );
 
--- Index untuk urutan terbaru (OMS menampilkan pesanan terbaru di atas) & pencarian resi
+-- Index: urutan terbaru, pencarian by phone (lacak/batalkan), pencarian resi
 create index if not exists orders_created_at_idx on public.orders (created_at desc);
-create index if not exists orders_tracking_number_idx on public.orders (tracking_number);
+create index if not exists orders_no_telepon_idx on public.orders (no_telepon);
+create index if not exists orders_no_tracking_idx on public.orders (no_tracking);
 
 -- === Row Level Security (RLS) ===
--- Pesanan berisi data pribadi (nama, telepon) -> JANGAN dibuka ke publik (anon).
--- Semua baca/tulis pesanan dilakukan dari server lewat service_role (createAdminClient),
--- yang menembus RLS. Tanpa policy untuk anon -> akses publik otomatis ditolak.
+-- Berisi data pribadi (nama, telepon, alamat) → JANGAN dibuka ke anon. Semua baca/tulis lewat
+-- server (service_role / createAdminClient) yang menembus RLS. Tanpa policy publik.
 alter table public.orders enable row level security;
-
--- Sengaja TIDAK ada policy untuk anon. (Akses publik /track nanti lewat API server,
--- bukan query langsung dari browser.)
