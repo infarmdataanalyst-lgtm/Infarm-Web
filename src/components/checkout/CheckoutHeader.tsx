@@ -1,7 +1,7 @@
 'use client'
 
 // src/components/checkout/CheckoutHeader.tsx
-// Header halaman checkout: bar hijau sticky dengan tombol kembali (←) + judul "Checkout".
+// Header halaman checkout: bar putih sticky dengan tombol kembali (←) + judul "Checkout".
 
 import { useRouter } from 'next/navigation'
 
@@ -10,7 +10,7 @@ export default function CheckoutHeader() {
   const router = useRouter()
 
   return (
-    <header className="sticky top-0 z-30 bg-brand-primary text-white shadow-sm">
+    <header className="sticky top-0 z-30 border-b border-black/5 bg-brand-header text-zinc-900 shadow-sm">
       <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4 sm:px-6 lg:px-8">
         <button
           type="button"

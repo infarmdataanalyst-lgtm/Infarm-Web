@@ -1,6 +1,12 @@
+'use client'
+
 // src/components/home/ValuePropositionBanner.tsx
 // Section 2 homepage: banner keunggulan belanja di infarm.
-// Carousel horizontal yang bisa digeser di mobile; otomatis sejajar di layar lebar. Server Component.
+// Carousel horizontal yang bisa digeser di mobile; otomatis sejajar di layar lebar.
+// Client Component: kartu muncul dengan animasi scroll-reveal (fade-in + translateY) berurutan
+// (stagger) saat section masuk viewport — via IntersectionObserver native (tanpa library), once.
+
+import { useEffect, useRef, useState } from 'react'
 
 // Satu keunggulan/value proposition
 type ValueProp = {
@@ -39,15 +45,41 @@ const VALUE_PROPS: ValueProp[] = [
 
 // Menampilkan banner alasan membeli di website infarm sebagai carousel kartu.
 export default function ValuePropositionBanner() {
+  // Ref section untuk deteksi masuk viewport; `revealed` memicu animasi kartu (sekali saja).
+  const sectionRef = useRef<HTMLElement>(null)
+  const [revealed, setRevealed] = useState(false)
+
+  useEffect(() => {
+    const el = sectionRef.current
+    if (!el) return
+    // Hormati preferensi gerakan minim: langsung tampil tanpa animasi.
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setRevealed(true)
+      return
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          setRevealed(true)
+          observer.disconnect() // once: true — tak berulang
+        }
+      },
+      { threshold: 0.2 }, // picu saat ~20% section terlihat
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
+  // Background terang (brand-surface) = sama dengan section produk agar menyatu. Kartu putih.
   return (
-    <section className="w-full bg-brand-primary text-white">
+    <section ref={sectionRef} className="w-full bg-white text-zinc-900">
       <div className="mx-auto w-full max-w-6xl px-4 py-10 sm:px-6 lg:px-8">
-        {/* === Heading === */}
-        <p className="text-sm font-medium uppercase tracking-wide text-white/80">
+        {/* === Heading === (eyebrow aksen earthy; judul sentence case + font display) */}
+        <p className="text-sm font-semibold uppercase tracking-wide text-brand-soil">
           Keuntungan Eksklusif
         </p>
-        <h2 className="mt-1 text-2xl font-bold uppercase leading-tight sm:text-3xl">
-          Kenapa Harus Beli di Website infarm
+        <h2 className="mt-1 text-2xl font-bold leading-tight text-zinc-900 sm:text-3xl">
+          Kenapa harus beli di website infarm
         </h2>
 
         {/* === Carousel kartu === */}
@@ -56,17 +88,28 @@ export default function ValuePropositionBanner() {
           className="mt-6 flex snap-x snap-mandatory gap-4 overflow-x-auto scrollbar-hide"
           style={{ WebkitOverflowScrolling: 'touch', width: '100%' }}
         >
-          {VALUE_PROPS.map((vp) => (
+          {VALUE_PROPS.map((vp, index) => (
             <li
               key={vp.title}
-              className="min-w-[260px] flex-1 snap-start rounded-2xl bg-brand-light p-5 shadow-sm"
+              // Scroll-reveal: fade-in + translateY(24px→0). transform/opacity → tak sebabkan layout shift.
+              // Stagger via transition-delay per kartu (jeda 120ms). transition-all durasi 500ms ease-out.
+              style={{ transitionDelay: revealed ? `${index * 120}ms` : '0ms' }}
+              className={`min-w-[260px] flex-1 snap-start rounded-2xl border border-zinc-200 border-t-4 border-t-brand-primary bg-white p-4 shadow-md transition-all duration-500 ease-out hover:shadow-lg ${
+                revealed ? 'translate-y-0 opacity-100' : 'translate-y-6 opacity-0'
+              }`}
             >
-              <span className="text-3xl" aria-hidden>
-                {vp.icon}
-              </span>
-              {/* Teks gelap agar kontras di atas kartu hijau muda (brand-light) */}
-              <h3 className="mt-3 text-lg font-bold text-zinc-900">{vp.title}</h3>
-              <p className="mt-1 text-sm leading-relaxed text-zinc-700">
+              {/* Baris atas: ikon + judul sejajar → kartu lebih ringkas */}
+              <div className="flex items-center gap-3">
+                {/* Emoji dalam lingkaran hijau soft agar "pop" tanpa mewarnai kartu */}
+                <span
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#E8F5E0] text-xl"
+                  aria-hidden
+                >
+                  {vp.icon}
+                </span>
+                <h3 className="text-base font-bold leading-tight text-zinc-900">{vp.title}</h3>
+              </div>
+              <p className="mt-2 text-sm leading-relaxed text-zinc-700">
                 {vp.description}
               </p>
             </li>

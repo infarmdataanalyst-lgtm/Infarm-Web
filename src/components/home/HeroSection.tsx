@@ -28,7 +28,7 @@ export default function HeroSection() {
       {/* Fallback gradient — selalu ada di lapisan paling belakang (-z-20) */}
       <div
         aria-hidden
-        className="absolute inset-0 -z-20 bg-gradient-to-b from-sky-200 via-sky-100 to-green-200"
+        className="absolute inset-0 -z-20 bg-gradient-to-b from-brand-soil/30 via-brand-cream to-brand-light"
       />
       {/* Gambar background responsive: `fill` + `object-cover` mengisi penuh section dan
           crop proporsional di semua ukuran layar (mobile/tablet/desktop). `object-center`

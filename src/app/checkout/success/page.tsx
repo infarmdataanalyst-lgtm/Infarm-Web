@@ -71,15 +71,15 @@ export default async function CheckoutSuccessPage({
       <div className="mx-auto flex w-full max-w-md flex-col px-5 pb-8 md:max-w-xl lg:max-w-2xl">
         {/* === Header: tutup + judul (warna & tinggi disamakan dengan header beranda: bg-brand-primary, teks putih, h-14) === */}
         {/* -mx-5 px-5 agar latar hijau membentang penuh seperti header beranda */}
-        <header className="-mx-5 flex h-14 items-center gap-3 bg-brand-primary px-5 text-white md:px-8">
+        <header className="-mx-5 flex h-14 items-center gap-3 border-b border-black/5 bg-brand-header px-5 text-zinc-900 md:px-8">
           <Link
             href="/"
             aria-label="Tutup"
-            className="flex h-9 w-9 items-center justify-center rounded-full text-white transition hover:bg-white/15"
+            className="flex h-9 w-9 items-center justify-center rounded-full text-zinc-700 transition hover:bg-zinc-100"
           >
             <X className="h-5 w-5" />
           </Link>
-          <h1 className="text-lg font-bold text-white">Order Confirmed</h1>
+          <h1 className="text-lg font-bold text-zinc-900">Order Confirmed</h1>
         </header>
 
         {/* === Ilustrasi sukses === */}

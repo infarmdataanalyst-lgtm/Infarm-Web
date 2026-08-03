@@ -27,7 +27,7 @@ export default async function HomePage() {
   )
 
   return (
-    <main className="flex flex-1 flex-col">
+    <main className="flex flex-1 flex-col bg-brand-surface">
       {/* Section 1 — Hero & Navigation (berisi kolom pencarian + autocomplete) */}
       <HeroSection />
 

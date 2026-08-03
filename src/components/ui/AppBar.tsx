@@ -11,7 +11,7 @@ import ProfileIconLink from '@/components/ui/ProfileIconLink'
 // Menampilkan app bar global: grup kiri (menu + logo + nama brand) dan aksi search/cart/profile (kanan)
 export default function AppBar() {
   return (
-    <header className="fixed inset-x-0 top-0 z-50 bg-brand-primary text-white shadow-sm">
+    <header className="fixed inset-x-0 top-0 z-50 border-b border-black/5 bg-brand-header text-white shadow-sm">
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6 lg:px-8">
         {/* Grup kiri: menu, logo, nama brand — jarak antarelemen disamakan via gap */}
         <div className="flex items-center gap-3 sm:gap-4">
@@ -32,9 +32,10 @@ export default function AppBar() {
               width={36}
               height={36}
               priority
+              unoptimized
               className="h-9 w-auto object-contain"
             />
-            <span className="text-2xl font-bold tracking-tight">Infarm</span>
+            <span className="text-2xl font-bold tracking-tight text-white">Infarm</span>
           </Link>
         </div>
 
