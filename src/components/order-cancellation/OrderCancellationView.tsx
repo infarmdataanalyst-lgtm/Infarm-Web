@@ -140,16 +140,16 @@ export default function OrderCancellationView({
   return (
     <div className="flex min-h-screen justify-center bg-brand-surface text-zinc-900">
       <div className="mx-auto flex w-full max-w-md flex-col px-5 pb-10 md:max-w-xl">
-        {/* === Header hijau (membentang penuh lewat -mx-5) === */}
-        <header className="-mx-5 flex h-14 items-center gap-3 bg-brand-primary px-5 text-white md:px-8">
+        {/* === Header putih (membentang penuh lewat -mx-5) === */}
+        <header className="-mx-5 flex h-14 items-center gap-3 border-b border-black/5 bg-brand-header px-5 text-zinc-900 md:px-8">
           <Link
             href="/"
             aria-label="Tutup"
-            className="flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-white/15"
+            className="flex h-9 w-9 items-center justify-center rounded-full text-zinc-700 transition hover:bg-zinc-100"
           >
             <X className="h-5 w-5" />
           </Link>
-          <h1 className="text-lg font-bold">Pembatalan Pesanan</h1>
+          <h1 className="text-lg font-bold text-zinc-900">Pembatalan Pesanan</h1>
         </header>
 
         {/* === Fase: Loading === */}
