@@ -82,11 +82,13 @@ export default function ValuePropositionBanner() {
           Kenapa harus beli di website infarm
         </h2>
 
-        {/* === Carousel kartu === */}
-        {/* Geser horizontal di mobile (snap); di layar lebar keempat kartu tampil sejajar. */}
+        {/* === Kartu === */}
+        {/* Mobile: carousel geser horizontal (snap). Desktop (md+): grid statis, semua kartu
+            tampil penuh tanpa scroll. overflow-x-auto & snap DINONAKTIFKAN mulai md agar tak
+            ada scroll horizontal sisa layout mobile. */}
         <ul
-          className="mt-6 flex snap-x snap-mandatory gap-4 overflow-x-auto scrollbar-hide"
-          style={{ WebkitOverflowScrolling: 'touch', width: '100%' }}
+          className="mt-6 flex snap-x snap-mandatory gap-4 overflow-x-auto scrollbar-hide md:grid md:snap-none md:grid-cols-2 md:overflow-visible lg:grid-cols-4"
+          style={{ WebkitOverflowScrolling: 'touch' }}
         >
           {VALUE_PROPS.map((vp, index) => (
             <li
@@ -94,7 +96,7 @@ export default function ValuePropositionBanner() {
               // Scroll-reveal: fade-in + translateY(24px→0). transform/opacity → tak sebabkan layout shift.
               // Stagger via transition-delay per kartu (jeda 120ms). transition-all durasi 500ms ease-out.
               style={{ transitionDelay: revealed ? `${index * 120}ms` : '0ms' }}
-              className={`min-w-[260px] flex-1 snap-start rounded-2xl border border-zinc-200 border-t-4 border-t-brand-primary bg-white p-4 shadow-md transition-all duration-500 ease-out hover:shadow-lg ${
+              className={`min-w-[260px] flex-1 snap-start rounded-2xl border border-zinc-200 border-t-4 border-t-brand-primary bg-white p-4 shadow-md transition-all duration-500 ease-out hover:shadow-lg md:min-w-0 ${
                 revealed ? 'translate-y-0 opacity-100' : 'translate-y-6 opacity-0'
               }`}
             >

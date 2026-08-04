@@ -20,6 +20,15 @@ export type Product = {
   badge?: string
 }
 
+// Produk untuk kartu katalog/listing yang butuh info sosial-proof (rating + jumlah terjual).
+// Superset Product; field tambahan OPSIONAL → kartu degradasi rapi bila data tak tersedia
+// (mis. katalog /products yang belum mem-plumb rating/terjual). Diisi oleh getBestSellingCatalogPage.
+export type CatalogCardProduct = Product & {
+  soldCount?: number // total unit terjual (dari agregasi order)
+  rating?: number // rata-rata rating (0–5, 1 desimal)
+  reviewCount?: number // jumlah ulasan tampil (0 = belum ada → sembunyikan bintang)
+}
+
 // Produk yang disimpan via OMS ke mock database (superset Product + data gudang).
 // Tetap kompatibel dengan Product agar bisa langsung dipakai kartu produk ecommerce.
 export type StoredProduct = Product & {

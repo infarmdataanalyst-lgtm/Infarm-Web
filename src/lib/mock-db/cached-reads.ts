@@ -18,11 +18,11 @@
 
 import { unstable_cache } from 'next/cache'
 import { readProducts, getProductById } from './products'
-import { getReviewsByProduct, getProductRatingSummary } from './reviews'
+import { getReviewsByProduct, getProductRatingSummary, getRatingSummaryByProduct } from './reviews'
 import { readCombos } from './combos'
 import { getSalesCountByProduct } from './orders'
 import { getVariantsByProduct } from './variants'
-import type { Product } from '@/types/product'
+import type { Product, CatalogCardProduct } from '@/types/product'
 
 // Durasi cache storefront (detik). Data e-commerce tak berubah tiap detik; 30s cukup segar.
 const REVALIDATE = 30
@@ -44,6 +44,14 @@ export const getCachedSalesCountByProduct = unstable_cache(
   () => getSalesCountByProduct(),
   ['storefront-sales'],
   { revalidate: REVALIDATE, tags: ['sales'] },
+)
+
+// Peta ringkasan rating (rata-rata + jumlah) per produk untuk kartu katalog beranda.
+// Tag 'reviews' → ikut ter-invalidasi saat ada mutasi ulasan.
+export const getCachedRatingSummaryByProduct = unstable_cache(
+  () => getRatingSummaryByProduct(),
+  ['storefront-rating-all'],
+  { revalidate: REVALIDATE, tags: ['reviews'] },
 )
 
 // Satu produk berdasarkan id. keyParts menyertakan id agar tiap produk punya entri cache sendiri.
@@ -85,8 +93,12 @@ export function getCachedRatingSummary(id: string) {
 export async function getBestSellingCatalogPage(
   page: number,
   pageSize: number,
-): Promise<{ products: Product[]; hasMore: boolean; page: number }> {
-  const [all, sold] = await Promise.all([getCachedProducts(), getCachedSalesCountByProduct()])
+): Promise<{ products: CatalogCardProduct[]; hasMore: boolean; page: number }> {
+  const [all, sold, ratings] = await Promise.all([
+    getCachedProducts(),
+    getCachedSalesCountByProduct(),
+    getCachedRatingSummaryByProduct(),
+  ])
   const active = all.filter((p) => !p.archived)
 
   const sorted = active
@@ -97,8 +109,8 @@ export async function getBestSellingCatalogPage(
   const start = page * pageSize
   const slice = sorted.slice(start, start + pageSize)
 
-  // Kirim hanya field kartu produk (buang galeri/stock agar payload ringan)
-  const products: Product[] = slice.map((p) => ({
+  // Kirim field kartu produk (buang galeri/stock agar payload ringan) + sosial-proof (terjual/rating)
+  const products: CatalogCardProduct[] = slice.map((p) => ({
     id: p.id,
     name: p.name,
     originalPrice: p.originalPrice,
@@ -106,6 +118,9 @@ export async function getBestSellingCatalogPage(
     imageUrl: p.imageUrl,
     category: p.category,
     badge: p.badge,
+    soldCount: sold[p.id] ?? 0,
+    rating: ratings[p.id]?.rating ?? 0,
+    reviewCount: ratings[p.id]?.reviewCount ?? 0,
   }))
 
   return { products, hasMore: start + pageSize < sorted.length, page }

@@ -116,6 +116,36 @@ export async function getProductRatingSummary(
   return { rating: Math.round((sum / data.length) * 10) / 10, reviewCount: data.length }
 }
 
+// Ringkasan rating (rata-rata + jumlah) untuk BANYAK produk sekaligus, di-group per product_id.
+// Dipakai kartu katalog beranda agar tak query per-produk (1 query untuk semua). Produk tanpa
+// ulasan tampil tak ada di map (pemanggil perlakukan sebagai rating 0 / sembunyikan bintang).
+export async function getRatingSummaryByProduct(): Promise<
+  Record<string, { rating: number; reviewCount: number }>
+> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('reviews')
+    .select('product_id, rating')
+    .eq('visible', true)
+
+  const out: Record<string, { rating: number; reviewCount: number }> = {}
+  if (error || !data) return out
+
+  // Akumulasi sum & count per product_id di memori, lalu rata-rata (bulat 1 desimal).
+  const acc: Record<string, { sum: number; count: number }> = {}
+  for (const r of data) {
+    const pid = r.product_id as string | null
+    if (!pid) continue
+    const a = (acc[pid] ??= { sum: 0, count: 0 })
+    a.sum += r.rating as number
+    a.count += 1
+  }
+  for (const [pid, a] of Object.entries(acc)) {
+    out[pid] = { rating: Math.round((a.sum / a.count) * 10) / 10, reviewCount: a.count }
+  }
+  return out
+}
+
 // === Tulis (form publik) ===
 
 // Menyimpan ulasan baru. Mengembalikan id ulasan yang dibuat.

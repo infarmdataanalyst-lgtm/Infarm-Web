@@ -37,7 +37,9 @@ export default function CategoryGrid() {
             <li key={cat.slug}>
               <Link
                 href={`/products?category=${cat.slug}`}
-                className="relative flex aspect-[16/10] items-center justify-center overflow-hidden rounded-xl shadow-sm transition active:scale-[0.98]"
+                // Desktop (sm+): tombol ~25% lebih pendek (aspect 16/7.5 vs 16/10). Lebar tetap →
+                // Image `fill object-cover` tetap crop close-up (scale gambar tak berubah, hanya height tombol turun).
+                className="relative flex aspect-[16/10] items-center justify-center overflow-hidden rounded-xl shadow-sm transition active:scale-[0.98] sm:aspect-[16/7.5]"
               >
                 {/* Foto latar per kategori (.webp/.jpg). bg-brand-primary = fallback bila belum ada foto. */}
                 <span aria-hidden className="absolute inset-0 bg-brand-primary" />

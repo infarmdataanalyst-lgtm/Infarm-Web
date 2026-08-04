@@ -8,7 +8,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import HeroSearchBar from './HeroSearchBar'
+import HeroStats from './HeroStats'
 
 // Path gambar background hero. Taruh file di: public/images/hero-background.jpg
 const HERO_IMAGE_PATH = '/images/hero-background.jpg'
@@ -40,26 +40,21 @@ export default function HeroSection() {
           alt=""
           fill
           priority
+          unoptimized
           sizes="100vw"
           className="-z-10 object-cover object-center"
         />
       )}
-      {/* Overlay gelap tipis agar teks tetap kontras di atas gambar/gradient */}
-      <div aria-hidden className="absolute inset-0 -z-10 bg-black/10" />
-
       {/* === Konten hero === */}
       {/* flex-col + justify-between membagi ruang vertikal: grup atas (search+judul), CTA di tengah,
           dan kartu statistik menempel di bawah. Dengan 3 grup, jarak antar grup sama → CTA persis
           di tengah antara judul dan kartu. Berlaku di semua ukuran layar.
           pt besar memberi ruang untuk AppBar fixed. */}
       <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col justify-between px-4 pt-20 pb-12 sm:px-6 sm:pt-24 lg:px-8">
-        {/* Grup atas: search + headline */}
+        {/* Grup atas: headline (search bar kini persisten di header, tak lagi di hero) */}
         <div>
-          {/* Floating search input — autocomplete: saran produk diambil on-type dari server */}
-          <HeroSearchBar />
-
           {/* Marketing headline — putih, dengan drop-shadow agar tetap terbaca di atas background */}
-          <h1 className="mt-8 max-w-2xl font-sans text-4xl font-extrabold leading-tight tracking-tight text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.45)] sm:text-5xl lg:text-6xl">
+          <h1 className="max-w-2xl font-sans text-4xl font-extrabold leading-tight tracking-tight text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.45)] sm:text-5xl lg:text-6xl">
             Berkebun Jadi Mudah
             <br />
             Pasti Panen
@@ -77,29 +72,15 @@ export default function HeroSection() {
           </Link>
         </div>
 
-        {/* Trust badges (di bawah) — grid 3 kolom sejajar sejak mobile, selaras lebar dengan search */}
-        <ul className="grid max-w-xl grid-cols-3 gap-2 sm:gap-3">
-          <TrustBadge highlight="3,4 Juta +" label="Pembeli Puas" />
-          <TrustBadge highlight="4.9" label="Rating Produk" />
-          <TrustBadge highlight="100%" label="Produk Original" />
-        </ul>
+        {/* Trust indicators (di bawah) — tanpa box, di atas foto hero, dipisah garis vertikal,
+            angka beranimasi count-up saat mount (client component) */}
+        <HeroStats />
       </div>
     </section>
   )
 }
 
 // === Sub-komponen ===
-
-// Satu kotak trust badge frosted-glass dengan angka highlight (abu gelap) dan label kompak di bawahnya
-function TrustBadge({ highlight, label }: { highlight: string; label: string }) {
-  return (
-    <li className="rounded-2xl bg-white/80 px-2 py-3 text-center shadow-sm backdrop-blur-md">
-      <p className="text-base font-bold text-gray-800 sm:text-xl">{highlight}</p>
-      {/* whitespace-nowrap: jaga label tetap satu baris di HP mini */}
-      <p className="whitespace-nowrap text-[10px] text-gray-600 sm:text-xs">{label}</p>
-    </li>
-  )
-}
 
 // Ikon panah ke kanan (inline SVG) untuk tombol CTA "Belanja Sekarang"
 function ArrowRightIcon() {
