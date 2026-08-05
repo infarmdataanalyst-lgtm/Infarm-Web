@@ -4,6 +4,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import GoogleAnalyticsGate from "@/components/analytics/GoogleAnalyticsGate";
+import FloatingWhatsApp from "@/components/ui/FloatingWhatsApp";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -41,6 +42,8 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col">
         {children}
+        {/* Tombol WhatsApp mengambang (self-gate: sembunyi di /oms) */}
+        <FloatingWhatsApp />
         {gaId && <GoogleAnalyticsGate gaId={gaId} />}
       </body>
     </html>
