@@ -11,7 +11,7 @@ export default function CartHeader() {
   const router = useRouter()
 
   return (
-    <header className="sticky top-0 z-30 border-b border-black/5 bg-brand-header text-zinc-900 shadow-sm">
+    <header className="sticky top-0 z-30 border-b border-black/5 bg-brand-header text-white shadow-sm">
       <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4 sm:px-6 lg:px-8">
         {/* Tombol kembali */}
         <button

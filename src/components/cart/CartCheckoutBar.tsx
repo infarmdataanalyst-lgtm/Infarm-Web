@@ -2,6 +2,7 @@
 // Bilah aksi bawah (sticky): checkbox "Pilih Semua" + jumlah item, total harga dinamis,
 // dan tombol "Checkout (X)" yang nonaktif bila tidak ada item tercentang. Presentational.
 
+import { Check } from 'lucide-react'
 import { formatRupiah } from '@/lib/format'
 
 // Menampilkan bilah checkout bawah dengan pilih-semua, total, dan tombol checkout.
@@ -24,14 +25,17 @@ export default function CartCheckoutBar({
     <div className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-200 bg-white">
       <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
         {/* Kiri: Pilih Semua */}
-        <label className="flex shrink-0 items-center gap-2 text-sm text-zinc-700">
-          <input
-            type="checkbox"
-            checked={allSelected}
-            onChange={onToggleSelectAll}
-            aria-label="Pilih semua"
-            className="h-5 w-5 accent-brand-primary"
-          />
+        <label className="flex shrink-0 cursor-pointer items-center gap-2 text-sm text-zinc-700">
+          <span className="relative inline-flex h-5 w-5 shrink-0 items-center justify-center">
+            <input
+              type="checkbox"
+              checked={allSelected}
+              onChange={onToggleSelectAll}
+              aria-label="Pilih semua"
+              className="peer h-5 w-5 cursor-pointer appearance-none rounded border border-zinc-300 bg-white checked:border-brand-primary checked:bg-brand-primary"
+            />
+            <Check className="pointer-events-none absolute h-3.5 w-3.5 text-white opacity-0 peer-checked:opacity-100" strokeWidth={3} />
+          </span>
           <span>Item ({selectedCount})</span>
         </label>
 

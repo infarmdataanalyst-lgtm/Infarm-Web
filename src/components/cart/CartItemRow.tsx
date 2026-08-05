@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
+import { Check } from 'lucide-react'
 import type { CartLineItem } from '@/types/cart'
 import { formatRupiah } from '@/lib/format'
 
@@ -43,14 +44,17 @@ export default function CartItemRow({
 
   return (
     <div className="flex gap-3 bg-white px-4 py-4">
-      {/* Checkbox pilih item */}
-      <input
-        type="checkbox"
-        checked={selected}
-        onChange={() => onToggleSelect(productId, variantId)}
-        aria-label={`Pilih ${name}`}
-        className="mt-1 h-5 w-5 shrink-0 accent-brand-primary"
-      />
+      {/* Checkbox pilih item — box putih + border abu (unchecked), box hijau + centang putih (checked) */}
+      <span className="relative mt-1 inline-flex h-5 w-5 shrink-0 items-center justify-center">
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={() => onToggleSelect(productId, variantId)}
+          aria-label={`Pilih ${name}`}
+          className="peer h-5 w-5 cursor-pointer appearance-none rounded border border-zinc-300 bg-white checked:border-brand-primary checked:bg-brand-primary"
+        />
+        <Check className="pointer-events-none absolute h-3.5 w-3.5 text-white opacity-0 peer-checked:opacity-100" strokeWidth={3} />
+      </span>
 
       {/* Foto produk — klik menuju halaman detail produk */}
       <Link

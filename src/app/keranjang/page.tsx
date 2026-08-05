@@ -265,33 +265,42 @@ export default function CartPage() {
 
       {/* pb-24: ruang agar konten tak tertutup bilah checkout bawah yang fixed */}
       <main className="flex-1 pb-24">
-        {/* 3 — Daftar item keranjang */}
-        {items.length > 0 ? (
-          <div className="mt-3 divide-y divide-zinc-100">
-            {items.map((item) => (
-              <CartItemRow
-                key={lineKey(item.productId, item.variantId)}
-                item={item}
-                onToggleSelect={toggleSelect}
-                onIncrement={increment}
-                onDecrement={decrement}
-                onSetQuantity={setQuantity}
-                onRemove={remove}
-              />
-            ))}
+        {/* Desktop (lg+): dua kolom — kiri (produk+hadiah+perlindungan) 8/12, kanan (dilihat sebelumnya)
+            4/12. Mobile/tablet: satu kolom (kanan turun ke bawah kiri) seperti sebelumnya. */}
+        <div className="mx-auto w-full max-w-6xl lg:grid lg:grid-cols-12 lg:gap-6 lg:px-6 lg:pt-3">
+          {/* === Kolom kiri: konten transaksi utama === */}
+          <div className="lg:col-span-8">
+            {/* 3 — Daftar item keranjang */}
+            {items.length > 0 ? (
+              <div className="mt-3 divide-y divide-zinc-100 lg:mt-0 lg:overflow-hidden lg:rounded-2xl lg:border lg:border-zinc-100">
+                {items.map((item) => (
+                  <CartItemRow
+                    key={lineKey(item.productId, item.variantId)}
+                    item={item}
+                    onToggleSelect={toggleSelect}
+                    onIncrement={increment}
+                    onDecrement={decrement}
+                    onSetQuantity={setQuantity}
+                    onRemove={remove}
+                  />
+                ))}
+              </div>
+            ) : (
+              <p className="px-4 py-16 text-center text-sm text-zinc-400">Keranjang kamu masih kosong.</p>
+            )}
+
+            {/* 3b — Produk gratis hadiah promo (muncul otomatis saat syarat min_purchase tercapai) */}
+            <CartFreeItems items={freeItems} />
+
+            {/* 4 — Informasi perlindungan */}
+            <ProtectionInfo />
           </div>
-        ) : (
-          <p className="px-4 py-16 text-center text-sm text-zinc-400">Keranjang kamu masih kosong.</p>
-        )}
 
-        {/* 3b — Produk gratis hadiah promo (muncul otomatis saat syarat min_purchase tercapai) */}
-        <CartFreeItems items={freeItems} />
-
-        {/* 4 — Informasi perlindungan */}
-        <ProtectionInfo />
-
-        {/* 5 — Rekomendasi "Kamu sempat lihat ini" */}
-        <CartRecentlyViewed products={recentlyViewed} />
+          {/* === Kolom kanan: rekomendasi "Dilihat Sebelumnya" (di bawah kiri pada mobile) === */}
+          <div className="lg:col-span-4">
+            <CartRecentlyViewed products={recentlyViewed} />
+          </div>
+        </div>
       </main>
 
       {/* 6 — Bilah checkout bawah (sticky); total sudah dikurangi diskon promo */}

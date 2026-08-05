@@ -12,12 +12,12 @@ export default function CartRecentlyViewed({ products }: { products: Product[] }
   if (products.length === 0) return null
 
   return (
-    <section className="mt-2 bg-white px-4 py-4">
+    <section className="mt-2 bg-white px-4 py-4 lg:mt-0 lg:rounded-2xl lg:border lg:border-zinc-100">
       <h2 className="mb-3 text-lg font-bold text-zinc-800">Dilihat Sebelumnya</h2>
 
-      {/* Kolom responsif: 2 di mobile → makin banyak di layar lebar agar kartu tak melebar berlebihan.
-          Maks 6 item → lg:grid-cols-6 muat satu baris di desktop. */}
-      <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+      {/* Mobile/tablet (1 kolom halaman): grid melebar 2→4. Desktop lg (kolom kanan sempit): 2 kartu
+          agar tak menyempit berlebihan mengikuti lebar kolom rekomendasi. */}
+      <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-2">
         {products.map((product) => (
           <li key={product.id}>
             <RecentCard product={product} />
