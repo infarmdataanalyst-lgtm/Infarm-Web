@@ -12,7 +12,7 @@ import HeaderSearch from '@/components/ui/HeaderSearch'
 // Menampilkan app bar global: logo (kiri), search bar persisten (tengah), aksi cart & profile (kanan)
 export default function AppBar() {
   return (
-    <header className="fixed inset-x-0 top-0 z-50 border-b border-black/5 bg-brand-header text-white shadow-sm">
+    <header className="fixed inset-x-0 top-0 z-50 rounded-b-[2rem] bg-brand-header/90 text-white shadow-sm backdrop-blur-md">
       <div className="mx-auto flex h-14 max-w-6xl items-center gap-2 px-4 sm:gap-4 sm:px-6 lg:px-8">
         {/* Grup kiri: menu + logo + nama brand */}
         <div className="flex shrink-0 items-center gap-3 sm:gap-4">

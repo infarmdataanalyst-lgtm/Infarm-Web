@@ -1,8 +1,8 @@
 'use client'
 
 // src/components/home/HeroStats.tsx
-// Tiga indicator kepercayaan di hero (3,4 Juta+, 4.9, 100%). TANPA box — angka & label langsung
-// di atas foto hero, dipisah garis vertikal tipis. Angka beranimasi count-up saat mount (section
+// Tiga indicator kepercayaan di hero (3,4 Juta+, 4.9, 100%). Tiap indicator dibungkus box solid
+// abu-abu muda (angka gelap bold + label muted). Angka beranimasi count-up saat mount (section
 // di atas fold → tak perlu scroll trigger). Count-up memakai requestAnimationFrame (tanpa library),
 // selaras pola project (no dependency animasi). Hormati prefers-reduced-motion.
 
@@ -63,30 +63,29 @@ function useCountUp(target: number): number {
   return current
 }
 
-// Menampilkan tiga indicator kepercayaan tanpa box, dipisah garis vertikal, dengan count-up.
+// Menampilkan tiga indicator kepercayaan dalam box solid abu-abu muda dengan count-up.
 export default function HeroStats() {
   return (
-    <ul className="grid max-w-xl grid-cols-3">
-      {STATS.map((stat, i) => (
-        <StatItem key={stat.label} stat={stat} showDivider={i > 0} />
+    <ul className="grid max-w-xl grid-cols-3 gap-3 sm:gap-4">
+      {STATS.map((stat) => (
+        <StatItem key={stat.label} stat={stat} />
       ))}
     </ul>
   )
 }
 
-// Satu kolom indicator + garis pemisah kiri (kecuali kolom pertama).
-function StatItem({ stat, showDivider }: { stat: Stat; showDivider: boolean }) {
+// Satu box indicator: background solid abu-abu muda, angka gelap bold + label muted, count-up.
+function StatItem({ stat }: { stat: Stat }) {
   const current = useCountUp(stat.value)
   return (
-    <li className={`px-2 text-center ${showDivider ? 'border-l border-white/30' : ''}`}>
-      <p
-        className="text-[22px] font-bold leading-none text-white"
-        style={{ textShadow: '0 1px 3px rgba(0,0,0,0.4)' }}
-      >
+    <li className="rounded-2xl bg-[#ECEAE3]/80 px-2.5 py-2.5 text-center backdrop-blur-sm sm:rounded-[18px] sm:px-5 sm:py-4">
+      <p className="text-lg font-bold leading-tight text-zinc-900 sm:text-[22px] sm:leading-none">
         {formatNumber(current, stat.decimals, stat.sep)}
         {stat.suffix}
       </p>
-      <p className="mt-1 text-xs text-white/85">{stat.label}</p>
+      <p className="mt-0.5 text-[11px] font-normal leading-tight text-zinc-500 sm:mt-1 sm:text-[13px]">
+        {stat.label}
+      </p>
     </li>
   )
 }

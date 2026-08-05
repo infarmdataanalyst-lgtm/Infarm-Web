@@ -72,7 +72,10 @@ export default function ValuePropositionBanner() {
 
   // Background terang (brand-surface) = sama dengan section produk agar menyatu. Kartu putih.
   return (
-    <section ref={sectionRef} className="w-full bg-white text-zinc-900">
+    <section
+      ref={sectionRef}
+      className="w-full bg-[#FFFBEB] text-zinc-900"
+    >
       <div className="mx-auto w-full max-w-6xl px-4 py-10 sm:px-6 lg:px-8">
         {/* === Heading === (eyebrow aksen earthy; judul sentence case + font display) */}
         <p className="text-sm font-semibold uppercase tracking-wide text-brand-soil">

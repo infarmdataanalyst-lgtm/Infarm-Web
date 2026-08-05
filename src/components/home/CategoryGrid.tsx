@@ -55,7 +55,7 @@ export default function CategoryGrid() {
                 {/* Overlay gelap agar judul putih tetap kontras di atas foto */}
                 <span aria-hidden className="absolute inset-0 bg-black/40" />
 
-                <span className="relative px-2 text-center text-lg font-extrabold leading-tight text-white drop-shadow sm:text-xl">
+                <span className="relative px-2 text-center text-sm font-extrabold leading-tight text-white drop-shadow sm:text-xl">
                   {cat.label}
                 </span>
               </Link>
