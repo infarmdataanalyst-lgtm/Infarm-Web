@@ -104,7 +104,7 @@ export default function ReviewPage() {
   return (
     <div className="flex min-h-screen flex-col bg-brand-surface pt-14 text-zinc-900">
       {/* Header hijau brand */}
-      <header className="fixed inset-x-0 top-0 z-50 border-b border-black/5 bg-brand-header text-zinc-900 shadow-sm">
+      <header className="fixed inset-x-0 top-0 z-50 rounded-b-[2rem] bg-brand-header/90 text-white shadow-sm backdrop-blur-md">
         <div className="mx-auto flex h-14 max-w-3xl items-center gap-3 px-4">
           <Link href="/pesanan-saya" aria-label="Kembali" className="rounded-md p-1 transition active:scale-95">
             <BackIcon />

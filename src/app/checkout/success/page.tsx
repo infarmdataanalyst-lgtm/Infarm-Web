@@ -71,7 +71,7 @@ export default async function CheckoutSuccessPage({
       <div className="mx-auto flex w-full max-w-md flex-col px-5 pb-8 md:max-w-xl lg:max-w-2xl">
         {/* === Header: tutup + judul (warna & tinggi disamakan dengan header beranda: bg-brand-primary, teks putih, h-14) === */}
         {/* -mx-5 px-5 agar latar hijau membentang penuh seperti header beranda */}
-        <header className="-mx-5 flex h-14 items-center gap-3 border-b border-black/5 bg-brand-header px-5 text-zinc-900 md:px-8">
+        <header className="-mx-5 flex h-14 items-center gap-3 rounded-b-[2rem] bg-brand-header/90 px-5 text-white shadow-sm backdrop-blur-md md:px-8">
           <Link
             href="/"
             aria-label="Tutup"

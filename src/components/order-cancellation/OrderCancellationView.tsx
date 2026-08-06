@@ -141,7 +141,7 @@ export default function OrderCancellationView({
     <div className="flex min-h-screen justify-center bg-brand-surface text-zinc-900">
       <div className="mx-auto flex w-full max-w-md flex-col px-5 pb-10 md:max-w-xl">
         {/* === Header putih (membentang penuh lewat -mx-5) === */}
-        <header className="-mx-5 flex h-14 items-center gap-3 border-b border-black/5 bg-brand-header px-5 text-zinc-900 md:px-8">
+        <header className="-mx-5 flex h-14 items-center gap-3 rounded-b-[2rem] bg-brand-header/90 px-5 text-white shadow-sm backdrop-blur-md md:px-8">
           <Link
             href="/"
             aria-label="Tutup"
