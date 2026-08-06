@@ -54,9 +54,10 @@ export default function AddressSearchCombobox({
         if (ctrl.signal.aborted) return
         setResults(data)
         setHasSearched(true)
-      } catch {
+      } catch (err) {
         if (!ctrl.signal.aborted) {
-          setError('Gagal mencari alamat. Coba lagi.')
+          // Pesan dari server dipakai bila ada (mis. 429 "terlalu banyak percobaan")
+          setError(err instanceof Error ? err.message : 'Gagal mencari alamat. Coba lagi.')
           setResults([])
         }
       } finally {

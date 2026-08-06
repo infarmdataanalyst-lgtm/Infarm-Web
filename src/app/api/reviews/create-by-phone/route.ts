@@ -12,7 +12,7 @@ import { revalidatePath, revalidateTag } from 'next/cache'
 import { createReview, DuplicateReviewError } from '@/lib/mock-db/reviews'
 import { getOrderByOrderId } from '@/lib/mock-db/orders'
 import { normalizePhone, isValidPhone } from '@/lib/phone'
-import { isRateLimited, getClientIp } from '@/lib/rate-limit'
+import { RATE_LIMITS, enforceRateLimit, getClientIp } from '@/lib/rate-limit'
 
 export const runtime = 'nodejs'
 
@@ -29,14 +29,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Permintaan tidak valid.' }, { status: 400 })
   }
 
-  // Rate limit per-IP: aksi tulis → threshold lebih ketat dari endpoint baca
+  // Rate limit submit ulasan per-IP. Bucket-nya SAMA dengan /api/reviews/create agar bot tak bisa
+  // memecah spam ke dua endpoint. Ambang batas di RATE_LIMITS.REVIEW_CREATE_IP.
   const ip = getClientIp(request)
-  if (isRateLimited(`create-by-phone:ip:${ip}`, 8, 15 * 60_000)) {
-    return NextResponse.json(
-      { error: 'Terlalu banyak percobaan. Coba lagi dalam beberapa menit.' },
-      { status: 429 },
-    )
-  }
+  const limitedByIp = enforceRateLimit(`reviews-create:ip:${ip}`, RATE_LIMITS.REVIEW_CREATE_IP)
+  if (limitedByIp) return limitedByIp
 
   const rawPhone = typeof body.phone === 'string' ? body.phone : ''
   const orderInvoice = typeof body.orderInvoice === 'string' ? body.orderInvoice.trim().replace(/^#/, '') : ''
@@ -57,12 +54,11 @@ export async function POST(request: Request) {
 
   // Rate limit per-nomor: cegah brute-force tertarget ke satu nomor dari banyak IP
   const normalizedPhone = normalizePhone(rawPhone)
-  if (isRateLimited(`create-by-phone:phone:${normalizedPhone}`, 5, 60 * 60_000)) {
-    return NextResponse.json(
-      { error: 'Terlalu banyak percobaan untuk nomor ini. Coba lagi nanti.' },
-      { status: 429 },
-    )
-  }
+  const limitedByPhone = enforceRateLimit(
+    `create-by-phone:phone:${normalizedPhone}`,
+    RATE_LIMITS.PHONE_WRITE_PHONE,
+  )
+  if (limitedByPhone) return limitedByPhone
 
   // === Verifikasi otoritatif ke DB ===
   const order = await getOrderByOrderId(orderInvoice)

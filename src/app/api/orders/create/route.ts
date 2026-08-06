@@ -1,8 +1,12 @@
 // src/app/api/orders/create/route.ts
 // API menulis pesanan baru ke Supabase (orders + order_items + kurangi stok, atomik via RPC).
 // Dipanggil POST dari halaman checkout ecommerce saat "Bayar Sekarang".
+//
+// Perlindungan: rate limit per-IP (lihat @/lib/rate-limit) untuk mencegah order spam dari bot.
+// Batas dipilih longgar untuk manusia (checkout normal = 1 submit; retry setelah error stok masih muat).
 
 import { NextResponse } from 'next/server'
+import { RATE_LIMITS, enforceRateLimit, getClientIp } from '@/lib/rate-limit'
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { saveOrder, OrderStockError } from '@/lib/mock-db/orders'
 import { readProducts } from '@/lib/mock-db/products'
@@ -55,6 +59,13 @@ function isValidPayload(body: unknown): body is CreateOrderInput {
 
 // Menyimpan pesanan baru dari checkout
 export async function POST(request: Request) {
+  // Rate limit per-IP: cegah bot membanjiri pembuatan order (dicek sebelum pekerjaan DB apa pun)
+  const limited = enforceRateLimit(
+    `orders-create:ip:${getClientIp(request)}`,
+    RATE_LIMITS.ORDER_CREATE_IP,
+  )
+  if (limited) return limited
+
   let body: unknown
   try {
     body = await request.json()

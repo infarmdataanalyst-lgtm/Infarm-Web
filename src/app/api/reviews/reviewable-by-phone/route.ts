@@ -10,7 +10,14 @@ import { NextResponse } from 'next/server'
 import { getOrdersByPhone } from '@/lib/mock-db/orders'
 import { getReviewedProductIds } from '@/lib/mock-db/reviews'
 import { normalizePhone, isValidPhone } from '@/lib/phone'
-import { isRateLimited, getClientIp } from '@/lib/rate-limit'
+import {
+  RATE_LIMITS,
+  enforceRateLimit,
+  getClientIp,
+  isOverLimit,
+  rateLimitResponse,
+  recordAttempt,
+} from '@/lib/rate-limit'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -39,12 +46,8 @@ export async function POST(request: Request) {
 
   // Rate limit per-IP: anti brute-force umum
   const ip = getClientIp(request)
-  if (isRateLimited(`reviewable-by-phone:ip:${ip}`, 20, 15 * 60_000)) {
-    return NextResponse.json(
-      { error: 'Terlalu banyak percobaan. Coba lagi dalam beberapa menit.' },
-      { status: 429 },
-    )
-  }
+  const limitedByIp = enforceRateLimit(`reviewable-by-phone:ip:${ip}`, RATE_LIMITS.PHONE_LOOKUP_IP)
+  if (limitedByIp) return limitedByIp
 
   const rawPhone = typeof body.phone === 'string' ? body.phone : ''
   if (!isValidPhone(rawPhone)) {
@@ -57,14 +60,21 @@ export async function POST(request: Request) {
   const phone = normalizePhone(rawPhone)
 
   // Rate limit per-nomor: cegah brute-force tertarget ke satu nomor dari banyak IP
-  if (isRateLimited(`reviewable-by-phone:phone:${phone}`, 15, 60 * 60_000)) {
-    return NextResponse.json(
-      { error: 'Terlalu banyak percobaan untuk nomor ini. Coba lagi nanti.' },
-      { status: 429 },
-    )
+  const limitedByPhone = enforceRateLimit(
+    `reviewable-by-phone:phone:${phone}`,
+    RATE_LIMITS.PHONE_LOOKUP_PHONE,
+  )
+  if (limitedByPhone) return limitedByPhone
+
+  // Rate limit per-kombinasi IP+nomor untuk percobaan GAGAL (nomor tanpa pesanan sama sekali) —
+  // pencarian yang membuahkan hasil tidak dihitung agar user asli tidak terblokir.
+  const missKey = `reviewable-by-phone:miss:${ip}:${phone}`
+  if (isOverLimit(missKey, RATE_LIMITS.PHONE_LOOKUP_IP_PHONE_MISS)) {
+    return rateLimitResponse(RATE_LIMITS.PHONE_LOOKUP_IP_PHONE_MISS, missKey)
   }
 
   const orders = await getOrdersByPhone(phone)
+  if (orders.length === 0) recordAttempt(missKey, RATE_LIMITS.PHONE_LOOKUP_IP_PHONE_MISS)
 
   const items: ReviewableItem[] = []
   for (const order of orders) {

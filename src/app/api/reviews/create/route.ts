@@ -1,7 +1,10 @@
 // src/app/api/reviews/create/route.ts
-// API menulis ulasan baru ke Supabase. Dipanggil POST dari form /review.
+// API menulis ulasan baru ke Supabase (flow lama: verifikasi lewat nomor invoice).
+//
+// Perlindungan: rate limit submit per-IP (lihat @/lib/rate-limit) untuk mencegah spam ulasan bot.
 
 import { NextResponse } from 'next/server'
+import { RATE_LIMITS, enforceRateLimit, getClientIp } from '@/lib/rate-limit'
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { createReview, DuplicateReviewError } from '@/lib/mock-db/reviews'
 import type { CreateReviewInput } from '@/lib/mock-db/reviews'
@@ -34,6 +37,13 @@ function isValidPayload(body: unknown): body is CreateReviewPayload {
 
 // Menyimpan ulasan baru dari pelanggan
 export async function POST(request: Request) {
+  // Rate limit per-IP: cegah spam ulasan (dicek sebelum pekerjaan DB apa pun)
+  const limited = enforceRateLimit(
+    `reviews-create:ip:${getClientIp(request)}`,
+    RATE_LIMITS.REVIEW_CREATE_IP,
+  )
+  if (limited) return limited
+
   let body: unknown
   try {
     body = await request.json()

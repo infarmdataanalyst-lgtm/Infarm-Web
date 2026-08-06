@@ -10,7 +10,14 @@ import { NextResponse } from 'next/server'
 import { getOrderByOrderId } from '@/lib/mock-db/orders'
 import { normalizePhone, isValidPhone } from '@/lib/phone'
 import type { OrderFulfillmentStatus } from '@/types/order'
-import { isRateLimited, getClientIp } from '@/lib/rate-limit'
+import {
+  RATE_LIMITS,
+  enforceRateLimit,
+  getClientIp,
+  isOverLimit,
+  rateLimitResponse,
+  recordAttempt,
+} from '@/lib/rate-limit'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -33,12 +40,8 @@ export async function POST(request: Request) {
 
   // Rate limit per-IP: anti brute-force umum
   const ip = getClientIp(request)
-  if (isRateLimited(`verify-cancel:ip:${ip}`, 20, 15 * 60_000)) {
-    return NextResponse.json(
-      { error: 'Terlalu banyak percobaan. Coba lagi dalam beberapa menit.' },
-      { status: 429 },
-    )
-  }
+  const limitedByIp = enforceRateLimit(`verify-cancel:ip:${ip}`, RATE_LIMITS.PHONE_LOOKUP_IP)
+  if (limitedByIp) return limitedByIp
 
   const orderId = typeof body.orderId === 'string' ? body.orderId.trim().replace(/^#/, '') : ''
   const rawPhone = typeof body.phone === 'string' ? body.phone : ''
@@ -51,22 +54,30 @@ export async function POST(request: Request) {
 
   // Rate limit per-nomor: cegah brute-force tertarget ke satu nomor dari banyak IP
   const normalizedPhone = normalizePhone(rawPhone)
-  if (isRateLimited(`verify-cancel:phone:${normalizedPhone}`, 15, 60 * 60_000)) {
-    return NextResponse.json(
-      { error: 'Terlalu banyak percobaan untuk nomor ini. Coba lagi nanti.' },
-      { status: 429 },
-    )
+  const limitedByPhone = enforceRateLimit(
+    `verify-cancel:phone:${normalizedPhone}`,
+    RATE_LIMITS.PHONE_LOOKUP_PHONE,
+  )
+  if (limitedByPhone) return limitedByPhone
+
+  // Rate limit per-kombinasi IP+nomor, hanya untuk percobaan GAGAL (nomor tidak cocok dengan
+  // pesanan). Verifikasi yang benar tidak dihitung → user asli tak terganggu.
+  const missKey = `verify-cancel:miss:${ip}:${normalizedPhone}`
+  if (isOverLimit(missKey, RATE_LIMITS.PHONE_LOOKUP_IP_PHONE_MISS)) {
+    return rateLimitResponse(RATE_LIMITS.PHONE_LOOKUP_IP_PHONE_MISS, missKey)
   }
 
   // Query ULANG dari DB (bukan dari state client)
   const order = await getOrderByOrderId(orderId)
   if (!order) {
+    recordAttempt(missKey, RATE_LIMITS.PHONE_LOOKUP_IP_PHONE_MISS)
     return NextResponse.json({ error: 'Pesanan tidak ditemukan.' }, { status: 404 })
   }
 
   // Cocokkan no_telepon input dengan no_telepon di order (keduanya dinormalkan)
   const match = normalizedPhone === normalizePhone(order.customerPhone ?? '')
   if (!match) {
+    recordAttempt(missKey, RATE_LIMITS.PHONE_LOOKUP_IP_PHONE_MISS)
     // Jangan bocorkan status bila nomor tak cocok
     return NextResponse.json({ match: false })
   }

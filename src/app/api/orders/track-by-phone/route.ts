@@ -6,15 +6,23 @@
 // Perlindungan (kompensasi karena identifikasi hanya via no_telepon):
 //  - Honeypot: field tersembunyi `website` — bila terisi → dianggap bot, balas kosong senyap.
 //  - Validasi format no_telepon di server.
-//  - Rate limit in-memory per-IP (anti brute-force umum) DAN per-nomor (anti brute-force
-//    tertarget dari banyak IP ke satu nomor) — lihat @/lib/rate-limit. Menutup temuan K-1
-//    audit keamanan 2026-07-24 (docs/security/audit-2026-07-24.md).
+//  - Rate limit in-memory 3 lapis (lihat @/lib/rate-limit): per-IP (anti brute-force umum),
+//    per-nomor (anti brute-force tertarget dari banyak IP ke satu nomor), dan per-kombinasi
+//    IP+nomor untuk percobaan GAGAL (lihat catatan di bawah). Menutup temuan K-1 audit
+//    keamanan 2026-07-24 (docs/security/audit-2026-07-24.md).
 
 import { NextResponse } from 'next/server'
 import { getOrdersByPhone } from '@/lib/mock-db/orders'
 import { normalizePhone, isValidPhone } from '@/lib/phone'
 import { maskName } from '@/lib/mask'
-import { isRateLimited, getClientIp } from '@/lib/rate-limit'
+import {
+  RATE_LIMITS,
+  enforceRateLimit,
+  getClientIp,
+  isOverLimit,
+  rateLimitResponse,
+  recordAttempt,
+} from '@/lib/rate-limit'
 
 // createAdminClient (Supabase) butuh runtime Node.js, bukan Edge
 export const runtime = 'nodejs'
@@ -48,12 +56,8 @@ export async function POST(request: Request) {
 
   // Rate limit per-IP: batasi jumlah percobaan pencarian dari satu sumber (anti brute-force umum)
   const ip = getClientIp(request)
-  if (isRateLimited(`track-by-phone:ip:${ip}`, 20, 15 * 60_000)) {
-    return NextResponse.json(
-      { error: 'Terlalu banyak percobaan. Coba lagi dalam beberapa menit.' },
-      { status: 429 },
-    )
-  }
+  const limitedByIp = enforceRateLimit(`track-by-phone:ip:${ip}`, RATE_LIMITS.PHONE_LOOKUP_IP)
+  if (limitedByIp) return limitedByIp
 
   const rawPhone = typeof body.phone === 'string' ? body.phone : ''
   if (!isValidPhone(rawPhone)) {
@@ -66,14 +70,22 @@ export async function POST(request: Request) {
   const phone = normalizePhone(rawPhone)
 
   // Rate limit per-nomor: cegah brute-force tertarget ke satu nomor dari banyak IP sekaligus
-  if (isRateLimited(`track-by-phone:phone:${phone}`, 15, 60 * 60_000)) {
-    return NextResponse.json(
-      { error: 'Terlalu banyak percobaan untuk nomor ini. Coba lagi nanti.' },
-      { status: 429 },
-    )
+  const limitedByPhone = enforceRateLimit(
+    `track-by-phone:phone:${phone}`,
+    RATE_LIMITS.PHONE_LOOKUP_PHONE,
+  )
+  if (limitedByPhone) return limitedByPhone
+
+  // Rate limit per-kombinasi IP+nomor. Hanya dihitung untuk percobaan GAGAL (nomor tanpa pesanan) —
+  // penebak nomor orang lain hampir selalu meleset, sedangkan user asli selalu dapat hasil, jadi
+  // pencarian berulang atas nomornya sendiri (mis. reload halaman) tidak pernah kena limit ini.
+  const missKey = `track-by-phone:miss:${ip}:${phone}`
+  if (isOverLimit(missKey, RATE_LIMITS.PHONE_LOOKUP_IP_PHONE_MISS)) {
+    return rateLimitResponse(RATE_LIMITS.PHONE_LOOKUP_IP_PHONE_MISS, missKey)
   }
 
   const orders = await getOrdersByPhone(phone)
+  if (orders.length === 0) recordAttempt(missKey, RATE_LIMITS.PHONE_LOOKUP_IP_PHONE_MISS)
 
   // Petakan ke bentuk non-sensitif saja
   const publicOrders: PublicTrackOrder[] = orders.map((o) => ({

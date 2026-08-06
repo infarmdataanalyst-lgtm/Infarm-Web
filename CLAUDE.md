@@ -179,7 +179,8 @@ src/
 │   │   │                         #   reviewable-by-phone | create-by-phone (review terverifikasi via no_telepon)
 │   │   ├── combos/              # create | update | delete | toggle | list | active (storefront)
 │   │   ├── promotions/          # create | update | delete | toggle | list | active (storefront)
-│   │   └── mengantar/address/search  # Proxy search alamat Mengantar (wilayah.id CORS-blocked → proxied)
+│   │   └── mengantar/              # address/search (CORS-blocked → proxied) |
+│   │                               #   shipping/estimate (proxy cek ongkir → titik rate limit)
 │   ├── layout.tsx                # Root layout (font, metadata)
 │   └── globals.css               # Tailwind v4 + @config tailwind.config.ts
 ├── components/
@@ -403,13 +404,7 @@ Keluarga fitur guest yang mengidentifikasi pesanan lewat **no_telepon** (bukan l
 **hub `/pesanan-saya`** (ikon profil header → hub; badge dot merah bila cookie `infarm_phone` ada).
 Semua berbagi pola: input phone → `getOrdersByPhone` (`mock-db/orders.ts`, `.eq('no_telepon')`) →
 output NON-SENSITIF; **honeypot** field `website`; **auto-recognize** cookie `infarm_phone` (Opsi A:
-auto-cari tanpa ketik). **Rate-limit sudah terpasang** di semua endpoint ini via `src/lib/rate-limit.ts`
-(in-memory Map per-instance, sama pola dengan `/api/oms/login` — belum terpusat lintas-instance Vercel,
-kandidat migrasi ke tabel Supabase/Redis nanti). Dua lapis: per-IP (throttle umum) + per-nomor-telepon
-dinormalisasi (cegah brute-force tertarget dari banyak IP ke satu nomor). Endpoint baca (`track-by-phone`,
-`verify-cancel`, `reviewable-by-phone`): 20/IP/15 menit + 15/nomor/jam. Endpoint tulis/destruktif
-(`cancel-by-phone`, `create-by-phone`): 8/IP/15 menit + 5/nomor/jam (lebih ketat). Balas `429` + pesan
-generik saat limit tercapai. Menutup temuan K-1 di `docs/security/audit-2026-07-24.md`.
+auto-cari tanpa ketik). **Rate-limit sudah terpasang** — lihat bagian "Rate Limiting" di bawah.
 
 ### Lacak — `/track-order` (berdampingan dengan `/track` by invoice)
 - `POST /api/orders/track-by-phone`: kembalikan info non-sensitif (invoice, status, resi, kurir, tanggal,
@@ -435,18 +430,51 @@ generik saat limit tercapai. Menutup temuan K-1 di `docs/security/audit-2026-07-
 - Halaman sukses & hub mengarah ke `/review` polos (phone auto-fill cookie). `ReviewForm.tsx`/`ReviewProductCard.tsx`
   (flow invoice `?order=` lama) kini **dead code** (tak di-link).
 
+## Rate Limiting (anti bot / brute-force / scraping) — sudah terpasang
+
+Semua ambang batas terkumpul di **`src/lib/rate-limit.ts`** (konstanta `RATE_LIMITS`) — ubah angka
+di situ, jangan hardcode di route. Implementasi: **in-memory `Map` per-instance** (pola sama dengan
+`/api/oms/login`), best-effort. **Belum terpusat lintas-instance Vercel** — kandidat migrasi ke tabel
+Supabase atau Redis bila traffic/serangan naik. Helper: `enforceRateLimit(key, rule)` → `NextResponse`
+429 siap-kirim atau `null`; `isOverLimit`/`recordAttempt` untuk pencatatan tertunda; `getClientIp`.
+Respons limit = **HTTP 429** + pesan generik `RATE_LIMIT_MESSAGE` (tanpa membocorkan angka limit) +
+header `Retry-After`. Map disapu berkala tiap 500 penulisan agar tak bocor memori.
+
+| Aturan | Batas | Dipakai di |
+|---|---|---|
+| `PHONE_LOOKUP_IP` | 20 / 15 mnt / IP | `track-by-phone`, `verify-cancel`, `reviewable-by-phone` |
+| `PHONE_LOOKUP_PHONE` | 15 / jam / nomor | idem (cegah serangan 1 nomor dari banyak IP) |
+| `PHONE_LOOKUP_IP_PHONE_MISS` | 5 / 15 mnt / (IP+nomor) | idem — **hanya percobaan GAGAL** yang dihitung |
+| `PHONE_WRITE_IP` | 8 / 15 mnt / IP | `cancel-by-phone` |
+| `PHONE_WRITE_PHONE` | 5 / jam / nomor | `cancel-by-phone`, `create-by-phone` |
+| `MENGANTAR_IP` | 20 / menit / IP | proxy search alamat & cek ongkir |
+| `ORDER_CREATE_IP` | 3 / menit / IP | `POST /api/orders/create` |
+| `REVIEW_CREATE_IP` | 3 / 10 mnt / IP | `reviews/create` **dan** `reviews/create-by-phone` (bucket sama) |
+
+- **Kenapa "hanya percobaan gagal" untuk kunci IP+nomor**: penebak nomor orang lain hampir selalu
+  meleset (0 pesanan / nomor tak cocok), sedangkan pemilik nomor selalu dapat hasil. Menghitung
+  yang gagal saja = brute-force tetap terhenti di 5 tebakan, tapi user normal yang reload halaman
+  atau mengulang pencarian nomornya sendiri **tidak pernah** kena limit.
+- **Catatan UX**: `REVIEW_CREATE_IP` 3/10 menit berarti pembeli yang mengulas >3 produk sekaligus
+  akan tertahan. Naikkan konstanta itu bila keluhan muncul.
+- Menutup temuan K-1 di `docs/security/audit-2026-07-24.md`.
+
 ## Mengantar (Logistik) — sudah terpasang sebagian
 
 Semua helper client ada di **`src/lib/mengantar.ts`** (file, bukan folder). Endpoint Mengantar
-bersifat publik (tanpa API key) → dipanggil dari client, KECUALI search alamat yang diproksi karena CORS.
+bersifat publik (tanpa API key), tapi **keduanya (search alamat & cek ongkir) diproksi lewat route
+handler internal** — search karena CORS, ongkir agar bisa di-rate-limit.
 
 - **Search alamat** (`searchAddress`): UI di `AddressSearchCombobox` (debounce 500ms, min 3 karakter).
   Host alamat (wilayah) **tidak mengirim header CORS** → request diproksi lewat route handler internal
   `src/app/api/mengantar/address/search/route.ts` (BUKAN server action). `_id` kelurahan terpilih
   disimpan sebagai **`destination_id`** di state form alamat (dipakai cek ongkir).
-- **Cek ongkir** (`fetchShippingEstimate`): endpoint estimasi **mengizinkan CORS (`*`)** → di-fetch
-  **langsung dari client**. Origin toko dari env **`NEXT_PUBLIC_MENGANTAR_ORIGIN_ID`** (jangan hardcode).
-  Param: `origin_id`, `destination_id`, `weight` (kg). Response = object per-kurir; ambil
+- **Cek ongkir** (`fetchShippingEstimate`): endpoint estimasi Mengantar mengizinkan CORS (`*`), tapi
+  fetch langsung browser→Mengantar **tidak bisa di-rate-limit** → sejak sekarang diproksi lewat
+  `src/app/api/mengantar/shipping/estimate/route.ts` (rate limit `MENGANTAR_IP` + `origin_id` diisi
+  di server). Client hanya kirim `destination_id` & `weight` (kg); pemetaan/pengurutan kurir tetap di
+  `src/lib/mengantar.ts`. Origin toko dari env `MENGANTAR_ORIGIN_ID` (fallback:
+  `NEXT_PUBLIC_MENGANTAR_ORIGIN_ID`, jangan hardcode). Response = object per-kurir; ambil
   `estimatedSpecialPrice` (ongkir) & `estimatedDate` (estimasi), **sembunyikan** kurir `unsupported: true`,
   urutkan termurah→termahal.
 - **UI cek ongkir**: `ShippingOptions` (tombol trigger → bottom sheet `BottomSheet`, pola seperti
@@ -681,7 +709,7 @@ deskripsi 20–2000, harga 100–99.999.999, stok 0–999.999, `MAX_PRODUCT_IMAG
 - [x] Beri Review Produk by no_telepon (`/review`) — pembeli terverifikasi (riwayat beli) + badge "Pembeli Terverifikasi"
 - [x] Halaman lacak pesanan by nomor invoice (`/track`) + by no_telepon (`/track-order`, honeypot + auto-recognize cookie)
 - [x] Halaman pembatalan pesanan Guest (`/order-cancellation` token) + by no_telepon 2 langkah (`/cancel-order`)
-- [x] Rate-limit untuk lacak/batalkan/review by no_telepon — in-memory per-IP + per-nomor (`src/lib/rate-limit.ts`); belum terpusat lintas-instance (kandidat migrasi Supabase/Redis)
+- [x] Rate-limit endpoint publik rawan bot (lacak/batalkan/review by no_telepon, proxy Mengantar alamat+ongkir, create order, submit ulasan) — in-memory, ambang batas terpusat di `src/lib/rate-limit.ts`; belum terpusat lintas-instance (kandidat migrasi Supabase/Redis)
 - [x] Search alamat + **cek ongkir** Mengantar di checkout (client; ongkir masuk ke total)
 - [x] Validasi form checkout (nama/telepon/email/alamat/kurir) + gating tombol "Bayar Sekarang"
 - [x] Template email konfirmasi pesanan (`src/emails/`, preview di `/dev/email-preview`)
@@ -732,8 +760,10 @@ OMS_SESSION_SECRET               # server-only (HMAC tanda tangan cookie sesi OM
                                  # — WAJIB di-set di production, jangan pakai fallback)
 
 # Sudah dipakai sekarang (Mengantar — cek ongkir)
-NEXT_PUBLIC_MENGANTAR_ORIGIN_ID  # PUBLIC/client; _id kelurahan toko (asal pengiriman). WAJIB di-set
-                                 # di Vercel juga (var NEXT_PUBLIC_* di-inline saat build → perlu redeploy)
+NEXT_PUBLIC_MENGANTAR_ORIGIN_ID  # _id kelurahan toko (asal pengiriman). WAJIB di-set di Vercel juga
+                                 # (var NEXT_PUBLIC_* di-inline saat build → perlu redeploy)
+MENGANTAR_ORIGIN_ID              # server-only, OPSIONAL; alias non-public dari var di atas (dipakai
+                                 # proxy cek ongkir; bila diisi, nilainya menang & tak bocor ke bundel)
 
 # Sudah dipakai sekarang (Google Analytics 4)
 NEXT_PUBLIC_GA_ID                # PUBLIC/client; Measurement ID GA4 (format G-XXXXXXXXXX). Dipasang di

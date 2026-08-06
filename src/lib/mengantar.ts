@@ -1,7 +1,10 @@
 // src/lib/mengantar.ts
 // Helper sisi-klien untuk Mengantar Public API:
-//  - Pencarian alamat → lewat proxy internal (/api/mengantar) karena endpoint search tanpa CORS.
-//  - Cek ongkir (allEstimatePublic) → langsung dari client (endpoint ini mengizinkan CORS & tanpa key).
+//  - Pencarian alamat → lewat proxy internal (/api/mengantar/address/search) karena endpoint
+//    search tidak mengirim header CORS.
+//  - Cek ongkir (allEstimatePublic) → juga lewat proxy internal
+//    (/api/mengantar/shipping/estimate). Endpoint Mengantar-nya sendiri mengizinkan CORS, tapi
+//    fetch langsung dari browser mustahil di-rate-limit → diproksi agar bisa dibatasi per-IP.
 // _id alamat terpilih (destination_id) dipakai sebagai tujuan saat cek ongkir.
 
 // Satu hasil alamat Mengantar (field yang dipakai checkout)
@@ -32,9 +35,10 @@ export async function searchAddress(
   const res = await fetch(`/api/mengantar/address/search?keyword=${encodeURIComponent(keyword)}`, {
     signal,
   })
-  if (!res.ok) throw new Error('Gagal mencari alamat.')
-  const data = (await res.json()) as { data: MengantarAddress[] }
-  return data.data ?? []
+  const json = (await res.json().catch(() => ({}))) as { data?: MengantarAddress[]; error?: string }
+  // Pakai pesan dari server bila ada (mis. 429 rate limit) agar user tahu harus menunggu
+  if (!res.ok) throw new Error(json.error ?? 'Gagal mencari alamat.')
+  return json.data ?? []
 }
 
 // Mengubah teks UPPERCASE dari Mengantar menjadi Title Case agar enak dibaca
@@ -47,11 +51,8 @@ export function toTitleCase(text: string): string {
 
 // === Cek ongkir (allEstimatePublic) ===
 
-// Origin (alamat toko) untuk cek ongkir — dari env, jangan hardcode di kode.
-const ORIGIN_ID = process.env.NEXT_PUBLIC_MENGANTAR_ORIGIN_ID ?? ''
-
-// Endpoint cek ongkir publik (mengizinkan CORS → boleh dipanggil langsung dari client)
-const ESTIMATE_URL = 'https://app.mengantar.com/api/order/allEstimatePublic'
+// Proxy internal cek ongkir (origin_id toko diisi di server, sekaligus titik rate limit per-IP)
+const ESTIMATE_URL = '/api/mengantar/shipping/estimate'
 
 // Nama tampilan kurir (key respons → label ramah). Fallback ke key bila tak ada di peta.
 const COURIER_DISPLAY_NAMES: Record<string, string> = {
@@ -87,20 +88,20 @@ export async function fetchShippingEstimate(
   weight: number,
   signal?: AbortSignal,
 ): Promise<ShippingCourier[]> {
-  if (!ORIGIN_ID) {
-    throw new Error('NEXT_PUBLIC_MENGANTAR_ORIGIN_ID belum diset di environment.')
-  }
-
   const params = new URLSearchParams({
-    origin_id: ORIGIN_ID,
     destination_id: destinationId,
     weight: String(weight),
   })
 
   const res = await fetch(`${ESTIMATE_URL}?${params.toString()}`, { signal })
-  if (!res.ok) throw new Error('Gagal memuat ongkos kirim.')
+  const json = (await res.json().catch(() => ({}))) as {
+    success?: boolean
+    data?: Record<string, RawCourierEstimate>
+    error?: string
+  }
+  // Pakai pesan dari server bila ada (mis. 429 rate limit)
+  if (!res.ok) throw new Error(json.error ?? 'Gagal memuat ongkos kirim.')
 
-  const json = (await res.json()) as { success?: boolean; data?: Record<string, RawCourierEstimate> }
   const data = json.data ?? {}
 
   return Object.entries(data).map(([id, raw]) => ({

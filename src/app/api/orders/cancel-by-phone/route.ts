@@ -13,7 +13,7 @@ import { getOrderByOrderId, updateOrderStatus } from '@/lib/mock-db/orders'
 import { restoreStock } from '@/lib/mock-db/products'
 import { normalizePhone, isValidPhone } from '@/lib/phone'
 import type { OrderFulfillmentStatus } from '@/types/order'
-import { isRateLimited, getClientIp } from '@/lib/rate-limit'
+import { RATE_LIMITS, enforceRateLimit, getClientIp } from '@/lib/rate-limit'
 
 export const runtime = 'nodejs'
 
@@ -34,12 +34,8 @@ export async function POST(request: Request) {
 
   // Rate limit per-IP: aksi destruktif → threshold lebih ketat dari endpoint baca
   const ip = getClientIp(request)
-  if (isRateLimited(`cancel-by-phone:ip:${ip}`, 8, 15 * 60_000)) {
-    return NextResponse.json(
-      { error: 'Terlalu banyak percobaan. Coba lagi dalam beberapa menit.' },
-      { status: 429 },
-    )
-  }
+  const limitedByIp = enforceRateLimit(`cancel-by-phone:ip:${ip}`, RATE_LIMITS.PHONE_WRITE_IP)
+  if (limitedByIp) return limitedByIp
 
   const orderId = typeof body.orderId === 'string' ? body.orderId.trim().replace(/^#/, '') : ''
   const rawPhone = typeof body.phone === 'string' ? body.phone : ''
@@ -50,12 +46,11 @@ export async function POST(request: Request) {
 
   // Rate limit per-nomor: cegah brute-force tertarget ke satu nomor dari banyak IP
   const normalizedPhone = normalizePhone(rawPhone)
-  if (isRateLimited(`cancel-by-phone:phone:${normalizedPhone}`, 5, 60 * 60_000)) {
-    return NextResponse.json(
-      { error: 'Terlalu banyak percobaan untuk nomor ini. Coba lagi nanti.' },
-      { status: 429 },
-    )
-  }
+  const limitedByPhone = enforceRateLimit(
+    `cancel-by-phone:phone:${normalizedPhone}`,
+    RATE_LIMITS.PHONE_WRITE_PHONE,
+  )
+  if (limitedByPhone) return limitedByPhone
 
   // Query ULANG dari DB
   const order = await getOrderByOrderId(orderId)

@@ -44,9 +44,10 @@ export default function ShippingOptions({
         const list = await fetchShippingEstimate(destinationId, weight, ctrl.signal)
         if (ctrl.signal.aborted) return
         setCouriers(list)
-      } catch {
+      } catch (err) {
         if (!ctrl.signal.aborted) {
-          setError('Gagal memuat ongkos kirim, silakan coba lagi')
+          // Pesan dari server dipakai bila ada (mis. 429 "terlalu banyak percobaan")
+          setError(err instanceof Error ? err.message : 'Gagal memuat ongkos kirim, silakan coba lagi')
           setCouriers([])
         }
       } finally {
