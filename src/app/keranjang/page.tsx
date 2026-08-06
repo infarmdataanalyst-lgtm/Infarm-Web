@@ -12,7 +12,7 @@ import type { CartLineItem } from '@/types/cart'
 import type { Product, StoredProduct } from '@/types/product'
 import type { Promotion } from '@/types/promotion'
 import { dummyProducts } from '@/lib/data/dummy-products'
-import { getRecentlyViewedIds } from '@/lib/recently-viewed'
+import { getRecentlyViewedIds, getAddedToCartIds } from '@/lib/recently-viewed'
 import {
   updateQuantity,
   removeFromCart,
@@ -54,11 +54,18 @@ export default function CartPage() {
 
   // Riwayat "pernah dilihat" (localStorage, sisi-klien). Kosong bila belum ada/disabled.
   const [viewedIds, setViewedIds] = useState<string[]>([])
+  // Produk yang PERNAH dimasukkan keranjang → dikecualikan dari rekomendasi (baca localStorage).
+  const [addedIds, setAddedIds] = useState<string[]>([])
 
   // Baca riwayat lihat produk sekali saat mount (client only)
   useEffect(() => {
     setViewedIds(getRecentlyViewedIds())
   }, [])
+
+  // Refresh set "pernah di-cart" tiap isi keranjang berubah (mis. setelah add/remove) → rekomendasi fresh
+  useEffect(() => {
+    setAddedIds(getAddedToCartIds())
+  }, [cookieCart])
 
   // === Id produk yang perlu di-resolve dari server: item keranjang + riwayat lihat (gabung unik) ===
   // Key stabil (diurut) supaya effect hanya refetch saat kumpulan id benar-benar berubah.
@@ -242,6 +249,7 @@ export default function CartPage() {
   // buang yang diarsipkan atau sudah ada di keranjang. Urut sesuai riwayat (terbaru dulu).
   const recentlyViewed = useMemo(() => {
     const cartIds = new Set(cookieCart.map((i) => i.productId))
+    const addedSet = new Set(addedIds) // produk yang PERNAH di-cart (walau sudah dihapus)
     const byId = new Map<string, Product>()
     for (const p of dummyProducts) byId.set(p.id, p)
     for (const p of omsProducts) {
@@ -249,11 +257,12 @@ export default function CartPage() {
       else byId.set(p.id, p) // data terbaru dari Supabase (harga/stok bisa berubah)
     }
     return viewedIds
-      .filter((id) => !cartIds.has(id)) // jangan rekomendasi barang yang sudah di keranjang
+      .filter((id) => !cartIds.has(id)) // jangan rekomendasi barang yang sedang di keranjang
+      .filter((id) => !addedSet.has(id)) // maupun yang PERNAH di-cart (fokus produk murni dibrowse)
       .map((id) => byId.get(id))
       .filter((p): p is Product => Boolean(p))
       .slice(0, 6)
-  }, [viewedIds, omsProducts, cookieCart])
+  }, [viewedIds, omsProducts, cookieCart, addedIds])
 
   return (
     <div className="flex min-h-screen flex-col bg-brand-surface text-zinc-900">

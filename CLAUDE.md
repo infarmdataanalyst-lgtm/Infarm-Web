@@ -83,6 +83,9 @@ Tandai jelas mana yang sudah ada vs masih rencana saat menulis kode.
 - **Language**: TypeScript (strict mode)
 - **Frontend**: React 19.2, Tailwind CSS v4 (PostCSS, `@tailwindcss/postcss`)
 - **Ikon**: `lucide-react`
+- **Komponen UI headless**: `@headlessui/react` (v2) — dropdown/listbox aksesibel (mis. sort katalog),
+  agar highlight opsi ikut tema hijau (bukan biru native `<select>`). Boleh dipakai untuk dropdown/menu
+  baru; jangan tambah lib UI lain tanpa konfirmasi.
 - **Chart (OMS dashboard)**: `recharts`
 - **Database**: Supabase (PostgreSQL) — `@supabase/ssr` + `@supabase/supabase-js` **sudah terpasang**
 - **Backend**: Next.js API Routes (Route Handlers di `src/app/api/`)
@@ -148,8 +151,8 @@ src/
 ├── app/                          # Next.js App Router
 │   ├── (store)/                  # Route group: halaman publik ber-AppBar
 │   │   ├── layout.tsx
-│   │   ├── page.tsx              # Homepage (search bar autocomplete)
-│   │   ├── products/page.tsx     # Katalog produk
+│   │   ├── page.tsx              # Homepage (Hero + HeroStats count-up, ValueProp, kategori, terlaris)
+│   │   ├── products/page.tsx     # Katalog produk (ProductCatalog: sidebar filter desktop + sheet mobile)
 │   │   └── produk/[id]/page.tsx  # Detail produk
 │   ├── keranjang/page.tsx        # Halaman keranjang (data dari cookie)
 │   ├── checkout/
@@ -180,25 +183,32 @@ src/
 │   ├── layout.tsx                # Root layout (font, metadata)
 │   └── globals.css               # Tailwind v4 + @config tailwind.config.ts
 ├── components/
-│   ├── home/                     # Homepage (HeroSearchBar, BestSellingProducts [infinite scroll], dll)
-│   ├── product/                  # Kartu & detail produk: ProductImageSlider (galeri maks 9),
-│   │                             #   ProductInfo (harga coret + "N terjual"), TrackProductView (catat lihat)
-│   ├── cart/                     # Keranjang: CartPromoList, CartComboList, CartPaymentSummary,
-│   │                             #   CartRecentlyViewed ("Dilihat Sebelumnya"), dll
+│   ├── home/                     # Homepage: HeroSection (dual-image bg + CTA), HeroStats (3 indicator
+│   │                             #   box + count-up native), ValuePropositionBanner (grid desktop/carousel
+│   │                             #   mobile), CategoryGrid (foto latar per kategori), BestSellingProducts.
+│   │                             #   (HeroSearchBar DIHAPUS — search kini di header)
+│   ├── product/                  # ProductCard (harga hijau + coret inline + rating|terjual),
+│   │                             #   ProductCatalog (filter lengkap: sidebar/sheet, multi-kategori, harga,
+│   │                             #   sort Listbox HeadlessUI), ProductImageSlider, ProductInfo,
+│   │                             #   TrackProductView. (CategoryFilterTabs DIHAPUS)
+│   ├── cart/                     # Keranjang: CartHeader (teks putih), CartItemRow & CartCheckoutBar
+│   │                             #   (checkbox custom: box putih border, centang putih di box hijau),
+│   │                             #   CartPromoList, CartRecentlyViewed ("Dilihat Sebelumnya"), dll
 │   ├── checkout/                 # AddressForm, AddressSearchCombobox, ShippingOptions (bottom sheet
 │   │                             #   cek ongkir), PaymentModal, BottomSheet, OrderSummary, dll
 │   ├── order-cancellation/       # OrderCancellationView (client)
 │   ├── review/                   # Komponen review
 │   ├── track/                    # Komponen pelacakan
 │   ├── oms/                      # Sidebar, header, chart, ComboForm, PromotionForm
-│   └── ui/                       # Komponen UI generik (AppBar, dll)
+│   └── ui/                       # UI generik: AppBar (logo+HeaderSearch tengah+cart/profil), HeaderSearch
+│                                 #   (search persisten: inline desktop, overlay mobile), FloatingWhatsApp
 ├── lib/
 │   ├── cart-client.ts            # Helper keranjang sisi-klien (cookie base64) + addComboToCart + removeComboFromCart + snapshot promo + clearCart
 │   ├── guest-phone.ts            # Cookie client no_telepon (infarm_phone) untuk auto-recognize lacak/batalkan
 │   ├── recently-viewed.ts        # Riwayat "pernah dilihat" (guest, localStorage, maks 10)
 │   ├── promo-cart.ts             # Helper murni: progres/hadiah promo + relevansi & alokasi harga combo (keranjang)
 │   ├── product-validation.ts     # Validasi form produk (SKU, nama, kategori, harga jual/asli, stok, deskripsi, foto)
-│   ├── format.ts                 # Util format (mis. rupiah)
+│   ├── format.ts                 # Util format: formatRupiah + formatSold (mis. 523 → "500+")
 │   ├── phone.ts                  # Validasi & normalisasi no. telepon ID (checkout)
 │   ├── checkout-validation.ts    # Validasi field alamat (nama/telepon/alamat) → status tombol "Bayar Sekarang"
 │   ├── combo-validation.ts       # Validasi server payload combo
@@ -211,11 +221,16 @@ src/
 │   └── data/                     # Dummy data tampilan pelengkap (dummy-*.ts)
 ├── emails/                       # Template HTML email (order-confirmation.html) — placeholder {{...}}
 ├── hooks/                        # use-debounce.ts, dll
-└── types/                        # product.ts, cart.ts, order.ts, combo.ts, promotion.ts
+└── types/                        # product.ts (+ CatalogCardProduct: rating/soldCount opsional), cart, order, combo, promotion
 
 # Root: next.config.ts, tailwind.config.ts, eslint.config.mjs, postcss.config.mjs,
 #       tsconfig.json, AGENTS.md, CLAUDE.md, .env.local (tidak di-commit)
+# scripts/migrate-data.mjs: salin DATA (bukan skema) antar project Supabase (SOURCE .env.local →
+#   TARGET .env.migration.local); urut FK, preserve id, idempotent. Jalankan: node scripts/migrate-data.mjs [--run]
 # public/images/email/: aset gambar email (mis. logo-infarm.png) — lihat README di folder tsb
+# public/images/categories/<slug>.(webp|jpg): foto latar tombol kategori beranda (CategoryGrid resolve fs)
+# public/images/hero-background(.jpg) + hero-background-mobile.(jpg|webp|png): bg hero art-direction
+#   (desktop landscape 16:9 / mobile portrait 9:16; HeroSection resolve fs, fallback ke desktop)
 # supabase/: migrations/ (SQL, sumber kebenaran skema) + README.md (cara apply via Dashboard)
 ```
 
@@ -313,7 +328,9 @@ Cache Components (`use cache`/PPR) **belum aktif** → pakai caching klasik Next
   KHUSUS storefront (revalidate 30s + tags `products`/`reviews`/`combos`/`sales`). Tanpa ini, query
   supabase-js = `fetch` no-store → memaksa halaman jadi dynamic (revalidate diabaikan).
   Fungsi: `getCachedProducts`, `getCachedProductById`, `getCachedReviewsByProduct`,
-  `getCachedRatingSummary`, `getCachedCombos`, `getCachedSalesCountByProduct`, `getBestSellingCatalogPage`.
+  `getCachedRatingSummary`, `getCachedRatingSummaryByProduct` (agregasi rating batch — avg+count per
+  product, tag `reviews`; dipakai kartu "Produk Pilihan"), `getCachedCombos`, `getCachedSalesCountByProduct`,
+  `getBestSellingCatalogPage` (kini payload sertakan `soldCount`+`rating`+`reviewCount` per kartu).
 - **PENTING — jangan blanket-cache fungsi dasar `mock-db/*`**: API OMS & `orders/create` WAJIB baca
   data FRESH (validasi stok/harga otoritatif). Storefront pakai wrapper cached; OMS/order pakai fungsi dasar.
 - **Invalidasi saat mutasi**: tiap API tulis memanggil `revalidateTag(tag, 'max')` + `revalidatePath`:
@@ -605,6 +622,36 @@ deskripsi 20–2000, harga 100–99.999.999, stok 0–999.999, `MAX_PRODUCT_IMAG
 - Ditampilkan di **keranjang** (`CartRecentlyViewed`): resolve id → data produk **terbaru** (OMS+dummy),
   buang produk diarsipkan atau yang sudah ada di keranjang, maks 6; section disembunyikan bila kosong.
 
+## Header & Search Persisten (storefront)
+
+- Header storefront = **`AppBar`** (Server Component, dirender di `(store)/layout.tsx`, fixed, `bg-brand-header`
+  hijau `#46B33C` + teks/ikon putih, `rounded-b-[2rem]`, `backdrop-blur`). Layout: `[hamburger+logo] — [HeaderSearch] — [cart+profil]`.
+- **`HeaderSearch`** (`components/ui/`, client) = search autocomplete PERSISTEN (dulu `HeroSearchBar` di hero, sudah dihapus):
+  - Desktop (sm+): input inline (`bg-white/15`, pill, ikon search kanan sebagai trigger), lebar `max-w-[320px]` rata kanan.
+  - Mobile: ikon kaca pembesar → **overlay full-width** (`fixed inset-0`) menutupi header (tombol ←, input, dropdown).
+  - Saran on-type via `GET /api/products/search` (debounce). Logika autocomplete sama dgn versi hero lama.
+
+## Halaman Katalog `/products` — Filter Lengkap
+
+- **`ProductCatalog`** (client) merakit filter + grid; `products/page.tsx` hanya membungkus dengan `<Suspense>`
+  (butuh `useSearchParams`). Data = produk OMS non-arsip via `/api/products/list`.
+- **Desktop (lg+)**: sidebar kiri sticky (kategori **multi-checkbox** custom [box putih border → hijau+centang putih],
+  rentang harga Min–Maks, tombol **Terapkan**) + konten kanan (judul, jumlah, sort). **Mobile**: baris kontrol
+  (Filter, Urutkan, chip kategori aktif ×) → **bottom-sheet** (reuse `checkout/BottomSheet`) untuk filter & sort.
+- **Sort** = Headless UI `Listbox` (Terbaru/Harga Terendah/Tertinggi), highlight opsi tema hijau. Filter kategori & harga
+  **staged** (berlaku saat Terapkan); sort instan. Chip × hapus kategori langsung.
+- **Sinkron URL** `?category=a,b` via **`window.history.replaceState`** (BUKAN `router.replace`) — hindari navigasi/
+  Suspense fallback yang bikin bottom-sheet nyangkut. Deep-link dari `CategoryGrid` beranda (slug tunggal) tetap jalan.
+- Label jumlah: `"{n} produk"` (+ ` · {Kategori}` bila tepat 1 kategori aktif). `CategoryFilterTabs` (kapsul lama) DIHAPUS.
+
+## Floating WhatsApp CS
+
+- **`FloatingWhatsApp`** (`components/ui/`, client) dipasang di **root `layout.tsx`** (bukan per halaman) → tampil di
+  SEMUA halaman ecommerce; **self-gate**: `usePathname().startsWith('/oms')` → `return null` (sembunyi di admin).
+- Tombol lingkaran hijau kanan bawah (`fixed bottom-5 right-5 z-[60]`) + ikon WhatsApp SVG inline (lucide tak punya brand icon).
+  Bubble "Pesan melalui CS kami" muncul ~2.5s, auto-hide, tombol × tutup permanen.
+- **Link CS** = constant **`WHATSAPP_CS_LINK`** di `FloatingWhatsApp.tsx` (placeholder `/404`; ganti ke `https://wa.me/62…` saat siap).
+
 ## Roadmap Integrasi (target arsitektur — belum diimplementasi)
 
 ### Xendit (Payment Gateway)
@@ -618,10 +665,14 @@ deskripsi 20–2000, harga 100–99.999.999, stok 0–999.999, `MAX_PRODUCT_IMAG
 ## Domain: Ecommerce & OMS
 
 ### Ecommerce (Storefront)
-- [x] Halaman beranda (homepage) — dengan search bar autocomplete
-- [x] Halaman katalog produk (`/products`)
+- [x] Search bar autocomplete PERSISTEN di header (semua halaman store) — desktop inline, mobile overlay
+      (`HeaderSearch`); dulu di hero, kini pindah ke `AppBar`
+- [x] Halaman beranda (homepage) — Hero (bg dual-image) + 3 indicator box count-up (`HeroStats`)
+- [x] Halaman katalog produk (`/products`) — filter lengkap: sidebar desktop / bottom-sheet mobile,
+      kategori multi-checkbox, rentang harga, sort (Listbox HeadlessUI), chip kategori aktif
 - [x] Halaman detail produk (`/produk/[id]`)
-- [x] Halaman keranjang (`/keranjang`) — data dari cookie + section "Dilihat Sebelumnya" (localStorage)
+- [x] Floating WhatsApp CS di semua halaman ecommerce (`FloatingWhatsApp`, kanan bawah; link CS placeholder `/404`)
+- [x] Halaman keranjang (`/keranjang`) — data dari cookie; desktop 2 kolom (produk kiri, "Dilihat Sebelumnya" kanan), mobile 1 kolom
 - [x] Katalog & "Produk Terlaris" pure produk OMS (infinite scroll); "N terjual" di detail produk
 - [x] Detail produk: galeri foto multi (maks 9) + harga coret
 - [x] Promo & paket combo REAL di keranjang (dari Supabase via `/api/{promotions,combos}/active`)

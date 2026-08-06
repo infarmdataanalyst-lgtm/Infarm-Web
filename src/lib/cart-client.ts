@@ -4,6 +4,7 @@
 // Catatan: pembacaan keranjang dari Server Component nanti memakai cookies() di lib/cart.ts.
 
 import type { CartItem, CheckoutPromoSnapshot } from '@/types/cart'
+import { markProductAddedToCart } from '@/lib/recently-viewed'
 
 // === Konstanta cookie ===
 const CART_COOKIE_NAME = 'infarm_cart'
@@ -92,6 +93,8 @@ export function addToCart(item: CartItem): CartItem[] {
   }
 
   writeCart(cart)
+  // Catat pernah di-cart → dikecualikan dari rekomendasi "Dilihat Sebelumnya"
+  markProductAddedToCart(item.productId)
   return cart
 }
 
@@ -113,6 +116,8 @@ export function addComboToCart(
     } else {
       cart.push({ productId: it.productId, quantity: it.quantity, price: it.price, comboId })
     }
+    // Catat tiap produk combo pernah di-cart → dikecualikan dari rekomendasi "Dilihat Sebelumnya"
+    markProductAddedToCart(it.productId)
   }
   writeCart(cart)
   return cart

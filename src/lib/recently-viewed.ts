@@ -41,3 +41,33 @@ export function trackProductView(productId: string): void {
 export function getRecentlyViewedIds(): string[] {
   return read().map((e) => e.product_id)
 }
+
+// === Riwayat "pernah dimasukkan keranjang" ===
+// Karena add-to-cart selalu lewat halaman detail (yang mencatat "dilihat"), produk yang pernah
+// di-cart lalu dihapus akan muncul lagi di "Dilihat Sebelumnya". Set ini dipakai untuk MENGECUALIKAN
+// produk yang pernah di-cart dari rekomendasi, agar section murni berisi produk yang hanya dibrowse.
+const ADDED_KEY = 'cart_added_products'
+
+// Tandai satu produk sebagai pernah dimasukkan keranjang (dipanggil saat add-to-cart).
+export function markProductAddedToCart(productId: string): void {
+  if (typeof window === 'undefined' || !productId) return
+  try {
+    const set = new Set(getAddedToCartIds())
+    set.add(productId)
+    window.localStorage.setItem(ADDED_KEY, JSON.stringify([...set]))
+  } catch {
+    // localStorage penuh/disabled → abaikan (non-kritis)
+  }
+}
+
+// Daftar product_id yang pernah dimasukkan keranjang (untuk dikecualikan dari rekomendasi).
+export function getAddedToCartIds(): string[] {
+  if (typeof window === 'undefined') return []
+  try {
+    const raw = window.localStorage.getItem(ADDED_KEY)
+    const parsed = raw ? JSON.parse(raw) : []
+    return Array.isArray(parsed) ? parsed.filter((x) => typeof x === 'string') : []
+  } catch {
+    return []
+  }
+}
