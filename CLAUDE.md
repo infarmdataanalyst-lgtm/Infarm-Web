@@ -675,11 +675,13 @@ deskripsi 20–2000, harga 100–99.999.999, stok 0–999.999, `MAX_PRODUCT_IMAG
   di `CategoryGrid` beranda & footer. **Tanpa penanda aktif untuk kategori**: membacanya butuh
   `useSearchParams` yang memaksa halaman jadi dinamis, sementara beranda & katalog sengaja ISR.
 - **`ProfileIconLink`** (`components/ui/`, client) = ikon akun + badge angka pesanan aktif (cookie
-  `infarm_active_orders`, tanpa query DB). **Desktop (sm+)**: klik ikon → dropdown `absolute right-0
-  top-full` berisi Pesanan Saya / Lacak / Batalkan / Review (+ baris kepala "N pesanan aktif");
-  tutup via klik-luar (`pointerdown`), `Escape`, atau klik item. **Mobile**: tap ikon → langsung
-  `/pesanan-saya` (hub-nya sudah memuat kartu yang sama). Dropdown pakai `absolute`, BUKAN `fixed`,
-  jadi tak kena masalah containing block `backdrop-filter` seperti `MenuDrawer`.
+  `infarm_active_orders`, tanpa query DB). Klik/tap ikon → dropdown `absolute right-0 top-full`
+  berisi Pesanan Saya / Lacak / Batalkan / Review (+ baris kepala "N pesanan aktif"); tutup via
+  klik-luar (`pointerdown`), `Escape`, atau klik item. **Satu perilaku untuk semua ukuran layar**
+  (mobile TIDAK lagi navigate ke `/pesanan-saya`) supaya pembeli tak kehilangan konteks halaman
+  yang sedang dibuka; hub tetap jadi item pertama di dropdown. Baris menu `py-3 sm:py-2.5` agar
+  target sentuh mobile nyaman. Dropdown pakai `absolute`, BUKAN `fixed`, jadi tak kena masalah
+  containing block `backdrop-filter` seperti `MenuDrawer`.
   **Tanpa Profil/Logout/Alamat Tersimpan/Pengaturan** — proyek ini guest checkout, tak ada akun
   pelanggan; jangan tambahkan item itu tanpa membangun sistem auth pelanggan dulu.
 - **`HeaderSearch`** (`components/ui/`, client) = search autocomplete PERSISTEN (dulu `HeroSearchBar` di hero, sudah dihapus):
@@ -752,7 +754,7 @@ deskripsi 20–2000, harga 100–99.999.999, stok 0–999.999, `MAX_PRODUCT_IMAG
 - [x] Promo & paket combo REAL di keranjang (dari Supabase via `/api/{promotions,combos}/active`)
 - [x] Halaman guest checkout (`/checkout` + `/checkout/success`)
 - [x] Hub "Pesanan Saya" (`/pesanan-saya`) — kartu lacak/batalkan/review; ikon akun header (dropdown
-      desktop / navigate mobile) + badge angka pesanan aktif dari cookie
+      di semua ukuran layar) + badge angka pesanan aktif dari cookie
 - [x] Beri Review Produk by no_telepon (`/review`) — pembeli terverifikasi (riwayat beli) + badge "Pembeli Terverifikasi"
 - [x] Halaman lacak pesanan by nomor invoice (`/track`) + by no_telepon (`/track-order`, honeypot + auto-recognize cookie)
 - [x] Halaman pembatalan pesanan Guest (`/order-cancellation` token) + by no_telepon 2 langkah (`/cancel-order`)

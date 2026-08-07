@@ -2,8 +2,9 @@
 
 // src/components/ui/ProfileIconLink.tsx
 // Ikon akun di header + akses layanan pesanan guest (lacak/batalkan/review).
-//  - Desktop (sm+): klik ikon → dropdown menu menempel di bawah ikon, rata kanan.
-//  - Mobile: tap ikon → langsung ke hub /pesanan-saya (pola navigasi mobile yang sudah ada).
+// Klik/tap ikon → dropdown menempel di bawah ikon (rata kanan). SATU perilaku untuk semua ukuran
+// layar: di mobile pun tidak berpindah halaman, supaya pembeli tak kehilangan konteks katalog/
+// keranjang yang sedang dibuka. Hub /pesanan-saya tetap ada sebagai item pertama di dropdown.
 // Menu ini menggantikan section "Pesanan" yang dulu ada di MenuDrawer — drawer kini murni katalog.
 //
 // Catatan: proyek ini GUEST CHECKOUT (tanpa login pelanggan), jadi tidak ada Profil/Logout/
@@ -71,15 +72,8 @@ export default function ProfileIconLink() {
 
   return (
     <>
-      {/* === Mobile: tap → hub /pesanan-saya (tanpa dropdown) === */}
-      <Link href="/pesanan-saya" aria-label="Pesanan Saya" className="relative p-1 sm:hidden">
-        <ProfileIcon />
-        <CountBadge count={count} />
-      </Link>
-
-      {/* === Desktop: klik → dropdown === */}
-      {/* Klik (bukan hover saja) agar tetap bisa dipakai di layar sentuh & keyboard. */}
-      <div ref={wrapperRef} className="relative hidden sm:block">
+      {/* Klik (bukan hover) agar satu implementasi melayani mouse, layar sentuh, dan keyboard. */}
+      <div ref={wrapperRef} className="relative">
         <button
           type="button"
           aria-label="Menu pesanan"
@@ -118,7 +112,8 @@ export default function ProfileIconLink() {
                       href={item.href}
                       role="menuitem"
                       aria-current={active ? 'page' : undefined}
-                      className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition ${
+                      // py lebih tinggi di layar kecil → target sentuh nyaman (~48px)
+                      className={`flex items-center gap-3 rounded-xl px-3 py-3 text-sm transition sm:py-2.5 ${
                         active
                           ? 'bg-brand-light/40 font-bold text-brand-primary'
                           : 'text-zinc-700 hover:bg-brand-light/30'
