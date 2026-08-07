@@ -201,7 +201,9 @@ src/
 │   ├── review/                   # Komponen review
 │   ├── track/                    # Komponen pelacakan
 │   ├── oms/                      # Sidebar, header, chart, ComboForm, PromotionForm
-│   └── ui/                       # UI generik: AppBar (logo+HeaderSearch tengah+cart/profil), HeaderSearch
+│   └── ui/                       # UI generik: AppBar (menu+logo+HeaderSearch tengah+cart/profil),
+│                                 #   MenuDrawer (drawer kiri: nav+kategori), ProfileIconLink
+│                                 #   (ikon akun → dropdown layanan pesanan desktop / hub mobile), HeaderSearch
 │                                 #   (search persisten: inline desktop, overlay mobile), FloatingWhatsApp
 ├── lib/
 │   ├── cart-client.ts            # Helper keranjang sisi-klien (cookie base64) + addComboToCart + removeComboFromCart + snapshot promo + clearCart
@@ -654,6 +656,30 @@ deskripsi 20–2000, harga 100–99.999.999, stok 0–999.999, `MAX_PRODUCT_IMAG
 
 - Header storefront = **`AppBar`** (Server Component, dirender di `(store)/layout.tsx`, fixed, `bg-brand-header`
   hijau `#46B33C` + teks/ikon putih, `rounded-b-[2rem]`, `backdrop-blur`). Layout: `[hamburger+logo] — [HeaderSearch] — [cart+profil]`.
+- **Pembagian tugas navigasi header (jangan dicampur lagi)**: `MenuDrawer` = **navigasi katalog**
+  (beranda/produk/keranjang + kategori); `ProfileIconLink` = **layanan pesanan** (hub/lacak/
+  batalkan/review). Section "Pesanan" DIHAPUS dari drawer agar tak tumpang tindih dengan ikon akun.
+- **`MenuDrawer`** (`components/ui/`, client) = tombol hamburger + panel geser dari kiri. Dua section:
+  Navigasi (Beranda / Semua Produk / Keranjang) dan Kategori Produk (dari `PRODUCT_CATEGORIES` —
+  satu sumber dengan `CategoryGrid` & filter katalog).
+  Tutup lewat backdrop, tombol ×, `Escape`, atau klik tautan (`onClick` di `<nav>`, BUKAN efek
+  `pathname` — lint `react-hooks/set-state-in-effect` melarangnya). Scroll body dikunci saat terbuka;
+  panel `inert` saat tertutup.
+  **WAJIB portal ke `document.body`** (`createPortal`): `AppBar` memakai `backdrop-blur-md`, dan
+  elemen ber-`backdrop-filter` jadi containing block untuk anak `position: fixed` → tanpa portal
+  `inset-y-0` mengacu ke tinggi AppBar (56px), drawer terpotong & backdrop cuma menutupi header.
+  Deteksi klien pakai `useSyncExternalStore` (bukan setState di `useEffect`, dilarang lint).
+  Konsekuensi: isi drawer tidak ada di HTML awal — tak masalah, tautan kategori/nav juga tersedia
+  di `CategoryGrid` beranda & footer. **Tanpa penanda aktif untuk kategori**: membacanya butuh
+  `useSearchParams` yang memaksa halaman jadi dinamis, sementara beranda & katalog sengaja ISR.
+- **`ProfileIconLink`** (`components/ui/`, client) = ikon akun + badge angka pesanan aktif (cookie
+  `infarm_active_orders`, tanpa query DB). **Desktop (sm+)**: klik ikon → dropdown `absolute right-0
+  top-full` berisi Pesanan Saya / Lacak / Batalkan / Review (+ baris kepala "N pesanan aktif");
+  tutup via klik-luar (`pointerdown`), `Escape`, atau klik item. **Mobile**: tap ikon → langsung
+  `/pesanan-saya` (hub-nya sudah memuat kartu yang sama). Dropdown pakai `absolute`, BUKAN `fixed`,
+  jadi tak kena masalah containing block `backdrop-filter` seperti `MenuDrawer`.
+  **Tanpa Profil/Logout/Alamat Tersimpan/Pengaturan** — proyek ini guest checkout, tak ada akun
+  pelanggan; jangan tambahkan item itu tanpa membangun sistem auth pelanggan dulu.
 - **`HeaderSearch`** (`components/ui/`, client) = search autocomplete PERSISTEN (dulu `HeroSearchBar` di hero, sudah dihapus):
   - Desktop (sm+): input inline (`bg-white/15`, pill, ikon search kanan sebagai trigger), lebar `max-w-[320px]` rata kanan.
   - Mobile: ikon kaca pembesar → **overlay full-width** (`fixed inset-0`) menutupi header (tombol ←, input, dropdown).
@@ -705,7 +731,8 @@ deskripsi 20–2000, harga 100–99.999.999, stok 0–999.999, `MAX_PRODUCT_IMAG
 - [x] Detail produk: galeri foto multi (maks 9) + harga coret
 - [x] Promo & paket combo REAL di keranjang (dari Supabase via `/api/{promotions,combos}/active`)
 - [x] Halaman guest checkout (`/checkout` + `/checkout/success`)
-- [x] Hub "Pesanan Saya" (`/pesanan-saya`) — kartu lacak/batalkan/review; ikon profil header + badge cookie
+- [x] Hub "Pesanan Saya" (`/pesanan-saya`) — kartu lacak/batalkan/review; ikon akun header (dropdown
+      desktop / navigate mobile) + badge angka pesanan aktif dari cookie
 - [x] Beri Review Produk by no_telepon (`/review`) — pembeli terverifikasi (riwayat beli) + badge "Pembeli Terverifikasi"
 - [x] Halaman lacak pesanan by nomor invoice (`/track`) + by no_telepon (`/track-order`, honeypot + auto-recognize cookie)
 - [x] Halaman pembatalan pesanan Guest (`/order-cancellation` token) + by no_telepon 2 langkah (`/cancel-order`)
