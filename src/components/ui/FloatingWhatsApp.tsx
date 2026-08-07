@@ -14,11 +14,7 @@ import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import { X } from 'lucide-react'
 import { STICKY_BAR_HEIGHT_VAR } from '@/hooks/use-sticky-bar-height'
-
-// TODO: Ganti dengan link WhatsApp CS resmi setelah tersedia.
-// Format nantinya: https://wa.me/62xxxxxxxxxx?text=Halo%2C%20saya%20ingin%20bertanya%20tentang%20produk
-// Sementara diarahkan ke halaman 404 (JANGAN pakai nomor dummy yang terlihat asli).
-const WHATSAPP_CS_LINK = '/404'
+import { WHATSAPP_CS_LINK } from '@/lib/data/contact'
 
 // Teks bubble ajakan
 const BUBBLE_TEXT = 'Pesan melalui CS kami'
@@ -43,9 +39,12 @@ export default function FloatingWhatsApp() {
     }
   }, [dismissed])
 
-  // Jangan tampilkan di area admin/OMS maupun saat proses pembayaran berjalan.
+  // Jangan tampilkan di: area admin/OMS, saat proses pembayaran berjalan, dan halaman maintenance
+  // (halaman itu sudah punya tautan CS-nya sendiri → jangan dobel).
   // (`/checkout/success` TIDAK ikut disembunyikan — di sana CS justru berguna.)
-  if (pathname?.startsWith('/oms') || pathname === '/checkout') return null
+  if (pathname?.startsWith('/oms') || pathname === '/checkout' || pathname === '/maintenance') {
+    return null
+  }
 
   return (
     <div

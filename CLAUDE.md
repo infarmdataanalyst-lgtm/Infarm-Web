@@ -769,6 +769,21 @@ Bug nyata yang pernah terjadi: bottom-sheet `z-50` di bawah `FloatingWhatsApp` `
 **Aturan:** apa pun yang menutupi layar dan menerima klik WAJIB ≥ `z-[70]` — di atas tombol
 mengambang. Jangan menambah lapis baru tanpa memperbarui tabel ini.
 
+## Halaman Maintenance (`/maintenance`)
+
+- **`src/app/maintenance/page.tsx`** — Server Component statis, tanpa header/footer/navigasi.
+  Isi: logo (non-tautan), ikon `Wrench` dalam lingkaran `bg-brand-light/30`, judul "Sedang Dalam
+  Perbaikan", 2 paragraf, pemisah `bg-brand-primary`, tautan CS WhatsApp, copyright.
+  `metadata.robots = { index: false, follow: false }` (kondisi sementara, jangan diindeks).
+- Link CS memakai **`WHATSAPP_CS_LINK`** dari `src/lib/data/contact.ts` (dipindah dari dalam
+  `FloatingWhatsApp.tsx` agar satu sumber). Masih placeholder `/404`.
+- `FloatingWhatsApp` self-gate juga di `/maintenance` (halaman ini sudah punya tautan CS sendiri).
+- **Belum ada mekanisme mengaktifkan maintenance mode** — halaman ini baru TAMPILAN. Untuk
+  mengalihkan seluruh trafik ke sini, tambahkan rewrite ber-flag env di `src/proxy.ts`
+  (mis. `MAINTENANCE_MODE=1`), kecualikan `/maintenance` sendiri + aset `_next/*` + `/oms/*` bila
+  admin tetap perlu akses. Idealnya balas **HTTP 503** (bukan 200) agar mesin pencari tak menganggap
+  situs hilang permanen — butuh route handler/response kustom, bukan `page.tsx` biasa.
+
 ## Floating WhatsApp CS
 
 - **`FloatingWhatsApp`** (`components/ui/`, client) dipasang di **root `layout.tsx`** (bukan per halaman) → tampil di
