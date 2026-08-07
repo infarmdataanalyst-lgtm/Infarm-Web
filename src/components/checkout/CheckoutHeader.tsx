@@ -1,11 +1,20 @@
 'use client'
 
 // src/components/checkout/CheckoutHeader.tsx
-// Header halaman checkout: bar putih sticky dengan tombol kembali (←) + judul "Checkout".
+// Header halaman checkout: bar hijau sticky dengan tombol kembali (←), logo, dan judul "Checkout".
+//
+// SENGAJA MINIMAL — halaman checkout berada di luar route group (store) sehingga `AppBar` tidak
+// pernah dirender di sini: tidak ada search bar, ikon keranjang, maupun ikon akun. Tujuannya
+// menjaga fokus penyelesaian pembayaran (FloatingWhatsApp juga self-gate di /checkout).
+// JANGAN menambahkan navigasi keluar baru ke header ini.
+//
+// Logo TIDAK dibungkus <Link>: satu-satunya jalan keluar yang disengaja adalah tombol kembali,
+// supaya user tidak tercampak dari alur pembayaran karena menyenggol logo.
 
+import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 
-// Menampilkan header hijau checkout dengan tombol kembali dan judul halaman.
+// Menampilkan header hijau checkout dengan tombol kembali, logo non-tautan, dan judul halaman.
 export default function CheckoutHeader() {
   const router = useRouter()
 
@@ -20,6 +29,18 @@ export default function CheckoutHeader() {
         >
           <BackArrowIcon />
         </button>
+
+        {/* Logo — elemen statis (bukan tautan), hanya penanda brand */}
+        <Image
+          src="/images/logo-infarm.png"
+          alt="infarm"
+          width={32}
+          height={32}
+          priority
+          unoptimized
+          className="h-8 w-auto object-contain"
+        />
+
         <h1 className="text-lg font-bold">Checkout</h1>
       </div>
     </header>

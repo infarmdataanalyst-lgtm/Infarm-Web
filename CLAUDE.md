@@ -662,6 +662,15 @@ deskripsi 20–2000, harga 100–99.999.999, stok 0–999.999, `MAX_PRODUCT_IMAG
 
 - Header storefront = **`AppBar`** (Server Component, dirender di `(store)/layout.tsx`, fixed, `bg-brand-header`
   hijau `#46B33C` + teks/ikon putih, `rounded-b-[2rem]`, `backdrop-blur`). Layout: `[hamburger+logo] — [HeaderSearch] — [cart+profil]`.
+- **Halaman mana yang memakai `AppBar`**: HANYA route group `(store)` — beranda, `/products`,
+  `/produk/[id]`. Halaman di luar group punya header sendiri: `/keranjang` → `CartHeader`,
+  `/checkout` → `CheckoutHeader`, `/pesanan-saya` & layanan pesanan → header masing-masing,
+  halaman legal → `LegalPageShell`. Jadi "menyembunyikan elemen header" di halaman-halaman itu
+  tidak perlu conditional apa pun — elemennya memang tak pernah dirender.
+- **`CheckoutHeader`** sengaja minimal demi fokus pembayaran: tombol kembali + **logo NON-tautan**
+  + judul. Tanpa search/keranjang/akun, dan `FloatingWhatsApp` self-gate di `/checkout`.
+  **Jangan menambah navigasi keluar baru di header ini**; logo tidak dibungkus `<Link>` agar user
+  tak tercampak dari alur pembayaran karena menyenggolnya.
 - **Pembagian tugas navigasi header (jangan dicampur lagi)**: `MenuDrawer` = **navigasi katalog**
   (beranda/produk/keranjang + kategori); `ProfileIconLink` = **layanan pesanan** (hub/lacak/
   batalkan/review). Section "Pesanan" DIHAPUS dari drawer agar tak tumpang tindih dengan ikon akun.
