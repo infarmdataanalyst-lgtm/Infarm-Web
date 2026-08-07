@@ -6,11 +6,12 @@
 // Client Component: kartu muncul dengan animasi scroll-reveal (fade-in + translateY) berurutan
 // (stagger) saat section masuk viewport — via IntersectionObserver native (tanpa library), once.
 
+import Image from 'next/image'
 import { useEffect, useRef, useState } from 'react'
 
 // Satu keunggulan/value proposition
 type ValueProp = {
-  icon: string // emoji placeholder (TODO: ganti dengan ikon/gambar asli)
+  iconSrc: string // aset di public/images/value-props/<slug>.png (512px, transparan, berwarna)
   title: string
   description: string
 }
@@ -18,25 +19,25 @@ type ValueProp = {
 // Daftar 4 keunggulan utama berbelanja langsung di website infarm
 const VALUE_PROPS: ValueProp[] = [
   {
-    icon: '💰',
+    iconSrc: '/images/value-props/harga-lebih-murah.png',
     title: 'Harga Lebih Murah',
     description:
       'Tanpa biaya admin marketplace. Selisihnya langsung jadi hemat untuk kamu.',
   },
   {
-    icon: '🚚',
+    iconSrc: '/images/value-props/gratis-ongkir.png',
     title: 'Gratis Ongkir',
     description:
       'Pembelian di atas Rp150K gratis ongkos kirim ke seluruh Jawa & Bali.',
   },
   {
-    icon: '📦',
+    iconSrc: '/images/value-props/jaminan-return-refund.png',
     title: 'Jaminan Return atau Refund',
     description:
       'Belanja gak perlu was-was. Kalau produk bermasalah, langsung kami ganti.',
   },
   {
-    icon: '💬',
+    iconSrc: '/images/value-props/konsultasi-gratis.png',
     title: 'Konsultasi Gratis',
     description:
       'Tanya langsung ke minfarm via WhatsApp. Kami bantu dari awal sampai panen.',
@@ -105,12 +106,18 @@ export default function ValuePropositionBanner() {
             >
               {/* Baris atas: ikon + judul sejajar → kartu lebih ringkas */}
               <div className="flex items-center gap-3">
-                {/* Emoji dalam lingkaran hijau soft agar "pop" tanpa mewarnai kartu */}
-                <span
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#E8F5E0] text-xl"
-                  aria-hidden
-                >
-                  {vp.icon}
+                {/* Ikon dalam lingkaran hijau soft agar "pop" tanpa mewarnai kartu.
+                    Lingkaran 44px + ikon 28px (lebih besar dari versi emoji 40/20px) karena
+                    ilustrasi berwarna butuh ruang agar detailnya terbaca.
+                    alt="" — ikon dekoratif, judul di sebelahnya sudah menyampaikan maknanya. */}
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#E8F5E0]">
+                  <Image
+                    src={vp.iconSrc}
+                    alt=""
+                    width={28}
+                    height={28}
+                    className="h-7 w-7 object-contain"
+                  />
                 </span>
                 <h3 className="text-base font-bold leading-tight text-zinc-900">{vp.title}</h3>
               </div>

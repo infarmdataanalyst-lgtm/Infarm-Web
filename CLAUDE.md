@@ -225,8 +225,8 @@ src/
 │   │                             #   + cached-reads.ts (wrapper unstable_cache storefront: revalidate 30s + tags)
 │   └── data/                     # Dummy data tampilan pelengkap (dummy-*.ts)
 ├── emails/                       # Template HTML email (order-confirmation.html) — placeholder {{...}}
-├── hooks/                        # use-debounce.ts, use-sticky-bar-height.ts (publikasi
-│                                 #   tinggi bilah bawah ke CSS var --sticky-bar-h)
+├── hooks/                        # use-debounce.ts, use-media-query.ts (breakpoint reaktif),
+│                                 #   use-sticky-bar-height.ts (tinggi bilah bawah → CSS var --sticky-bar-h)
 └── types/                        # product.ts (+ CatalogCardProduct: rating/soldCount opsional), cart, order, combo, promotion
 
 # Root: next.config.ts, tailwind.config.ts, eslint.config.mjs, postcss.config.mjs,
@@ -235,6 +235,9 @@ src/
 #   TARGET .env.migration.local); urut FK, preserve id, idempotent. Jalankan: node scripts/migrate-data.mjs [--run]
 # public/images/email/: aset gambar email (mis. logo-infarm.png) — lihat README di folder tsb
 # public/images/categories/<slug>.(webp|jpg): foto latar tombol kategori beranda (CategoryGrid resolve fs)
+# public/images/icons/{cart,user}.png: ikon UI header (512px, PUTIH, transparan — latar header hijau)
+# public/images/value-props/<slug>.png: ikon 4 keunggulan beranda (512px, BERWARNA, transparan —
+#   lingkaran latar #E8F5E0 terang; nama file = slug judul, lihat ValuePropositionBanner)
 # public/images/hero-background(.jpg) + hero-background-mobile.(jpg|webp|png): bg hero art-direction
 #   (desktop landscape 16:9 / mobile portrait 9:16; HeroSection resolve fs, fallback ke desktop)
 # supabase/: migrations/ (SQL, sumber kebenaran skema) + README.md (cara apply via Dashboard)
@@ -675,6 +678,17 @@ deskripsi 20–2000, harga 100–99.999.999, stok 0–999.999, `MAX_PRODUCT_IMAG
   Konsekuensi: isi drawer tidak ada di HTML awal — tak masalah, tautan kategori/nav juga tersedia
   di `CategoryGrid` beranda & footer. **Tanpa penanda aktif untuk kategori**: membacanya butuh
   `useSearchParams` yang memaksa halaman jadi dinamis, sementara beranda & katalog sengaja ISR.
+- **`CartIconLink` + `MiniCart`** (`components/ui/`, client) = ikon keranjang + badge jumlah item.
+  **Mobile (<640px)**: `<Link>` ke `/keranjang` (tak berubah). **Desktop (≥640px)**: tombol yang
+  membuka **mini cart** `absolute right-0 top-full w-80` — daftar item (thumbnail/nama/qty/harga,
+  `max-h-72 overflow-y-auto`), subtotal, tombol "Lihat Keranjang" & "Checkout"; kosong → ajakan
+  "Mulai Belanja". Tutup via klik-luar (`pointerdown`), `Escape`, atau klik aksi.
+  - Pemilihan varian pakai **`useMediaQuery`** (`src/hooks/use-media-query.ts`, `useSyncExternalStore`),
+    BUKAN kelas `sm:hidden` — `id="cart-anchor"` harus unik & punya ukuran nyata karena dipakai
+    animasi fly-to-cart (`StickyBuyBar`); elemen `display:none` memberi rect 0×0 → animasi ngawur.
+  - Detail produk di-resolve `GET /api/products/by-ids` **hanya saat panel dibuka**; foto pakai
+    `Image ... unoptimized` (URL Supabase Storage belum di `remotePatterns`), pola sama `CartItemRow`.
+  - Tombol Checkout WAJIB `setCheckoutItems(cart)` sebelum `router.push('/checkout')`.
 - **`ProfileIconLink`** (`components/ui/`, client) = ikon akun + badge angka pesanan aktif (cookie
   `infarm_active_orders`, tanpa query DB). Klik/tap ikon → dropdown `absolute right-0 top-full`
   berisi **3 aksi**: Lacak / Batalkan / Beri Review (+ baris kepala "N pesanan aktif"); tutup via
@@ -703,6 +717,12 @@ deskripsi 20–2000, harga 100–99.999.999, stok 0–999.999, `MAX_PRODUCT_IMAG
   **staged** (berlaku saat Terapkan); sort instan. Chip × hapus kategori langsung.
 - **Sinkron URL** `?category=a,b` via **`window.history.replaceState`** (BUKAN `router.replace`) — hindari navigasi/
   Suspense fallback yang bikin bottom-sheet nyangkut. Deep-link dari `CategoryGrid` beranda (slug tunggal) tetap jalan.
+  - **WAJIB `replaceState(window.history.state, '', href)`** — meneruskan state yang ada. Next menyimpan state
+    router di `history.state`; menimpanya dengan `null` merusak navigasi soft berikutnya.
+  - **Filter WAJIB ikut berubah saat `?category=` berganti tanpa remount** (mis. klik kategori di `MenuDrawer`
+    sementara user sudah di `/products`). `useState` hanya membaca URL sekali → ada penyesuaian state
+    **saat render** (pola resmi React) dengan pembanding `syncedCategoryParam`, yang juga diperbarui di
+    `syncUrl` agar klik kategori sama setelah filter diubah manual tetap terdeteksi.
 - Label jumlah: `"{n} produk"` (+ ` · {Kategori}` bila tepat 1 kategori aktif). `CategoryFilterTabs` (kapsul lama) DIHAPUS.
 
 ## Halaman Legal (Kebijakan Privasi & Syarat/Ketentuan)
@@ -776,6 +796,7 @@ mengambang. Jangan menambah lapis baru tanpa memperbarui tabel ini.
 - [x] Halaman detail produk (`/produk/[id]`)
 - [x] Floating WhatsApp CS di semua halaman ecommerce (`FloatingWhatsApp`, kanan bawah; link CS placeholder `/404`)
 - [x] Halaman keranjang (`/keranjang`) — data dari cookie; desktop 2 kolom (produk kiri, "Dilihat Sebelumnya" kanan), mobile 1 kolom
+- [x] Mini cart dropdown di header (desktop ≥640px) — `MiniCart`; mobile tetap navigate ke `/keranjang`
 - [x] Katalog & "Produk Terlaris" pure produk OMS (infinite scroll); "N terjual" di detail produk
 - [x] Detail produk: galeri foto multi (maks 9) + harga coret
 - [x] Promo & paket combo REAL di keranjang (dari Supabase via `/api/{promotions,combos}/active`)

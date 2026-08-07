@@ -25,18 +25,17 @@ const SORTS: { value: SortKey; label: string }[] = [
   { value: 'termahal', label: 'Harga Tertinggi' },
 ]
 
+// Memecah nilai ?category=a,b menjadi array slug (buang entri kosong)
+function parseCategoryParam(param: string): string[] {
+  return param.split(',').filter(Boolean)
+}
+
 export default function ProductCatalog() {
   const searchParams = useSearchParams()
 
-  // Sinkron URL tanpa memicu navigasi Next (hindari Suspense fallback / re-render yang
-  // mengganggu animasi tutup bottom-sheet). URL tetap shareable/deep-link.
-  function syncUrl(cats: string[]) {
-    const href = cats.length ? `/products?category=${cats.join(',')}` : '/products'
-    window.history.replaceState(null, '', href)
-  }
-
-  // Kategori awal dari URL (?category=a,b) → dukung deep-link dari beranda (slug tunggal juga jalan).
-  const initialCategories = (searchParams.get('category') ?? '').split(',').filter(Boolean)
+  // Nilai ?category= menurut Next. Berubah saat NAVIGASI (deep-link beranda, tautan kategori di
+  // MenuDrawer), TIDAK berubah saat kita memanggil replaceState sendiri di bawah.
+  const urlCategoryParam = searchParams.get('category') ?? ''
 
   // === Data produk OMS ===
   const [products, setProducts] = useState<StoredProduct[]>([])
@@ -60,15 +59,44 @@ export default function ProductCatalog() {
   }, [])
 
   // === Filter TERPAKAI (dasar penyaringan) ===
-  const [categories, setCategories] = useState<string[]>(initialCategories)
+  const [categories, setCategories] = useState<string[]>(() => parseCategoryParam(urlCategoryParam))
   const [minPrice, setMinPrice] = useState('')
   const [maxPrice, setMaxPrice] = useState('')
   const [sort, setSort] = useState<SortKey>('terbaru')
 
   // === Draft filter (diedit di sidebar/sheet, berlaku saat "Terapkan") ===
-  const [draftCategories, setDraftCategories] = useState<string[]>(initialCategories)
+  const [draftCategories, setDraftCategories] = useState<string[]>(() =>
+    parseCategoryParam(urlCategoryParam),
+  )
   const [draftMin, setDraftMin] = useState('')
   const [draftMax, setDraftMax] = useState('')
+
+  // Nilai ?category= yang SUDAH tercermin di state. Dipakai mendeteksi navigasi baru ke
+  // /products?category=… ketika komponen TIDAK remount — kasus yang bikin tautan kategori di
+  // MenuDrawer tampak tidak berfungsi saat user sudah berada di halaman katalog: URL berganti,
+  // tapi state filter tetap nilai lama karena useState hanya membaca URL sekali saat mount.
+  const [syncedCategoryParam, setSyncedCategoryParam] = useState(urlCategoryParam)
+
+  if (urlCategoryParam !== syncedCategoryParam) {
+    // setState saat render = pola resmi React untuk menyesuaikan state ketika input berubah;
+    // React merender ulang sebelum commit sehingga tak ada kedipan daftar produk.
+    setSyncedCategoryParam(urlCategoryParam)
+    setCategories(parseCategoryParam(urlCategoryParam))
+    setDraftCategories(parseCategoryParam(urlCategoryParam))
+  }
+
+  // Sinkron URL tanpa memicu navigasi Next (hindari Suspense fallback / re-render yang
+  // mengganggu animasi tutup bottom-sheet). URL tetap shareable/deep-link.
+  // Tracker di atas ikut diperbarui supaya klik kategori yang sama dari MenuDrawer setelah
+  // filter diubah manual tetap terdeteksi sebagai perubahan.
+  function syncUrl(cats: string[]) {
+    const href = cats.length ? `/products?category=${cats.join(',')}` : '/products'
+    // WAJIB meneruskan history.state yang ada, JANGAN null: Next menyimpan state router-nya di
+    // situ. Menimpanya dengan null merusak navigasi soft berikutnya (mis. klik kategori di
+    // MenuDrawer tak lagi memperbarui useSearchParams).
+    window.history.replaceState(window.history.state, '', href)
+    setSyncedCategoryParam(cats.join(','))
+  }
 
   // === State sheet mobile ===
   const [filterOpen, setFilterOpen] = useState(false)
