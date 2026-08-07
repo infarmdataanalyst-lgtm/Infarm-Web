@@ -134,7 +134,7 @@ function RatingPill({
       aria-label={value === 0 ? 'Semua rating' : `${value} bintang`}
       className={`flex shrink-0 items-center gap-1 rounded-full border px-3.5 py-1.5 text-xs font-medium transition ${
         active
-          ? 'border-emerald-600 bg-emerald-600 text-white'
+          ? 'border-brand-header bg-brand-header text-white'
           : 'border-zinc-200 bg-white text-zinc-600 hover:bg-slate-50'
       }`}
     >
@@ -152,7 +152,7 @@ function RatingPill({
   )
 }
 
-// Tombol filter berbentuk kapsul: hijau Infarm saat aktif, abu terang saat nonaktif
+// Tombol filter berbentuk kapsul: hijau brand (sama dengan header) saat aktif, abu terang saat nonaktif
 function FilterPill({
   label,
   active,
@@ -168,7 +168,7 @@ function FilterPill({
       onClick={onClick}
       className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-medium transition ${
         active
-          ? 'bg-emerald-600 text-white'
+          ? 'bg-brand-header text-white'
           : 'bg-slate-50 text-zinc-600 hover:bg-slate-100'
       }`}
     >

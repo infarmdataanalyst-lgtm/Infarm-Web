@@ -6,6 +6,7 @@
 // id="cart-anchor" dipakai animasi fly-to-cart (StickyBuyBar) untuk menghitung titik akhir.
 
 import Link from 'next/link'
+import Image from 'next/image'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { subscribeCart, getCartCount, CART_BUMP_EVENT } from '@/lib/cart-client'
 
@@ -44,12 +45,19 @@ export default function CartIconLink() {
   )
 }
 
+// Ikon keranjang dari aset PNG (public/images/icons/cart.png — 512px, putih, latar transparan).
+// Sumber 512px sengaja jauh lebih besar dari ukuran render 24px agar tajam di layar retina;
+// next/image menurunkan skalanya sesuai DPR perangkat.
+// Catatan: berbeda dengan versi SVG sebelumnya, warna ikon TERKUNCI putih (tak ikut currentColor).
 function CartIcon() {
   return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <circle cx="9" cy="21" r="1.5" />
-      <circle cx="19" cy="21" r="1.5" />
-      <path d="M2.5 3h2l2.6 12.4a2 2 0 0 0 2 1.6h8.7a2 2 0 0 0 2-1.6L23 7H6" />
-    </svg>
+    <Image
+      src="/images/icons/cart.png"
+      alt=""
+      width={24}
+      height={24}
+      priority
+      className="h-6 w-6 object-contain"
+    />
   )
 }

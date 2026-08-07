@@ -1,13 +1,19 @@
 'use client'
 
 // src/components/ui/FloatingWhatsApp.tsx
-// Tombol WhatsApp mengambang (floating) di pojok KANAN BAWAH, tampil di semua halaman e-commerce
-// (disembunyikan di area /oms). Menampilkan bubble ajakan "Pesan melalui CS kami" beberapa detik
-// setelah halaman dimuat (bisa ditutup manual). Client Component: butuh pathname, timer, & state.
+// Tombol WhatsApp mengambang (floating) di pojok KANAN BAWAH, tampil di semua halaman e-commerce.
+// Menampilkan bubble ajakan "Pesan melalui CS kami" beberapa detik setelah halaman dimuat (bisa
+// ditutup manual). Client Component: butuh pathname, timer, & state.
+//
+// Posisi vertikal MENGIKUTI bilah aksi bawah bila halaman punya satu (detail produk, keranjang):
+// tombol naik setinggi bilah + jarak normal, memakai CSS variable `--sticky-bar-h` yang didaftarkan
+// bilah tersebut lewat useStickyBarHeight. Halaman tanpa bilah → variable 0 → posisi normal.
+// Disembunyikan total di /oms (area admin) dan /checkout (jangan mengganggu proses pembayaran).
 
 import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import { X } from 'lucide-react'
+import { STICKY_BAR_HEIGHT_VAR } from '@/hooks/use-sticky-bar-height'
 
 // TODO: Ganti dengan link WhatsApp CS resmi setelah tersedia.
 // Format nantinya: https://wa.me/62xxxxxxxxxx?text=Halo%2C%20saya%20ingin%20bertanya%20tentang%20produk
@@ -37,11 +43,17 @@ export default function FloatingWhatsApp() {
     }
   }, [dismissed])
 
-  // Jangan tampilkan di area admin/OMS.
-  if (pathname?.startsWith('/oms')) return null
+  // Jangan tampilkan di area admin/OMS maupun saat proses pembayaran berjalan.
+  // (`/checkout/success` TIDAK ikut disembunyikan — di sana CS justru berguna.)
+  if (pathname?.startsWith('/oms') || pathname === '/checkout') return null
 
   return (
-    <div className="fixed bottom-5 right-5 z-[60] flex items-end gap-2">
+    <div
+      // Jarak dasar 1.25rem (= bottom-5) + tinggi bilah aksi bawah bila halaman punya satu.
+      // Transisi membuat perpindahan posisi antar halaman terasa mulus, bukan meloncat.
+      style={{ bottom: `calc(1.25rem + var(${STICKY_BAR_HEIGHT_VAR}, 0px))` }}
+      className="fixed right-5 z-[60] flex items-end gap-2 transition-[bottom] duration-300 ease-out"
+    >
       {/* Bubble ajakan (kiri tombol) — fade/slide; tetap ter-mount (untuk transisi) selama belum ditutup */}
       {!dismissed && (
         <div

@@ -29,7 +29,10 @@ export default function BottomSheet({
   return (
     <div
       aria-hidden={!open}
-      className={`fixed inset-0 z-50 ${open ? '' : 'pointer-events-none'}`}
+      // z-[80] WAJIB di atas FloatingWhatsApp (z-[60]). Dengan z-50, tombol WA melayang di atas
+      // sheet dan menyerap tap di pojok kanan bawah → tombol aksi sheet (mis. "Terapkan filter")
+      // hanya bisa diklik di sisi kiri.
+      className={`fixed inset-0 z-[80] ${open ? '' : 'pointer-events-none'}`}
     >
       {/* Backdrop — fade in/out */}
       <button

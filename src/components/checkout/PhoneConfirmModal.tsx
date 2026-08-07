@@ -32,7 +32,7 @@ export default function PhoneConfirmModal({
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
       {/* Backdrop gelap menutupi seluruh halaman (termasuk header). Klik = batal (sama seperti "Kembali"). */}
       <button
         type="button"

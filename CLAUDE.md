@@ -225,7 +225,8 @@ src/
 │   │                             #   + cached-reads.ts (wrapper unstable_cache storefront: revalidate 30s + tags)
 │   └── data/                     # Dummy data tampilan pelengkap (dummy-*.ts)
 ├── emails/                       # Template HTML email (order-confirmation.html) — placeholder {{...}}
-├── hooks/                        # use-debounce.ts, dll
+├── hooks/                        # use-debounce.ts, use-sticky-bar-height.ts (publikasi
+│                                 #   tinggi bilah bawah ke CSS var --sticky-bar-h)
 └── types/                        # product.ts (+ CatalogCardProduct: rating/soldCount opsional), cart, order, combo, promotion
 
 # Root: next.config.ts, tailwind.config.ts, eslint.config.mjs, postcss.config.mjs,
@@ -676,10 +677,12 @@ deskripsi 20–2000, harga 100–99.999.999, stok 0–999.999, `MAX_PRODUCT_IMAG
   `useSearchParams` yang memaksa halaman jadi dinamis, sementara beranda & katalog sengaja ISR.
 - **`ProfileIconLink`** (`components/ui/`, client) = ikon akun + badge angka pesanan aktif (cookie
   `infarm_active_orders`, tanpa query DB). Klik/tap ikon → dropdown `absolute right-0 top-full`
-  berisi Pesanan Saya / Lacak / Batalkan / Review (+ baris kepala "N pesanan aktif"); tutup via
+  berisi **3 aksi**: Lacak / Batalkan / Beri Review (+ baris kepala "N pesanan aktif"); tutup via
   klik-luar (`pointerdown`), `Escape`, atau klik item. **Satu perilaku untuk semua ukuran layar**
   (mobile TIDAK lagi navigate ke `/pesanan-saya`) supaya pembeli tak kehilangan konteks halaman
-  yang sedang dibuka; hub tetap jadi item pertama di dropdown. Baris menu `py-3 sm:py-2.5` agar
+  yang sedang dibuka. Item "Pesanan Saya" sengaja dihapus dari dropdown — hub `/pesanan-saya`
+  kini TIDAK ditautkan dari header, hanya dari tombol "kembali" di `/track-order`, `/cancel-order`,
+  `/review`. Baris menu `py-3 sm:py-2.5` agar
   target sentuh mobile nyaman. Dropdown pakai `absolute`, BUKAN `fixed`, jadi tak kena masalah
   containing block `backdrop-filter` seperti `MenuDrawer`.
   **Tanpa Profil/Logout/Alamat Tersimpan/Pengaturan** — proyek ini guest checkout, tak ada akun
@@ -720,11 +723,35 @@ deskripsi 20–2000, harga 100–99.999.999, stok 0–999.999, `MAX_PRODUCT_IMAG
   (teks persetujuan di atas tombol bayar, tautan **tab baru** agar isian form tak hilang →
   karena itu `main` checkout memakai `pb-32`, bukan `pb-24`).
 
+## Skala z-index (storefront) — patuhi saat menambah elemen mengambang
+
+Elemen ber-`z-index` lebih besar **menyerap klik/tap** walau secara visual tampak di belakang.
+Bug nyata yang pernah terjadi: bottom-sheet `z-50` di bawah `FloatingWhatsApp` `z-[60]` → tombol
+"Terapkan filter" hanya bisa diklik di sisi kiri karena sisanya tertutup tombol WA.
+
+| Lapis | z-index | Contoh |
+|---|---|---|
+| Konten & bilah aksi bawah | `z-10`–`z-40` | `StickyBuyBar` (40), `CartCheckoutBar`/`CheckoutBottomBar` (30) |
+| Header | `z-50` | `AppBar`, header halaman |
+| Tombol mengambang | `z-[60]` | `FloatingWhatsApp` |
+| Overlay & backdrop | `z-[70]` | backdrop `MenuDrawer`, overlay `HeaderSearch` mobile, `PhoneConfirmModal` |
+| Panel modal/sheet | `z-[80]` | `BottomSheet` (filter/sort/varian/ongkir/pembayaran), panel `MenuDrawer` |
+
+**Aturan:** apa pun yang menutupi layar dan menerima klik WAJIB ≥ `z-[70]` — di atas tombol
+mengambang. Jangan menambah lapis baru tanpa memperbarui tabel ini.
+
 ## Floating WhatsApp CS
 
 - **`FloatingWhatsApp`** (`components/ui/`, client) dipasang di **root `layout.tsx`** (bukan per halaman) → tampil di
-  SEMUA halaman ecommerce; **self-gate**: `usePathname().startsWith('/oms')` → `return null` (sembunyi di admin).
-- Tombol lingkaran hijau kanan bawah (`fixed bottom-5 right-5 z-[60]`) + ikon WhatsApp SVG inline (lucide tak punya brand icon).
+  SEMUA halaman ecommerce; **self-gate**: `usePathname()` → `return null` di `/oms/*` (admin) dan `/checkout`
+  (jangan ganggu proses bayar; `/checkout/success` tetap tampil).
+- Tombol lingkaran hijau kanan bawah (`fixed right-5 z-[60]`) + ikon WhatsApp SVG inline (lucide tak punya brand icon).
+- **Posisi vertikal mengikuti bilah aksi bawah**: `bottom: calc(1.25rem + var(--sticky-bar-h, 0px))` +
+  `transition-[bottom]`. Variable diisi oleh bilah yang sedang tampil lewat hook
+  **`useStickyBarHeight`** (`src/hooks/use-sticky-bar-height.ts`, ResizeObserver → set
+  `--sticky-bar-h` di `<html>`, reset `0px` saat unmount). Dipakai `StickyBuyBar` (detail produk) &
+  `CartCheckoutBar` (keranjang). **Halaman baru dengan bilah bawah cukup memanggil hook ini** —
+  jangan hardcode tinggi atau daftar route di `FloatingWhatsApp`.
   Bubble "Pesan melalui CS kami" muncul ~2.5s, auto-hide, tombol × tutup permanen.
 - **Link CS** = constant **`WHATSAPP_CS_LINK`** di `FloatingWhatsApp.tsx` (placeholder `/404`; ganti ke `https://wa.me/62…` saat siap).
 

@@ -4,7 +4,9 @@
 // Ikon akun di header + akses layanan pesanan guest (lacak/batalkan/review).
 // Klik/tap ikon → dropdown menempel di bawah ikon (rata kanan). SATU perilaku untuk semua ukuran
 // layar: di mobile pun tidak berpindah halaman, supaya pembeli tak kehilangan konteks katalog/
-// keranjang yang sedang dibuka. Hub /pesanan-saya tetap ada sebagai item pertama di dropdown.
+// keranjang yang sedang dibuka. Dropdown langsung menuju tiga aksi (lacak/batalkan/review) —
+// halaman hub /pesanan-saya tidak lagi ditautkan dari header (masih dipakai tombol "kembali"
+// di ketiga halaman tersebut).
 // Menu ini menggantikan section "Pesanan" yang dulu ada di MenuDrawer — drawer kini murni katalog.
 //
 // Catatan: proyek ini GUEST CHECKOUT (tanpa login pelanggan), jadi tidak ada Profil/Logout/
@@ -15,9 +17,10 @@
 // /pesanan-saya; di-increment saat checkout sukses. Event ACTIVE_ORDERS_EVENT memicu baca ulang.
 
 import Link from 'next/link'
+import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
-import { Package, Search, XCircle, Star } from 'lucide-react'
+import { Search, XCircle, Star } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { getActiveOrderCount, ACTIVE_ORDERS_EVENT } from '@/lib/guest-phone'
 
@@ -28,9 +31,9 @@ type AccountLink = {
   href: string
 }
 
-// Layanan pesanan guest — cerminan kartu di hub /pesanan-saya
+// Layanan pesanan guest — tiga aksi langsung, tanpa perantara halaman hub.
+// (Item "Pesanan Saya" → /pesanan-saya sengaja DIHAPUS: hub-nya hanya mengulang ketiga aksi ini.)
 const ACCOUNT_MENU: AccountLink[] = [
-  { icon: Package, label: 'Pesanan Saya', href: '/pesanan-saya' },
   { icon: Search, label: 'Lacak Pesanan', href: '/track-order' },
   { icon: XCircle, label: 'Batalkan Pesanan', href: '/cancel-order' },
   { icon: Star, label: 'Beri Review Produk', href: '/review' },
@@ -143,11 +146,17 @@ function CountBadge({ count }: { count: number }) {
   )
 }
 
+// Ikon akun dari aset PNG (public/images/icons/user.png — 512px, putih, latar transparan).
+// Lihat catatan pada CartIconLink: warna terkunci putih, tidak mengikuti currentColor.
 function ProfileIcon() {
   return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <circle cx="12" cy="8" r="4" />
-      <path d="M4 21c0-4 3.6-7 8-7s8 3 8 7" />
-    </svg>
+    <Image
+      src="/images/icons/user.png"
+      alt=""
+      width={24}
+      height={24}
+      priority
+      className="h-6 w-6 object-contain"
+    />
   )
 }

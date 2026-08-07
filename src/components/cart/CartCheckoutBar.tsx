@@ -1,9 +1,13 @@
+'use client'
+
 // src/components/cart/CartCheckoutBar.tsx
 // Bilah aksi bawah (sticky): checkbox "Pilih Semua" + jumlah item, total harga dinamis,
-// dan tombol "Checkout (X)" yang nonaktif bila tidak ada item tercentang. Presentational.
+// dan tombol "Checkout (X)" yang nonaktif bila tidak ada item tercentang. Presentational,
+// selain mendaftarkan tingginya ke --sticky-bar-h (agar FloatingWhatsApp naik di atasnya).
 
 import { Check } from 'lucide-react'
 import { formatRupiah } from '@/lib/format'
+import { useStickyBarHeight } from '@/hooks/use-sticky-bar-height'
 
 // Menampilkan bilah checkout bawah dengan pilih-semua, total, dan tombol checkout.
 export default function CartCheckoutBar({
@@ -20,9 +24,10 @@ export default function CartCheckoutBar({
   onCheckout: () => void
 }) {
   const disabled = selectedCount === 0
+  const barRef = useStickyBarHeight<HTMLDivElement>()
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-200 bg-white">
+    <div ref={barRef} className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-200 bg-white">
       <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
         {/* Kiri: Pilih Semua */}
         <label className="flex shrink-0 cursor-pointer items-center gap-2 text-sm text-zinc-700">

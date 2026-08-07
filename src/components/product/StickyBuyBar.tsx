@@ -11,6 +11,7 @@ import { addToCart, setCheckoutItems, showCartToast, CART_BUMP_EVENT } from '@/l
 import { trackAddToCart } from '@/lib/analytics'
 import { formatRupiah } from '@/lib/format'
 import FlyToCart, { type FlyPoint } from '@/components/product/FlyToCart'
+import { useStickyBarHeight } from '@/hooks/use-sticky-bar-height'
 import BottomSheet from '@/components/checkout/BottomSheet'
 import VariantChips from '@/components/product/VariantChips'
 import type { ProductVariant } from '@/types/variant'
@@ -67,6 +68,9 @@ export default function StickyBuyBar({
 
   // Bottom-sheet varian (mobile): intent 'add' (ke keranjang) atau 'buy' (beli langsung).
   const [sheetIntent, setSheetIntent] = useState<'add' | 'buy' | null>(null)
+
+  // Publikasikan tinggi bilah ke --sticky-bar-h (dipakai FloatingWhatsApp agar tak bertabrakan)
+  const barRef = useStickyBarHeight<HTMLDivElement>()
 
   // Seed varian default ke store (jaga-jaga bila StickyBuyBar ter-mount sebelum VariantSelector).
   useEffect(() => {
@@ -180,7 +184,8 @@ export default function StickyBuyBar({
 
   return (
     <>
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-zinc-200 bg-white">
+      {/* ref: mendaftarkan tinggi bilah ke --sticky-bar-h agar FloatingWhatsApp naik di atasnya */}
+      <div ref={barRef} className="fixed inset-x-0 bottom-0 z-40 border-t border-zinc-200 bg-white">
         <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
           {barOutOfStock ? (
             // Varian terpilih habis → satu tombol nonaktif "Stok Habis"

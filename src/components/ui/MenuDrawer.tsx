@@ -81,7 +81,7 @@ export default function MenuDrawer() {
             <div
               aria-hidden
               onClick={() => setOpen(false)}
-              className={`fixed inset-0 z-[60] bg-black/40 transition-opacity duration-200 ${
+              className={`fixed inset-0 z-[70] bg-black/40 transition-opacity duration-200 ${
                 open ? 'opacity-100' : 'pointer-events-none opacity-0'
               }`}
             />
@@ -91,7 +91,7 @@ export default function MenuDrawer() {
               id="menu-drawer"
               aria-label="Menu navigasi"
               inert={!open}
-              className={`fixed inset-y-0 left-0 z-[70] flex w-[17rem] max-w-[85vw] flex-col bg-brand-surface shadow-xl transition-transform duration-300 ease-out ${
+              className={`fixed inset-y-0 left-0 z-[80] flex w-[17rem] max-w-[85vw] flex-col bg-brand-surface shadow-xl transition-transform duration-300 ease-out ${
                 open ? 'translate-x-0' : '-translate-x-full'
               }`}
             >
