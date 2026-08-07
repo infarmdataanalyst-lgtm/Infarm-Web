@@ -292,8 +292,8 @@ export default function CheckoutPage() {
       {/* Header sticky */}
       <CheckoutHeader />
 
-      {/* Konten — pb-24 agar tak tertutup bilah bayar bawah */}
-      <main className="flex-1 space-y-2 pb-24">
+      {/* Konten — pb-32 agar tak tertutup bilah bayar bawah (bilah kini + teks persetujuan S&K) */}
+      <main className="flex-1 space-y-2 pb-32">
         {/* 2 — Ringkasan produk yang dibeli (dari pilihan keranjang) */}
         <CheckoutProductSummary items={summaryItems} />
 

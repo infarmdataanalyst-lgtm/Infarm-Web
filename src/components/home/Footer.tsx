@@ -3,12 +3,19 @@
 // Server Component, responsive (stack di mobile → multi-kolom di desktop).
 
 import Link from 'next/link'
+import { PRIVACY_POLICY_PATH, TERMS_PATH } from '@/lib/data/legal'
 
 // Daftar pencapaian (placeholder teks; TODO: ganti dengan gambar badge asli)
 const ACHIEVEMENTS = ['Brand Choice Awards', 'TikTok Most Wanted Brand', '#1 Pupuk Organik Cair Shopee']
 
 // Tag sertifikasi yang bisa diklik menuju katalog dengan kata kunci terkait
 const CERTIFICATION_TAGS = ['POC Buah', 'Miracle Powder', 'Benih', 'Pupuk', 'Media Tanam']
+
+// Tautan dokumen legal (rute dari @/lib/data/legal agar tak salah tulis di beberapa tempat)
+const LEGAL_LINKS = [
+  { label: 'Kebijakan Privasi', href: PRIVACY_POLICY_PATH },
+  { label: 'Syarat & Ketentuan', href: TERMS_PATH },
+]
 
 // Tautan sitemap utama
 const SITEMAP = [
@@ -123,13 +130,34 @@ export default function Footer() {
                 </li>
               ))}
             </ul>
+
+            {/* Dokumen legal — dipisah dari sitemap agar mudah ditemukan */}
+            <h3 className="mt-6 text-sm font-bold uppercase tracking-wide text-white/80">Legal</h3>
+            <ul className="mt-3 space-y-3">
+              {LEGAL_LINKS.map((link) => (
+                <li key={link.href}>
+                  <Link href={link.href} className="font-medium transition hover:text-white/80">
+                    {link.label}
+                  </Link>
+                </li>
+              ))}
+            </ul>
           </nav>
         </div>
 
-        {/* === Copyright === */}
-        <p className="mt-10 text-center text-sm text-white/80">
-          © {year} infarm. Hak Cipta Dilindungi.
-        </p>
+        {/* === Copyright + tautan legal ringkas === */}
+        <div className="mt-10 flex flex-col items-center gap-2 text-sm text-white/80">
+          <p>© {year} infarm. Hak Cipta Dilindungi.</p>
+          <p className="flex flex-wrap justify-center gap-x-2">
+            <Link href={PRIVACY_POLICY_PATH} className="underline underline-offset-2 transition hover:text-white">
+              Kebijakan Privasi
+            </Link>
+            <span aria-hidden>·</span>
+            <Link href={TERMS_PATH} className="underline underline-offset-2 transition hover:text-white">
+              Syarat &amp; Ketentuan
+            </Link>
+          </p>
+        </div>
       </div>
     </footer>
   )

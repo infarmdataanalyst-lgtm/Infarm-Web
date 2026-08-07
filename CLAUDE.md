@@ -165,6 +165,8 @@ src/
 │   ├── track-order/page.tsx      # Lacak pesanan by NO. TELEPON (entry utama; honeypot + auto-recognize cookie)
 │   ├── cancel-order/page.tsx     # Batalkan pesanan by NO. TELEPON — 2 langkah (verifikasi ulang phone ke DB)
 │   ├── pesanan-saya/page.tsx     # Hub "Pesanan Saya": kartu lacak / batalkan / review (ikon profil header → sini)
+│   ├── privacy-policy/page.tsx   # Kebijakan Privasi (statis, LegalPageShell)
+│   ├── terms-and-conditions/page.tsx  # Syarat & Ketentuan (statis, LegalPageShell)
 │   ├── dev/email-preview/        # Preview template email (route handler, isi placeholder data contoh)
 │   ├── oms/                      # OMS / back office
 │   │   ├── login/page.tsx
@@ -698,6 +700,24 @@ deskripsi 20–2000, harga 100–99.999.999, stok 0–999.999, `MAX_PRODUCT_IMAG
   Suspense fallback yang bikin bottom-sheet nyangkut. Deep-link dari `CategoryGrid` beranda (slug tunggal) tetap jalan.
 - Label jumlah: `"{n} produk"` (+ ` · {Kategori}` bila tepat 1 kategori aktif). `CategoryFilterTabs` (kapsul lama) DIHAPUS.
 
+## Halaman Legal (Kebijakan Privasi & Syarat/Ketentuan)
+
+- Rute: `/privacy-policy` & `/terms-and-conditions` (Server Component, konten statis, di LUAR route
+  group `(store)` → punya header hijau sendiri seperti `/pesanan-saya`).
+- Kerangka bersama: **`src/components/legal/LegalPageShell.tsx`** — header + judul + tanggal berlaku
+  + daftar isi anchor + `LegalSection` (`scroll-mt-16` agar judul tak tertutup header fixed),
+  `LegalList`, `LegalExternalLink` (selalu `target="_blank" rel="noopener noreferrer"`).
+- Konstanta bersama: **`src/lib/data/legal.ts`** — `LEGAL_CONTACT_EMAIL`/`LEGAL_CONTACT_PHONE`
+  (**PLACEHOLDER**, ganti sebelum go-live), `LEGAL_EFFECTIVE_DATE` (perbarui manual tiap revisi
+  material), `PRIVACY_POLICY_PATH`/`TERMS_PATH` (dipakai footer + bilah checkout), `THIRD_PARTY_LINKS`.
+- **Isi dokumen HARUS cermin implementasi nyata.** Saat alur data berubah, perbarui halamannya:
+  field checkout (kini TANPA email — identitas = no_telepon), cookie/localStorage yang dipakai,
+  pihak ketiga (Xendit, Mengantar, Google Analytics, Supabase), aturan pembatalan (hanya status
+  `Menunggu Pembayaran`/`Diproses`).
+- Tautan: footer beranda (section "Legal" + baris di bawah copyright) & `CheckoutBottomBar`
+  (teks persetujuan di atas tombol bayar, tautan **tab baru** agar isian form tak hilang →
+  karena itu `main` checkout memakai `pb-32`, bukan `pb-24`).
+
 ## Floating WhatsApp CS
 
 - **`FloatingWhatsApp`** (`components/ui/`, client) dipasang di **root `layout.tsx`** (bukan per halaman) → tampil di
@@ -740,6 +760,8 @@ deskripsi 20–2000, harga 100–99.999.999, stok 0–999.999, `MAX_PRODUCT_IMAG
 - [x] Search alamat + **cek ongkir** Mengantar di checkout (client; ongkir masuk ke total)
 - [x] Validasi form checkout (nama/telepon/email/alamat/kurir) + gating tombol "Bayar Sekarang"
 - [x] Template email konfirmasi pesanan (`src/emails/`, preview di `/dev/email-preview`)
+- [x] Halaman legal: Kebijakan Privasi & Syarat/Ketentuan (`LegalPageShell`, tautan di footer +
+      teks persetujuan di bilah checkout). Kontak masih PLACEHOLDER di `src/lib/data/legal.ts`
 - [ ] Integrasi Xendit (pembayaran) — masih UI/mock
 - [ ] Mengantar: booking kurir & tracking resi otomatis — masih roadmap
 
