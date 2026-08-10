@@ -26,6 +26,8 @@ export default function CartItemRow({
   onRemove: (productId: string, variantId?: string) => void
 }) {
   const { productId, name, imageUrl, price, originalPrice, quantity, selected, variantId, variantName } = item
+  // Minimum pembelian baris ini (dari data produk). 1 = tanpa batasan.
+  const minQty = item.minOrderQty > 1 ? item.minOrderQty : 1
 
   // State teks lokal agar user bisa mengetik bebas (mis. mengosongkan field lalu ketik "10").
   // Disinkronkan bila quantity dari cookie berubah (mis. tombol +/-).
@@ -34,10 +36,11 @@ export default function CartItemRow({
     setDraft(String(quantity))
   }, [quantity])
 
-  // Commit nilai ketikan → set jumlah. Kosong/0/invalid → kembalikan ke 1 (jangan hapus item).
+  // Commit nilai ketikan → set jumlah. Kosong/0/invalid/di bawah minimum → kembalikan ke minQty
+  // (jangan hapus item, dan jangan biarkan ketikan menembus batas minimum pembelian).
   function commitDraft() {
     const parsed = parseInt(draft, 10)
-    const next = Number.isNaN(parsed) || parsed < 1 ? 1 : parsed
+    const next = Number.isNaN(parsed) || parsed < minQty ? minQty : parsed
     setDraft(String(next))
     if (next !== quantity) onSetQuantity(productId, next, variantId)
   }
@@ -77,6 +80,13 @@ export default function CartItemRow({
           <h3 className="line-clamp-2 text-sm leading-snug text-zinc-800">{name}</h3>
         </Link>
 
+        {/* Label minimum pembelian — hanya bila produk memang dibatasi */}
+        {minQty > 1 && (
+          <span className="mt-1 w-fit rounded bg-orange-50 px-2 py-0.5 text-xs font-medium text-orange-700">
+            Min. beli {minQty} pcs
+          </span>
+        )}
+
         {/* Nama varian terpilih (bila produk bervarian) */}
         {variantName && (
           <span className="mt-1 w-fit rounded bg-brand-surface px-2 py-0.5 text-xs font-medium text-brand-primary">
@@ -108,6 +118,8 @@ export default function CartItemRow({
             <button
               type="button"
               onClick={() => onDecrement(productId, variantId)}
+              // Kunci saat sudah menyentuh batas minimum pembelian produk ini
+              disabled={quantity <= minQty}
               aria-label="Kurangi jumlah"
               className="px-3 py-1 text-lg leading-none text-zinc-600 transition active:scale-95 disabled:opacity-40"
             >

@@ -12,6 +12,8 @@ import { saveOrder, OrderStockError } from '@/lib/mock-db/orders'
 import { readProducts } from '@/lib/mock-db/products'
 import { readPromotions } from '@/lib/mock-db/promotions'
 import { getVariantsByIds } from '@/lib/mock-db/variants'
+import { getMinOrderAmount } from '@/lib/mock-db/settings'
+import { formatRupiah } from '@/lib/format'
 import { isPromotionExpired } from '@/types/promotion'
 import type { CreateOrderInput, OrderItem, OrderShippingAddress } from '@/types/order'
 
@@ -105,6 +107,21 @@ export async function POST(request: Request) {
       )
     }
 
+    // === Minimum pembelian per produk (otoritatif dari DB, bukan dari payload) ===
+    // Berlaku PER BARIS keranjang (produk+varian) — konsisten dengan tombol +/− di keranjang.
+    const minQty = prod.minOrderQty ?? 1
+    if (minQty > 1 && it.quantity < minQty) {
+      return NextResponse.json(
+        {
+          error: `Minimal pembelian ${prod.name} adalah ${minQty} pcs.`,
+          code: 'MIN_ORDER_QTY',
+          productId: it.productId,
+          minOrderQty: minQty,
+        },
+        { status: 422 },
+      )
+    }
+
     if (it.variantId) {
       // === Produk BERVARIAN: harga OTORITATIF dari varian (bukan dari payload) ===
       const variant = variantMap.get(it.variantId)
@@ -132,6 +149,26 @@ export async function POST(request: Request) {
         price: prod.promoPrice, // snapshot harga jual dari DB
       })
     }
+  }
+
+  // === Minimum TOTAL belanja (store_settings.min_order_amount) — OTORITATIF di server ===
+  // Dibandingkan dengan `subtotal` hasil hitung server (harga dari DB), BUKAN angka dari client.
+  // Dasar perbandingan = subtotal BARANG saja, bukan subtotal+ongkir, karena itulah angka yang
+  // dilihat pembeli di keranjang sebelum memilih alamat/kurir — pesan "kurang Rp X lagi" jadi
+  // konsisten antara keranjang, checkout, dan penolakan di server ini.
+  // Dicek SEBELUM pembuatan invoice payment gateway agar tak membuang API call untuk transaksi
+  // yang pasti ditolak (batas minimum Xendit ±Rp10.000).
+  const minOrderAmount = await getMinOrderAmount()
+  if (subtotal < minOrderAmount) {
+    return NextResponse.json(
+      {
+        error: `Minimal belanja ${formatRupiah(minOrderAmount)}. Tambah ${formatRupiah(minOrderAmount - subtotal)} lagi untuk checkout.`,
+        code: 'MIN_ORDER_AMOUNT',
+        minOrderAmount,
+        subtotal,
+      },
+      { status: 422 },
+    )
   }
 
   // === Produk gratis promo (type='free_product') — OTORITATIF di server ===

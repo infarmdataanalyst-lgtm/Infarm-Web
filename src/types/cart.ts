@@ -35,4 +35,5 @@ export type CartLineItem = {
   badge?: string
   variantId?: string // varian terpilih (produk bervarian)
   variantName?: string // nama varian untuk tampilan, mis. "50 Biji"
+  minOrderQty: number // minimum pembelian baris ini (1 = bebas); dasar disable tombol "−"
 }

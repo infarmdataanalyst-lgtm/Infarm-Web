@@ -170,7 +170,7 @@ src/
 │   ├── dev/email-preview/        # Preview template email (route handler, isi placeholder data contoh)
 │   ├── oms/                      # OMS / back office
 │   │   ├── login/page.tsx
-│   │   └── dashboard/            # dashboard, products (+upload), orders, reviews,
+│   │   └── dashboard/            # dashboard, products (+upload), orders, reviews, pengaturan,
 │   │       │                     #   paket-combo (+baru, [id]/edit), promosi (+baru, [id]/edit)
 │   ├── api/                      # Route Handlers (runtime nodejs)
 │   │   ├── products/             # create | update | delete | list | check-sku | best-selling |
@@ -221,7 +221,8 @@ src/
 │   ├── mengantar.ts              # Client: search alamat (via proxy) + cek ongkir (fetch langsung)
 │   ├── order-token.ts            # Token HMAC tautan pembatalan (server-only)
 │   ├── supabase/                 # Client Supabase: server.ts (admin/SSR) + browser.ts
-│   ├── mock-db/                  # Akses data Supabase: products, orders, reviews, combos, promotions (server only)
+│   ├── mock-db/                  # Akses data Supabase: products, orders, reviews, combos, promotions,
+│   │                             #   settings (store_settings key-value) — server only
 │   │                             #   + cached-reads.ts (wrapper unstable_cache storefront: revalidate 30s + tags)
 │   └── data/                     # Dummy data tampilan pelengkap (dummy-*.ts)
 ├── emails/                       # Template HTML email (order-confirmation.html) — placeholder {{...}}
@@ -636,6 +637,35 @@ tidak perlu berubah saat skema DB berganti.
   HTML ISR, tak flash saat kembali ke beranda. Halaman berikutnya = infinite scroll client via
   `IntersectionObserver` native + `/api/products/best-selling-catalog` (cached). "N terjual"
   di detail produk (di samping rating).
+
+## Minimum Pembelian (produk murah) — sudah terpasang
+
+Dua lapis, harus jalan bersamaan (A saja tak menjamin B: gabungan beberapa produk murah tetap
+bisa di bawah minimum payment gateway):
+
+- **A. Minimum qty per produk** — kolom `products.min_order_qty` (INT, default 1, CHECK ≥ 1).
+  Berlaku **per BARIS keranjang** (produk+varian), konsisten dengan tombol `+`/`−` yang per baris.
+  Diisi admin di form tambah/edit produk; validasi `validateMinOrderQty` (`product-validation.ts`).
+- **B. Minimum total belanja** — tabel **`store_settings`** (key-value, RLS aktif TANPA policy
+  publik) baris `min_order_amount` (TEXT, di-cast INTEGER; seed `15000`). Diubah admin di
+  **`/oms/dashboard/pengaturan`** via `PATCH /api/settings/min-order` (`requireAdmin`).
+  Storefront membaca lewat `GET /api/settings/min-order` (publik, hanya satu angka — tabelnya
+  sendiri tak pernah ter-expose). Cache: `getCachedMinOrderAmount` + tag **`settings`**
+  (di-`revalidateTag` saat admin menyimpan).
+
+**Dasar perbandingan = SUBTOTAL BARANG** (tanpa ongkir/diskon). Alasannya di komentar
+`orders/create`: itu angka yang dilihat pembeli di keranjang sebelum memilih kurir, sehingga pesan
+"kurang Rp X lagi" sama persis di keranjang, checkout, dan penolakan server.
+
+- **UI**: label "Min. beli N pcs" di `CartItemRow` & `StickyBuyBar`; tombol `−` disabled di batas;
+  `addToCart` menambah sebanyak `minOrderQty` (bukan 1); bilah keranjang & checkout mengunci tombol
+  + menampilkan kekurangannya.
+- **Server (WAJIB, jangan andalkan client)**: `POST /api/orders/create` re-fetch produk fresh
+  (`readProducts`, bukan cache) lalu tolak `422` dengan `code: 'MIN_ORDER_QTY'` /
+  `'MIN_ORDER_AMOUNT'` **sebelum** menyentuh RPC order maupun (nanti) API Xendit.
+- Migration: `supabase/migrations/20260810120000_add_min_order.sql`. Semua jalur baca/tulis punya
+  fallback bila kolom/tabel belum di-apply (`PGRST204`/`42703` → `minOrderQty` 1,
+  `min_order_amount` → `DEFAULT_MIN_ORDER_AMOUNT`).
 
 ## Validasi Form Produk (OMS)
 

@@ -95,6 +95,21 @@ export default function CartPage() {
     return () => controller.abort()
   }, [idsKey])
 
+  // === Minimum total belanja (pengaturan toko). Gagal fetch → 0 = tanpa batas, halaman tetap jalan. ===
+  const [minOrderAmount, setMinOrderAmount] = useState(0)
+  useEffect(() => {
+    let active = true
+    fetch('/api/settings/min-order')
+      .then((res) => res.json())
+      .then((data: { minOrderAmount?: number }) => {
+        if (active && typeof data.minOrderAmount === 'number') setMinOrderAmount(data.minOrderAmount)
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [])
+
   // === Ambil promo aktif (server-side filter). Gagal fetch → section promo kosong, halaman aman. ===
   useEffect(() => {
     let active = true
@@ -133,6 +148,11 @@ export default function CartPage() {
           badge: product.badge,
           variantId: ci.variantId,
           variantName: ci.variantName,
+          // Minimum pembelian hanya ada pada produk OMS (StoredProduct); dummy → 1 (bebas)
+          minOrderQty:
+            'minOrderQty' in product && typeof product.minOrderQty === 'number'
+              ? product.minOrderQty
+              : 1,
         },
       ]
     })
@@ -200,14 +220,24 @@ export default function CartPage() {
     if (item) updateQuantity(productId, item.quantity + 1, variantId)
   }
 
-  function decrement(productId: string, variantId?: string) {
-    const item = cookieCart.find((i) => i.productId === productId && i.variantId === variantId)
-    if (item) updateQuantity(productId, item.quantity - 1, variantId)
+  // Minimum pembelian baris tertentu (dari data produk hasil resolve). Default 1 = bebas.
+  function minQtyOf(productId: string, variantId?: string): number {
+    const line = items.find((i) => i.productId === productId && i.variantId === variantId)
+    return line && line.minOrderQty > 1 ? line.minOrderQty : 1
   }
 
-  // Set jumlah langsung (dari input ketik manual). Minimal 1 (di bawah itu di-clamp oleh pemanggil).
+  function decrement(productId: string, variantId?: string) {
+    const item = cookieCart.find((i) => i.productId === productId && i.variantId === variantId)
+    if (!item) return
+    // Jangan turun di bawah minimum pembelian produk (tombol '−' juga sudah disabled di UI;
+    // guard ini menutup jalur lain seperti klik cepat sebelum render ulang).
+    const next = Math.max(minQtyOf(productId, variantId), item.quantity - 1)
+    if (next !== item.quantity) updateQuantity(productId, next, variantId)
+  }
+
+  // Set jumlah langsung (dari input ketik manual). Di-clamp ke minimum pembelian produk.
   function setQuantity(productId: string, quantity: number, variantId?: string) {
-    updateQuantity(productId, quantity, variantId)
+    updateQuantity(productId, Math.max(minQtyOf(productId, variantId), quantity), variantId)
   }
 
   function remove(productId: string, variantId?: string) {
@@ -216,6 +246,9 @@ export default function CartPage() {
 
   // Lanjut ke checkout: simpan item TERCENTANG + snapshot promo/combo yang tercapai.
   function handleCheckout() {
+    // Guard: jangan lanjut bila subtotal barang belum mencapai minimum (tombol juga sudah
+    // disabled; ini menutup jalur pemanggilan lain).
+    if (selectedTotal < minOrderAmount) return
     const chosen = selectedItems.map((i) => ({
       productId: i.productId,
       quantity: i.quantity,
@@ -317,6 +350,8 @@ export default function CartPage() {
         allSelected={allSelected}
         selectedCount={selectedCount}
         selectedTotal={finalTotal}
+        subtotal={selectedTotal}
+        minOrderAmount={minOrderAmount}
         onToggleSelectAll={toggleSelectAll}
         onCheckout={handleCheckout}
       />

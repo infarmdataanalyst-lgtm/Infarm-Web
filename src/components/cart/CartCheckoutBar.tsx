@@ -16,18 +16,32 @@ export default function CartCheckoutBar({
   selectedTotal,
   onToggleSelectAll,
   onCheckout,
+  subtotal,
+  minOrderAmount,
 }: {
   allSelected: boolean
   selectedCount: number
   selectedTotal: number
   onToggleSelectAll: () => void
   onCheckout: () => void
+  subtotal: number // subtotal BARANG tercentang (tanpa ongkir/diskon) — dasar minimum belanja
+  minOrderAmount: number // batas minimum dari pengaturan toko (0 = tak ada batas)
 }) {
-  const disabled = selectedCount === 0
+  // Kekurangan agar mencapai minimum belanja. > 0 → checkout dikunci.
+  const shortfall = Math.max(0, minOrderAmount - subtotal)
+  const belowMinimum = selectedCount > 0 && shortfall > 0
+  const disabled = selectedCount === 0 || belowMinimum
   const barRef = useStickyBarHeight<HTMLDivElement>()
 
   return (
     <div ref={barRef} className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-200 bg-white">
+      {/* Pemberitahuan minimum belanja — muncul hanya bila ada item tercentang tapi belum cukup */}
+      {belowMinimum && (
+        <p className="mx-auto max-w-6xl px-4 pt-2 text-xs leading-snug text-orange-700">
+          Minimal belanja {formatRupiah(minOrderAmount)}, tambah {formatRupiah(shortfall)} lagi untuk
+          checkout.
+        </p>
+      )}
       <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
         {/* Kiri: Pilih Semua */}
         <label className="flex shrink-0 cursor-pointer items-center gap-2 text-sm text-zinc-700">

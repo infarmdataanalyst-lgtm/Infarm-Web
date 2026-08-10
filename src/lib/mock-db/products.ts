@@ -80,6 +80,7 @@ type ProductRow = {
   description: string | null
   archived: boolean
   created_at: string
+  min_order_qty: number | null // null bila kolom belum di-migrate (produk lama)
 }
 
 // Mengubah baris DB (snake_case) menjadi StoredProduct (camelCase) yang dipakai aplikasi.
@@ -106,6 +107,8 @@ function rowToStored(row: ProductRow): StoredProduct {
     description: row.description ?? undefined,
     archived: row.archived,
     createdAt: row.created_at,
+    // Fallback 1 = tanpa batasan, aman bila kolom belum di-migrate atau berisi nilai tak valid
+    minOrderQty: row.min_order_qty && row.min_order_qty >= 1 ? row.min_order_qty : 1,
   }
 }
 
@@ -181,17 +184,20 @@ export async function saveProduct(input: CreateProductInput): Promise<StoredProd
     sku: input.sku,
     stock: input.stock,
     description: input.description ?? null,
+    // Minimum pembelian; clamp ≥ 1 agar tak pernah melanggar CHECK di DB
+    min_order_qty: Math.max(1, Math.floor(input.minOrderQty ?? 1)),
   }
 
   let { data, error } = await supabase.from('products').insert(row).select('*').single()
 
-  // Jaring pengaman: bila kolom images belum di-migrate, simpan ulang tanpa galeri
-  // agar upload tetap jalan (foto utama tetap tersimpan di image_url).
+  // Jaring pengaman: bila kolom images / min_order_qty belum di-migrate, simpan ulang tanpa
+  // kolom tersebut agar upload tetap jalan (foto utama tetap tersimpan di image_url).
   // PGRST204 = kolom tak dikenal PostgREST; 42703 = kolom tak ada di Postgres.
   if (error?.code === 'PGRST204' || error?.code === '42703') {
-    const rowWithoutImages = { ...row }
-    delete rowWithoutImages.images
-    ;({ data, error } = await supabase.from('products').insert(rowWithoutImages).select('*').single())
+    const rowFallback = { ...row }
+    delete rowFallback.images
+    delete rowFallback.min_order_qty
+    ;({ data, error } = await supabase.from('products').insert(rowFallback).select('*').single())
   }
 
   if (error || !data) {
@@ -221,6 +227,10 @@ export async function updateProduct(
   if (patch.stock !== undefined) dbPatch.stock = patch.stock
   if (patch.description !== undefined) dbPatch.description = patch.description
   if (patch.archived !== undefined) dbPatch.archived = patch.archived
+  // Clamp ≥ 1 agar tak melanggar CHECK products_min_order_qty_check
+  if (patch.minOrderQty !== undefined) {
+    dbPatch.min_order_qty = Math.max(1, Math.floor(patch.minOrderQty))
+  }
   // Galeri: upload data-URL → URL Storage, simpan array + sinkronkan foto utama ke foto pertama
   if (patch.images !== undefined) {
     const gallery = await uploadGallery(sanitizeGallery(patch.images))
@@ -236,13 +246,14 @@ export async function updateProduct(
     .select('*')
     .maybeSingle()
 
-  // Fallback bila kolom images belum di-migrate: ulangi update tanpa galeri
+  // Fallback bila kolom images / min_order_qty belum di-migrate: ulangi update tanpa kolom itu
   if (error?.code === 'PGRST204' || error?.code === '42703') {
-    const patchWithoutImages = { ...dbPatch }
-    delete patchWithoutImages.images
+    const patchFallback = { ...dbPatch }
+    delete patchFallback.images
+    delete patchFallback.min_order_qty
     ;({ data, error } = await supabase
       .from('products')
-      .update(patchWithoutImages)
+      .update(patchFallback)
       .eq('id', id)
       .select('*')
       .maybeSingle())

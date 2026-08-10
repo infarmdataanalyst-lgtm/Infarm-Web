@@ -11,7 +11,8 @@
       "Bash(curl -s \"http://localhost:3000/api/products/list\")",
       "Read(//tmp/**)",
       "Bash(npm install *)",
-      "Bash(curl -s http://localhost:3000/)"
+      "Bash(curl -s http://localhost:3000/)",
+      "PowerShell(npx tsc --noEmit 2>&1)"
     ]
   }
 }

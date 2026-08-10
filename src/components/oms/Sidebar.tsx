@@ -17,6 +17,7 @@ import {
   Megaphone,
   ShoppingCart,
   Star,
+  Settings,
   HelpCircle,
   LogOut,
   X,
@@ -38,6 +39,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Promosi', href: '/oms/dashboard/promosi', icon: Megaphone },
   { label: 'Pesanan', href: '/oms/dashboard/orders', icon: ShoppingCart },
   { label: 'Ulasan', href: '/oms/dashboard/reviews', icon: Star },
+  { label: 'Pengaturan', href: '/oms/dashboard/pengaturan', icon: Settings },
 ]
 
 export default function Sidebar() {

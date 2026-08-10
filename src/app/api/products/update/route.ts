@@ -6,6 +6,7 @@ import { requireAdmin } from '@/lib/oms-guard'
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { updateProduct } from '@/lib/mock-db/products'
 import { PRODUCT_CATEGORIES } from '@/lib/data/categories'
+import { validateMinOrderQty } from '@/lib/product-validation'
 import type { StoredProduct } from '@/types/product'
 
 export const runtime = 'nodejs'
@@ -46,6 +47,12 @@ export async function PATCH(request: Request) {
         : body.price
   }
   if (typeof body.stock === 'number' && body.stock >= 0) patch.stock = body.stock
+  // Minimum pembelian: divalidasi ulang di server (jangan percaya form OMS)
+  if (typeof body.minOrderQty === 'number') {
+    const minQtyErr = validateMinOrderQty(body.minOrderQty)
+    if (minQtyErr) return NextResponse.json({ error: minQtyErr }, { status: 422 })
+    patch.minOrderQty = body.minOrderQty
+  }
   if (typeof body.description === 'string') patch.description = body.description
   if (typeof body.archived === 'boolean') patch.archived = body.archived
   if (typeof body.imageUrl === 'string' && body.imageUrl.trim()) patch.imageUrl = body.imageUrl

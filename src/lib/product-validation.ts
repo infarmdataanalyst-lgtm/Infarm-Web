@@ -15,6 +15,13 @@ export const PRICE_MIN = 100
 export const PRICE_MAX = 99_999_999
 export const STOCK_MIN = 0
 export const STOCK_MAX = 999_999
+export const MIN_ORDER_QTY_MIN = 1
+export const MIN_ORDER_QTY_MAX = 999
+// Ambang "harga kecil": di bawah ini admin DIINGATKAN (bukan dipaksa) menaikkan minimum pembelian,
+// karena order 1 pcs berisiko di bawah batas minimum payment gateway & tak menutup ongkir.
+export const LOW_PRICE_THRESHOLD = 5_000
+// Target nilai minimal satu baris produk saat menyarankan minimum pembelian (≈ batas Xendit).
+export const SUGGESTED_LINE_TOTAL = 10_000
 export const MAX_PRODUCT_IMAGES = 9 // sesuai slider detail produk & constraint DB
 export const MAX_IMAGE_BYTES = 2 * 1024 * 1024 // 2MB per file
 export const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp']
@@ -96,6 +103,29 @@ export function validateImageFile(file: File): string | undefined {
   return undefined
 }
 
+// Minimum pembelian (pcs): wajib bilangan bulat 1–999. 1 = tanpa batasan.
+export function validateMinOrderQty(qty: number | ''): string | undefined {
+  if (qty === '' || Number.isNaN(qty)) return 'Minimal pembelian wajib diisi'
+  if (!Number.isInteger(qty)) return 'Minimal pembelian harus bilangan bulat'
+  if (qty < MIN_ORDER_QTY_MIN) return `Minimal pembelian minimal ${MIN_ORDER_QTY_MIN}`
+  if (qty > MIN_ORDER_QTY_MAX) return `Minimal pembelian maksimal ${MIN_ORDER_QTY_MAX}`
+  return undefined
+}
+
+// Saran jumlah minimum agar satu baris produk mencapai ±SUGGESTED_LINE_TOTAL.
+// HANYA saran (ditampilkan sebagai hint) — keputusan akhir tetap di admin.
+// Mengembalikan null bila harga tak valid atau produk sudah cukup mahal.
+export function suggestMinOrderQty(price: number | ''): number | null {
+  if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) return null
+  if (price >= LOW_PRICE_THRESHOLD) return null
+  return Math.min(MIN_ORDER_QTY_MAX, Math.ceil(SUGGESTED_LINE_TOTAL / price))
+}
+
+// Apakah harga tergolong kecil → tampilkan peringatan non-blocking di form.
+export function isLowPrice(price: number | ''): boolean {
+  return typeof price === 'number' && Number.isFinite(price) && price > 0 && price < LOW_PRICE_THRESHOLD
+}
+
 // === Validasi seluruh form (sinkron; tanpa cek duplikat SKU) ===
 
 export type ProductFieldKey =
@@ -105,6 +135,7 @@ export type ProductFieldKey =
   | 'price'
   | 'originalPrice'
   | 'stock'
+  | 'minOrderQty'
   | 'description'
   | 'images'
 
@@ -117,6 +148,7 @@ export type ProductFormValues = {
   price: number | ''
   originalPrice?: number | ''
   stock: number | ''
+  minOrderQty: number | ''
   description: string
   imageCount: number
 }
@@ -129,6 +161,7 @@ export const PRODUCT_FIELD_ORDER: ProductFieldKey[] = [
   'price',
   'originalPrice',
   'stock',
+  'minOrderQty',
   'description',
   'images',
 ]
@@ -148,6 +181,8 @@ export function validateProductForm(values: ProductFormValues): ProductFieldErro
   if (originalPrice) errors.originalPrice = originalPrice
   const stock = validateStock(values.stock)
   if (stock) errors.stock = stock
+  const minOrderQty = validateMinOrderQty(values.minOrderQty)
+  if (minOrderQty) errors.minOrderQty = minOrderQty
   const description = validateDescription(values.description)
   if (description) errors.description = description
   const images = validateImages(values.imageCount)

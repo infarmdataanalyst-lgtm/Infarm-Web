@@ -19,9 +19,13 @@ import {
   validatePrice,
   validateOriginalPrice,
   validateStock,
+  validateMinOrderQty,
   validateDescription,
   validateImages,
   validateImageFile,
+  isLowPrice,
+  suggestMinOrderQty,
+  LOW_PRICE_THRESHOLD,
   ACCEPTED_IMAGE_ACCEPT,
   NAME_MAX,
   DESC_MAX,
@@ -39,6 +43,7 @@ type Product = {
   price: number // harga jual (promoPrice)
   originalPrice?: number // harga asli (dicoret bila > price)
   stock: number
+  minOrderQty: number // minimum pembelian per baris keranjang (1 = bebas)
   description?: string // deskripsi produk (tampil di halaman detail ecommerce)
   image: string // foto utama (thumbnail tabel) = images[0]
   images?: string[] // galeri foto (maks 9)
@@ -54,6 +59,7 @@ type EditForm = {
   price: number | ''
   originalPrice: number | '' // harga asli (opsional)
   stock: number | ''
+  minOrderQty: number | '' // minimum pembelian (pcs)
   description: string // deskripsi produk
   images: string[] // galeri foto (maks 9); images[0] = foto utama
 }
@@ -74,11 +80,11 @@ const SALES_RANGES: { label: string; days: number | null }[] = [
 
 // === Dummy Data Produk (contoh bawaan, tidak tersimpan di DB) ===
 const INITIAL_PRODUCTS: Product[] = [
-  { id: 'PRD-001', name: 'Benih Cabai Rawit Unggul', sku: 'BNH-CBR-01', categoryLabel: 'Benih Premium', slug: 'benih-premium', price: 18000, stock: 124, image: '/images/product-placeholder.png', persisted: false, archived: false },
-  { id: 'PRD-002', name: 'Media Tanam Premium 5L', sku: 'MDT-PRM-5L', categoryLabel: 'Media Tanam', slug: 'media-tanam', price: 32000, stock: 7, image: '/images/product-placeholder.png', persisted: false, archived: false },
-  { id: 'PRD-003', name: 'Pot Polybag 25cm (isi 10)', sku: 'POT-PLB-25', categoryLabel: 'Pot Polybag', slug: 'pot-polybag', price: 15000, stock: 0, image: '/images/product-placeholder.png', persisted: false, archived: false },
-  { id: 'PRD-004', name: 'Pupuk Organik Cair 1L', sku: 'PPK-ORG-1L', categoryLabel: 'Pupuk Nutrisi', slug: 'pupuk-nutrisi', price: 45000, stock: 58, image: '/images/product-placeholder.png', persisted: false, archived: false },
-  { id: 'PRD-005', name: 'Benih Selada Hidroponik', sku: 'BNH-SLD-02', categoryLabel: 'Benih Premium', slug: 'benih-premium', price: 22000, stock: 4, image: '/images/product-placeholder.png', persisted: false, archived: false },
+  { id: 'PRD-001', name: 'Benih Cabai Rawit Unggul', sku: 'BNH-CBR-01', categoryLabel: 'Benih Premium', slug: 'benih-premium', price: 18000, stock: 124, image: '/images/product-placeholder.png', minOrderQty: 1, persisted: false, archived: false },
+  { id: 'PRD-002', name: 'Media Tanam Premium 5L', sku: 'MDT-PRM-5L', categoryLabel: 'Media Tanam', slug: 'media-tanam', price: 32000, stock: 7, image: '/images/product-placeholder.png', minOrderQty: 1, persisted: false, archived: false },
+  { id: 'PRD-003', name: 'Pot Polybag 25cm (isi 10)', sku: 'POT-PLB-25', categoryLabel: 'Pot Polybag', slug: 'pot-polybag', price: 15000, stock: 0, image: '/images/product-placeholder.png', minOrderQty: 1, persisted: false, archived: false },
+  { id: 'PRD-004', name: 'Pupuk Organik Cair 1L', sku: 'PPK-ORG-1L', categoryLabel: 'Pupuk Nutrisi', slug: 'pupuk-nutrisi', price: 45000, stock: 58, image: '/images/product-placeholder.png', minOrderQty: 1, persisted: false, archived: false },
+  { id: 'PRD-005', name: 'Benih Selada Hidroponik', sku: 'BNH-SLD-02', categoryLabel: 'Benih Premium', slug: 'benih-premium', price: 22000, stock: 4, image: '/images/product-placeholder.png', minOrderQty: 1, persisted: false, archived: false },
 ]
 
 // Memetakan produk mock DB → view model tabel
@@ -92,6 +98,7 @@ function mapStored(p: StoredProduct): Product {
     price: p.promoPrice,
     originalPrice: p.originalPrice,
     stock: p.stock,
+    minOrderQty: p.minOrderQty ?? 1,
     description: p.description,
     image: p.imageUrl,
     images: p.images,
@@ -229,6 +236,7 @@ export default function ProductsPage() {
       originalPrice:
         product.originalPrice && product.originalPrice > product.price ? product.originalPrice : '',
       stock: product.stock,
+      minOrderQty: product.minOrderQty ?? 1,
       description: product.description ?? '',
       images: gallery,
     })
@@ -251,6 +259,7 @@ export default function ProductsPage() {
       price: validatePrice(form.price),
       originalPrice: validateOriginalPrice(form.originalPrice, form.price),
       stock: validateStock(form.stock),
+      minOrderQty: validateMinOrderQty(form.minOrderQty),
       description: validateDescription(form.description),
       images: validateImages(form.images.length),
     }
@@ -266,6 +275,7 @@ export default function ProductsPage() {
     !editErrors.price &&
     !editErrors.originalPrice &&
     !editErrors.stock &&
+    !editErrors.minOrderQty &&
     !editErrors.description &&
     !editErrors.images
 
@@ -360,6 +370,7 @@ export default function ProductsPage() {
             price,
             originalPrice,
             stock,
+            minOrderQty: Number(form.minOrderQty) || 1,
             description: form.description.trim(),
             imageUrl: form.images[0],
             images: form.images,
@@ -722,7 +733,22 @@ export default function ProductsPage() {
                 <input type="text" inputMode="numeric" value={form.stock} onChange={(e) => { const d = e.target.value.replace(/\D/g, ''); setForm({ ...form, stock: d === '' ? '' : Number(d) }) }} className={modalInput(!!editErrors.stock)} aria-invalid={!!editErrors.stock} />
                 {editErrors.stock && <p className="mt-1 text-xs font-medium text-red-600">{editErrors.stock}</p>}
               </EditField>
+              <EditField label="Minimal Pembelian (pcs)">
+                <input type="text" inputMode="numeric" value={form.minOrderQty} onChange={(e) => { const d = e.target.value.replace(/\D/g, ''); setForm({ ...form, minOrderQty: d === '' ? '' : Number(d) }) }} placeholder="1" className={modalInput(!!editErrors.minOrderQty)} aria-invalid={!!editErrors.minOrderQty} />
+                {editErrors.minOrderQty
+                  ? <p className="mt-1 text-xs font-medium text-red-600">{editErrors.minOrderQty}</p>
+                  : <p className="mt-1 text-xs text-gray-400">1 = pembeli boleh beli satuan.</p>}
+              </EditField>
             </div>
+
+            {/* Peringatan harga kecil — non-blocking, sama dengan form tambah produk */}
+            {isLowPrice(form.price) && !editErrors.price && (
+              <p className="mt-3 rounded-lg bg-orange-50 px-3 py-2 text-xs leading-relaxed text-orange-700">
+                Harga produk di bawah {formatRupiah(LOW_PRICE_THRESHOLD)} — disarankan set minimal
+                pembelian{suggestMinOrderQty(form.price) ? ` (saran: ${suggestMinOrderQty(form.price)} pcs)` : ''} agar
+                transaksi memenuhi minimum payment gateway.
+              </p>
+            )}
 
             {/* Deskripsi produk (tampil di halaman detail ecommerce) */}
             <div className="mt-4">

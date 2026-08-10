@@ -38,6 +38,7 @@ export type StoredProduct = Product & {
   images: string[] // galeri foto (maks 9); images[0] = foto utama (mirror imageUrl)
   archived?: boolean // true = tetap tersimpan di OMS tapi disembunyikan dari ecommerce
   createdAt: string // ISO date, untuk urutan terbaru
+  minOrderQty: number // minimum pembelian per baris keranjang (pcs). 1 = tanpa batasan
 }
 
 // Payload dari form upload produk OMS (sebelum disimpan).
@@ -52,6 +53,7 @@ export type CreateProductInput = {
   description?: string
   imageUrl?: string // foto utama; bila kosong diambil dari images[0]
   images?: string[] // galeri foto (maks 9), data URL base64 atau URL
+  minOrderQty?: number // minimum pembelian (pcs); kosong = 1 (tanpa batasan)
 }
 
 // Apakah produk sedang diskon (harga asli > harga jual) → dasar tampil harga coret.
@@ -82,4 +84,5 @@ export type ProductDetail = Product & {
   reviewCount: number // jumlah ulasan
   description: string // penjelasan / spesifikasi detail produk
   reviews: ProductReview[]
+  minOrderQty?: number // minimum pembelian (pcs); undefined/1 = bebas. Produk dummy tak punya.
 }

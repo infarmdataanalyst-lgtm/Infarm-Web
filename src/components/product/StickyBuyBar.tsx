@@ -35,6 +35,7 @@ export default function StickyBuyBar({
   category,
   sku,
   variants = [],
+  minOrderQty = 1,
 }: {
   productId: string
   price: number
@@ -42,7 +43,11 @@ export default function StickyBuyBar({
   category: string
   sku?: string
   variants?: ProductVariant[] // varian produk (kosong = produk tak bervarian → perilaku lama)
+  minOrderQty?: number // minimum pembelian produk (1 = bebas) → jumlah awal saat masuk keranjang
 }) {
+  // Sekali klik menambahkan sebanyak minimum pembelian, bukan selalu 1 pcs. Produk murah
+  // (mis. Rp300) baru masuk akal dikirim dalam kelipatan tertentu — lihat store_settings.
+  const addQty = minOrderQty > 1 ? minOrderQty : 1
   const router = useRouter()
   const addButtonRef = useRef<HTMLButtonElement>(null)
   const particleId = useRef(0) // penghasil id unik tiap partikel
@@ -99,18 +104,18 @@ export default function StickyBuyBar({
   const commitAdd = useCallback(() => {
     addToCart({
       productId,
-      quantity: 1,
+      quantity: addQty,
       price: effectivePrice,
       variantId: activeVariant?.variantId,
       variantName: activeVariant?.name,
     })
     // GA4 add_to_cart: dikirim SETELAH item masuk cookie keranjang (bukan sebelum)
-    trackAddToCart({ id: productId, sku, name, category, price: effectivePrice }, 1)
+    trackAddToCart({ id: productId, sku, name, category, price: effectivePrice }, addQty)
     window.dispatchEvent(new CustomEvent(CART_BUMP_EVENT)) // pop ikon keranjang
     showCartToast() // toast sukses
     setJustAdded(true)
     window.setTimeout(() => setJustAdded(false), 1500)
-  }, [productId, effectivePrice, activeVariant, sku, name, category])
+  }, [productId, addQty, effectivePrice, activeVariant, sku, name, category])
 
   // Klik "+ Keranjang": di mobile & produk bervarian → buka bottom-sheet pilih varian dulu.
   function handleAddToCart() {
@@ -164,7 +169,7 @@ export default function StickyBuyBar({
     if (outOfStock) return // varian terpilih habis → jangan lanjut
     const item = {
       productId,
-      quantity: 1,
+      quantity: addQty,
       price: effectivePrice,
       variantId: activeVariant?.variantId,
       variantName: activeVariant?.name,
@@ -186,6 +191,13 @@ export default function StickyBuyBar({
     <>
       {/* ref: mendaftarkan tinggi bilah ke --sticky-bar-h agar FloatingWhatsApp naik di atasnya */}
       <div ref={barRef} className="fixed inset-x-0 bottom-0 z-40 border-t border-zinc-200 bg-white">
+        {/* Info minimum pembelian — muncul tepat di atas tombol beli agar pembeli tahu sebelum
+            menekan, bukan kaget saat melihat jumlah di keranjang. */}
+        {addQty > 1 && (
+          <p className="mx-auto max-w-6xl px-4 pt-2 text-xs text-orange-700">
+            Min. beli {addQty} pcs — sekali tambah langsung {addQty} pcs.
+          </p>
+        )}
         <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
           {barOutOfStock ? (
             // Varian terpilih habis → satu tombol nonaktif "Stok Habis"

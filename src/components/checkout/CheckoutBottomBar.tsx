@@ -16,17 +16,29 @@ export default function CheckoutBottomBar({
   onPay,
   isPaying = false,
   canPay = true,
+  minOrderAmount = 0,
+  minOrderShortfall = 0,
 }: {
   total: number
   onPay: () => void
   isPaying?: boolean
   canPay?: boolean
+  minOrderAmount?: number // batas minimum belanja dari pengaturan toko
+  minOrderShortfall?: number // kekurangan menuju batas itu (0 = sudah terpenuhi)
 }) {
   // Redup saat belum boleh bayar (dan tidak sedang memproses)
   const dimmed = !canPay && !isPaying
 
   return (
     <div className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-200 bg-white">
+      {/* Minimum belanja belum tercapai → jelaskan kekurangannya, tombol bayar dikunci */}
+      {minOrderShortfall > 0 && (
+        <p className="mx-auto max-w-6xl px-4 pt-2 text-xs leading-snug text-orange-700">
+          Minimal belanja {formatRupiah(minOrderAmount)}, tambah {formatRupiah(minOrderShortfall)} lagi
+          untuk checkout.
+        </p>
+      )}
+
       {/* Pemberitahuan persetujuan — tautan target="_blank" agar isian checkout tetap utuh */}
       <p className="mx-auto max-w-6xl px-4 pt-2 text-[11px] leading-snug text-zinc-500">
         Dengan melanjutkan pembayaran, Anda menyetujui{' '}

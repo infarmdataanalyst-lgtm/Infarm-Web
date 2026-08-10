@@ -13,6 +13,7 @@ import {
   validatePrice,
   validateOriginalPrice,
   validateStock,
+  validateMinOrderQty,
   validateDescription,
   validateImages,
   MAX_PRODUCT_IMAGES,
@@ -53,6 +54,11 @@ function validatePayload(body: unknown): { input: CreateProductInput } | { error
   const stockErr = validateStock(typeof b.stock === 'number' ? b.stock : '')
   if (stockErr) return { error: stockErr }
 
+  // Minimum pembelian: opsional di payload (produk lama/klien lama) → default 1 = tanpa batasan
+  const minOrderQty = typeof b.minOrderQty === 'number' ? b.minOrderQty : 1
+  const minQtyErr = validateMinOrderQty(minOrderQty)
+  if (minQtyErr) return { error: minQtyErr }
+
   if (typeof b.description !== 'string') return { error: 'Deskripsi wajib diisi.' }
   const descErr = validateDescription(b.description)
   if (descErr) return { error: descErr }
@@ -73,6 +79,7 @@ function validatePayload(body: unknown): { input: CreateProductInput } | { error
       price: b.price as number,
       originalPrice,
       stock: b.stock as number,
+      minOrderQty,
       description: (b.description as string).trim(),
       imageUrl: typeof b.imageUrl === 'string' ? b.imageUrl : undefined,
       images: b.images as string[],

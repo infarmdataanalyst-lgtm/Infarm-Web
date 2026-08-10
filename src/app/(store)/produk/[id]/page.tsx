@@ -50,6 +50,7 @@ function toProductDetail(
   return {
     id: p.id,
     name: p.name,
+    minOrderQty: p.minOrderQty ?? 1,
     sku: p.sku,
     originalPrice: p.originalPrice,
     promoPrice: p.promoPrice,
@@ -180,6 +181,7 @@ export default async function ProductDetailPage({
         name={product.name}
         category={product.category}
         sku={product.sku}
+        minOrderQty={product.minOrderQty ?? 1}
         variants={variants}
       />
 

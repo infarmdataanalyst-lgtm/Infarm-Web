@@ -23,6 +23,10 @@ import {
   ACCEPTED_IMAGE_ACCEPT,
   DESC_MAX,
   NAME_MAX,
+  LOW_PRICE_THRESHOLD,
+  SUGGESTED_LINE_TOTAL,
+  isLowPrice,
+  suggestMinOrderQty,
   type ProductFieldErrors,
   type ProductFieldKey,
 } from '@/lib/product-validation'
@@ -44,6 +48,7 @@ export default function UploadProductPage() {
   const [price, setPrice] = useState<number | ''>(35000) // harga jual (promo)
   const [originalPrice, setOriginalPrice] = useState<number | ''>('') // harga asli (opsional, dicoret)
   const [stock, setStock] = useState<number | ''>(120)
+  const [minOrderQty, setMinOrderQty] = useState<number | ''>(1) // 1 = tanpa batasan
   const [description, setDescription] = useState('')
 
   // === State gambar produk ===
@@ -69,11 +74,15 @@ export default function UploadProductPage() {
         price,
         originalPrice,
         stock,
+        minOrderQty,
         description,
         imageCount: images.length,
       }),
-    [sku, name, category, price, originalPrice, stock, description, images.length],
+    [sku, name, category, price, originalPrice, stock, minOrderQty, description, images.length],
   )
+
+  // Saran minimum pembelian (hanya untuk produk berharga kecil). null → tak ada saran.
+  const minQtySuggestion = useMemo(() => suggestMinOrderQty(price), [price])
 
   // Error SKU gabungan: format dulu, lalu duplikat
   const skuError = liveErrors.sku ?? (skuDuplicate ? 'SKU sudah digunakan produk lain' : undefined)
@@ -180,6 +189,11 @@ export default function UploadProductPage() {
     setStock(digits === '' ? '' : Number(digits))
   }
 
+  function handleMinOrderQtyChange(raw: string) {
+    const digits = raw.replace(/\D/g, '')
+    setMinOrderQty(digits === '' ? '' : Number(digits))
+  }
+
   // === Submit ===
   async function handleSave() {
     setError(null)
@@ -191,6 +205,7 @@ export default function UploadProductPage() {
       price: true,
       originalPrice: true,
       stock: true,
+      minOrderQty: true,
       description: true,
       images: true,
     })
@@ -203,6 +218,7 @@ export default function UploadProductPage() {
       price,
       originalPrice,
       stock,
+      minOrderQty,
       description,
       imageCount: images.length,
     })
@@ -228,6 +244,7 @@ export default function UploadProductPage() {
           price: Number(price) || 0,
           originalPrice: originalPrice === '' ? undefined : Number(originalPrice),
           stock: Number(stock) || 0,
+          minOrderQty: Number(minOrderQty) || 1,
           description: description.trim(),
           imageUrl: images[0]?.src,
           images: images.map((img) => img.src),
@@ -370,6 +387,15 @@ export default function UploadProductPage() {
                     </p>
                   )}
                   <FieldError message={shownError('price')} />
+
+                  {/* Peringatan harga kecil — NON-BLOCKING (form tetap bisa disimpan).
+                      Order 1 pcs produk murah berisiko di bawah minimum payment gateway. */}
+                  {isLowPrice(price) && !shownError('price') && (
+                    <p className="mt-2 rounded-lg bg-orange-50 px-3 py-2 text-xs leading-relaxed text-orange-700">
+                      Harga produk di bawah {formatRupiah(LOW_PRICE_THRESHOLD)} — disarankan set
+                      minimal pembelian agar transaksi memenuhi minimum payment gateway.
+                    </p>
+                  )}
                 </div>
 
                 {/* Harga Asli (opsional; dicoret bila > harga jual) */}
@@ -412,6 +438,29 @@ export default function UploadProductPage() {
                     />
                   </Field>
                   <FieldError message={shownError('stock')} />
+                </div>
+
+                {/* Minimal Pembelian — kelipatan minimum per baris keranjang */}
+                <div id="pf-minOrderQty">
+                  <Field label="Minimal Pembelian (pcs)">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={minOrderQty}
+                      onChange={(e) => handleMinOrderQtyChange(e.target.value)}
+                      onBlur={() => markTouched('minOrderQty')}
+                      // Saran hanya muncul untuk produk murah; TIDAK auto-fill — admin yang putuskan
+                      placeholder={minQtySuggestion ? String(minQtySuggestion) : '1'}
+                      className={inputClass(!!shownError('minOrderQty'))}
+                      aria-invalid={!!shownError('minOrderQty')}
+                    />
+                  </Field>
+                  <p className="mt-1 text-xs text-gray-400">
+                    {minQtySuggestion
+                      ? `Saran: ${minQtySuggestion} pcs (≈ ${formatRupiah(SUGGESTED_LINE_TOTAL)} per pesanan). Isi 1 bila tanpa batasan.`
+                      : 'Isi 1 bila pembeli boleh membeli satuan.'}
+                  </p>
+                  <FieldError message={shownError('minOrderQty')} />
                 </div>
               </div>
 

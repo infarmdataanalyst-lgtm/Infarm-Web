@@ -15,6 +15,7 @@
 //   'reviews'  → review create/reply/visibility
 //   'combos'   → combo create/update/delete/toggle
 //   'sales'    → order create/cancel (jumlah terjual berubah)
+//   'settings' → admin menyimpan pengaturan toko (mis. minimum total belanja)
 
 import { unstable_cache } from 'next/cache'
 import { readProducts, getProductById } from './products'
@@ -22,6 +23,7 @@ import { getReviewsByProduct, getProductRatingSummary, getRatingSummaryByProduct
 import { readCombos } from './combos'
 import { getSalesCountByProduct } from './orders'
 import { getVariantsByProduct } from './variants'
+import { getMinOrderAmount } from './settings'
 import type { Product, CatalogCardProduct } from '@/types/product'
 
 // Durasi cache storefront (detik). Data e-commerce tak berubah tiap detik; 30s cukup segar.
@@ -44,6 +46,14 @@ export const getCachedSalesCountByProduct = unstable_cache(
   () => getSalesCountByProduct(),
   ['storefront-sales'],
   { revalidate: REVALIDATE, tags: ['sales'] },
+)
+
+// Minimum total belanja (store_settings). Jarang berubah tapi dibaca di tiap kunjungan
+// keranjang/checkout → cache + tag 'settings' (di-invalidasi saat admin menyimpan pengaturan).
+export const getCachedMinOrderAmount = unstable_cache(
+  () => getMinOrderAmount(),
+  ['storefront-min-order-amount'],
+  { revalidate: REVALIDATE, tags: ['settings'] },
 )
 
 // Peta ringkasan rating (rata-rata + jumlah) per produk untuk kartu katalog beranda.

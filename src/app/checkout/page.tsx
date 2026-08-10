@@ -20,6 +20,7 @@ import ShippingOptions from '@/components/checkout/ShippingOptions'
 import PaymentModal from '@/components/checkout/PaymentModal'
 import PhoneConfirmModal from '@/components/checkout/PhoneConfirmModal'
 import { validateAddress } from '@/lib/checkout-validation'
+import { formatRupiah } from '@/lib/format'
 import { type ShippingCourier } from '@/lib/mengantar'
 import { dummyProducts } from '@/lib/data/dummy-products'
 import {
@@ -185,6 +186,23 @@ export default function CheckoutPage() {
     [orderItems, freeCheckoutItems],
   )
 
+  // === Minimum total belanja (pengaturan toko) ===
+  // Dibandingkan dengan SUBTOTAL BARANG (bukan subtotal+ongkir) agar pesan 'kurang Rp X lagi'
+  // sama persis dengan yang tampil di keranjang, dan tetap konsisten dengan validasi server.
+  const [minOrderAmount, setMinOrderAmount] = useState(0)
+  useEffect(() => {
+    let active = true
+    fetch('/api/settings/min-order')
+      .then((res) => res.json())
+      .then((data: { minOrderAmount?: number }) => {
+        if (active && typeof data.minOrderAmount === 'number') setMinOrderAmount(data.minOrderAmount)
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [])
+
   // === Turunan pilihan ===
   const selectedPayment =
     PAYMENT_METHODS.find((m) => m.id === selectedPaymentId) ?? PAYMENT_METHODS[0]
@@ -194,7 +212,9 @@ export default function CheckoutPage() {
   const total = subtotal + (selectedCourier?.price ?? 0)
 
   // Tombol bayar aktif hanya bila alamat valid DAN kurir sudah dipilih
-  const canPay = isAddressValid && selectedCourier !== null
+  // Kekurangan agar mencapai minimum belanja (0 = sudah terpenuhi)
+  const minOrderShortfall = Math.max(0, minOrderAmount - subtotal)
+  const canPay = isAddressValid && selectedCourier !== null && minOrderShortfall === 0
 
   // Sembunyikan toast otomatis setelah beberapa detik
   useEffect(() => {
@@ -220,6 +240,13 @@ export default function CheckoutPage() {
     // Kurir wajib dipilih sebelum bayar (lapisan kedua selain styling tombol)
     if (!selectedCourier) {
       setToast('Pilih kurir pengiriman terlebih dahulu')
+      return
+    }
+
+    // Minimum belanja belum tercapai → hentikan sebelum request apa pun dikirim.
+    // Server tetap memvalidasi ulang di /api/orders/create (jangan hanya andalkan guard ini).
+    if (minOrderShortfall > 0) {
+      setToast(`Minimal belanja ${formatRupiah(minOrderAmount)} untuk melanjutkan pembayaran`)
       return
     }
 
@@ -334,7 +361,14 @@ export default function CheckoutPage() {
       )}
 
       {/* Bilah bayar bawah (sticky) */}
-      <CheckoutBottomBar total={total} onPay={handlePay} isPaying={isPaying} canPay={canPay} />
+      <CheckoutBottomBar
+        total={total}
+        onPay={handlePay}
+        isPaying={isPaying}
+        canPay={canPay}
+        minOrderAmount={minOrderAmount}
+        minOrderShortfall={minOrderShortfall}
+      />
 
       {/* === Modal Pembayaran === */}
       <PaymentModal
