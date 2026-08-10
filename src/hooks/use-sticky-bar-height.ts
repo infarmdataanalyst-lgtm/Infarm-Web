@@ -17,12 +17,19 @@ export const STICKY_BAR_HEIGHT_VAR = '--sticky-bar-h'
 // Mengembalikan ref yang harus dipasang pada elemen terluar bilah bawah.
 // Tinggi elemen dipantau ResizeObserver; saat komponen dilepas (pindah halaman), variable direset
 // ke 0 sehingga elemen mengambang kembali turun ke posisi normal.
-export function useStickyBarHeight<T extends HTMLElement>() {
+//
+// `enabled` untuk bilah yang hanya mengambang di sebagian breakpoint (mis. StickyBuyBar yang jadi
+// statis di desktop): saat false, variable ditahan 0 supaya elemen mengambang tidak terangkat oleh
+// bilah yang sebenarnya sudah ikut mengalir bersama konten.
+export function useStickyBarHeight<T extends HTMLElement>(enabled = true) {
   const ref = useRef<T>(null)
 
   useEffect(() => {
     const el = ref.current
-    if (!el) return
+    if (!el || !enabled) {
+      document.documentElement.style.setProperty(STICKY_BAR_HEIGHT_VAR, '0px')
+      return
+    }
 
     const root = document.documentElement
     const write = () => root.style.setProperty(STICKY_BAR_HEIGHT_VAR, `${el.offsetHeight}px`)
@@ -35,7 +42,7 @@ export function useStickyBarHeight<T extends HTMLElement>() {
       observer.disconnect()
       root.style.setProperty(STICKY_BAR_HEIGHT_VAR, '0px')
     }
-  }, [])
+  }, [enabled])
 
   return ref
 }

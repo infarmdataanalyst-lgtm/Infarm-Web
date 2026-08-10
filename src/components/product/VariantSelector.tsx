@@ -44,7 +44,7 @@ export default function VariantSelector({
     <section className="bg-white px-4 pb-4">
       {/* Harga + stok varian terpilih (reaktif) — tampil di semua ukuran layar */}
       <div className="mb-3 flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span className="text-2xl font-bold text-red-500">
+        <span className="text-2xl font-bold text-brand-primary">
           {active ? formatRupiah(active.price) : '-'}
         </span>
         {active && (

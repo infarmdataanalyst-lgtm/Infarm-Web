@@ -36,7 +36,7 @@ export default function LegalPageShell({
           </Link>
           <Link href="/" className="flex items-center gap-2">
             <Image src="/images/logo-infarm.png" alt="Logo Infarm" width={32} height={32} priority unoptimized className="h-8 w-auto object-contain" />
-            <span className="text-lg font-bold tracking-tight sm:text-xl">infarm</span>
+            <span className="font-heading text-lg font-bold tracking-tight sm:text-xl">infarm</span>
           </Link>
         </div>
       </header>
@@ -46,29 +46,36 @@ export default function LegalPageShell({
         <p className="mt-1 text-sm text-zinc-500">Terakhir diperbarui: {LEGAL_EFFECTIVE_DATE}</p>
         <p className="mt-4 text-sm leading-relaxed text-zinc-700">{intro}</p>
 
-        {/* Daftar isi — anchor ke tiap section di bawah */}
-        <nav aria-label="Daftar isi" className="mt-6 rounded-2xl border border-brand-light bg-white p-4 shadow-sm">
-          <h2 className="text-sm font-bold uppercase tracking-wide text-zinc-500">Daftar Isi</h2>
-          <ol className="mt-3 space-y-1.5">
-            {toc.map((item, i) => (
-              <li key={item.id} className="flex gap-2 text-sm">
-                <span className="shrink-0 font-bold text-brand-primary">{i + 1}.</span>
-                <a href={`#${item.id}`} className="text-zinc-700 underline decoration-brand-light underline-offset-2 transition hover:text-brand-primary">
-                  {item.label}
-                </a>
-              </li>
-            ))}
-          </ol>
-        </nav>
+        {/* SATU kartu putih untuk seluruh dokumen: daftar isi + semua bab. Antar bagian hanya
+            dipisah garis tipis (`divide-y`), bukan kartu terpisah, supaya terbaca sebagai satu
+            naskah utuh tanpa jarak menganggur. */}
+        <div className="mt-6 divide-y divide-zinc-100 rounded-2xl border border-brand-light bg-white p-4 shadow-sm sm:p-6">
+          {/* Daftar isi — anchor ke tiap section di bawah */}
+          <nav aria-label="Daftar isi" className="pb-5">
+            <h2 className="text-sm font-bold uppercase tracking-wide text-zinc-500">Daftar Isi</h2>
+            <ol className="mt-3 space-y-1.5">
+              {toc.map((item, i) => (
+                <li key={item.id} className="flex gap-2 text-sm">
+                  <span className="shrink-0 font-bold text-brand-primary">{i + 1}.</span>
+                  <a href={`#${item.id}`} className="text-zinc-700 underline decoration-brand-light underline-offset-2 transition hover:text-brand-primary">
+                    {item.label}
+                  </a>
+                </li>
+              ))}
+            </ol>
+          </nav>
 
-        <div className="mt-6 space-y-4">{children}</div>
+          {children}
+        </div>
       </main>
     </div>
   )
 }
 
 // Satu bab dokumen. `id` dipakai sebagai target anchor dari daftar isi.
-// `scroll-mt-16` supaya judul tidak tertutup header fixed saat di-anchor.
+// Tanpa kartu sendiri — bab hidup di dalam kartu putih milik LegalPageShell, dipisah
+// `divide-y` induknya. `scroll-mt-20` supaya judul tidak tertutup header fixed saat di-anchor
+// (lebih besar dari tinggi header karena bab kini punya padding atas).
 export function LegalSection({
   id,
   title,
@@ -79,7 +86,7 @@ export function LegalSection({
   children: React.ReactNode
 }) {
   return (
-    <section id={id} className="scroll-mt-16 rounded-2xl border border-brand-light bg-white p-4 shadow-sm sm:p-5">
+    <section id={id} className="scroll-mt-20 py-5 last:pb-0">
       <h2 className="text-lg font-bold text-zinc-900">{title}</h2>
       <div className="mt-2 space-y-3 text-sm leading-relaxed text-zinc-700">{children}</div>
     </section>

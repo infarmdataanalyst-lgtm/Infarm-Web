@@ -64,7 +64,7 @@ function RecentCard({ product }: { product: Product }) {
           {onSale && (
             <p className="text-xs text-zinc-400 line-through">{formatRupiah(originalPrice)}</p>
           )}
-          <p className="text-base font-bold text-red-500">{formatRupiah(promoPrice)}</p>
+          <p className="text-base font-bold text-brand-primary">{formatRupiah(promoPrice)}</p>
         </div>
       </div>
     </Link>

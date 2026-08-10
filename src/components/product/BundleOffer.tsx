@@ -113,7 +113,7 @@ export default function BundleOffer({
                   Beli bareng <span className="font-semibold">{combo.name}</span>
                 </p>
                 <div className="mt-1 flex flex-wrap items-baseline gap-x-2">
-                  <span className="text-base font-bold text-red-500">{formatRupiah(combo.comboPrice)}</span>
+                  <span className="text-base font-bold text-brand-primary">{formatRupiah(combo.comboPrice)}</span>
                   {savings > 0 && (
                     <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs font-bold text-red-500">
                       Hemat {formatRupiah(savings)}

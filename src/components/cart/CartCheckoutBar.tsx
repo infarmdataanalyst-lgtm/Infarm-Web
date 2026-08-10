@@ -69,7 +69,7 @@ export default function CartCheckoutBar({
           type="button"
           onClick={onCheckout}
           disabled={disabled}
-          className="shrink-0 rounded-xl bg-brand-primary px-6 py-3 text-base font-bold text-white shadow-sm transition hover:brightness-90 active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-zinc-300 disabled:text-zinc-500"
+          className="shrink-0 rounded-xl bg-brand-primary px-6 py-3 font-heading text-base font-bold text-white shadow-sm transition hover:brightness-90 active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-zinc-300 disabled:text-zinc-500"
         >
           Checkout ({selectedCount})
         </button>

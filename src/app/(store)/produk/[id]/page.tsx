@@ -131,8 +131,9 @@ export default async function ProductDetailPage({
   )
 
   return (
-    // pt-14: ruang untuk AppBar fixed (h-14). pb-24: ruang agar konten tak tertutup bilah aksi bawah.
-    <main className="flex flex-1 flex-col bg-brand-surface pt-14 pb-24">
+    // pt-14: ruang untuk AppBar fixed (h-14). pb-24: ruang agar konten tak tertutup bilah aksi
+    // mengambang — hanya perlu di mobile; di desktop (lg+) bilah itu statis, jadi padding dikecilkan.
+    <main className="flex flex-1 flex-col bg-brand-surface pt-14 pb-24 lg:pb-8">
       {/* Container terpusat: full-bleed di mobile, dibatasi lebar di desktop */}
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-2 lg:gap-4 lg:px-6 lg:py-4">
         {/* Bagian atas: 2 kolom sejajar di desktop (foto kiri, info kanan),
@@ -150,10 +151,25 @@ export default async function ProductDetailPage({
               <ProductInfo product={product} soldCount={soldCount} showPrice={!hasVariants} />
               {hasVariants && <VariantSelector productId={product.id} variants={variants} />}
             </div>
+
             {/* 5 — Deskripsi / spesifikasi produk (di bawah info, kolom kanan desktop) */}
             <div className="lg:overflow-hidden lg:rounded-xl">
               <ProductDescription description={product.description} />
             </div>
+
+            {/* 8 + 9 — Tombol aksi + logika simpan ke cookie keranjang.
+                Ditempatkan DI SINI (bukan di akhir halaman) supaya di desktop tombolnya tampil statis
+                tepat di bawah section Deskripsi Produk. Di mobile komponennya `fixed` sehingga keluar
+                dari alur dan tetap menempel di dasar layar — posisinya di markup tidak berpengaruh. */}
+            <StickyBuyBar
+              productId={product.id}
+              price={product.promoPrice}
+              name={product.name}
+              category={product.category}
+              sku={product.sku}
+              minOrderQty={product.minOrderQty ?? 1}
+              variants={variants}
+            />
           </div>
         </div>
 
@@ -173,17 +189,6 @@ export default async function ProductDetailPage({
           />
         </div>
       </div>
-
-      {/* 8 + 9 — Bilah aksi bawah (sticky) + logika simpan ke cookie keranjang */}
-      <StickyBuyBar
-        productId={product.id}
-        price={product.promoPrice}
-        name={product.name}
-        category={product.category}
-        sku={product.sku}
-        minOrderQty={product.minOrderQty ?? 1}
-        variants={variants}
-      />
 
       {/* Catat produk ini ke riwayat "pernah dilihat" (localStorage, sisi-klien) */}
       <TrackProductView productId={product.id} />

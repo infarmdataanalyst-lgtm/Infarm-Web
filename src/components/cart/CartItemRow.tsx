@@ -96,7 +96,7 @@ export default function CartItemRow({
 
         {/* Harga jual (merah) + harga coret */}
         <div className="mt-1 flex items-baseline gap-2">
-          <span className="text-base font-bold text-red-500">{formatRupiah(price)}</span>
+          <span className="text-base font-bold text-brand-primary">{formatRupiah(price)}</span>
           {originalPrice > price && (
             <span className="text-xs text-zinc-400 line-through">{formatRupiah(originalPrice)}</span>
           )}

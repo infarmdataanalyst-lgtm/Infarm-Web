@@ -73,7 +73,7 @@ export default function CheckoutBottomBar({
           onClick={onPay}
           disabled={isPaying}
           aria-disabled={!canPay}
-          className={`ml-auto shrink-0 rounded-xl bg-brand-primary px-8 py-3 text-base font-bold text-white shadow-sm transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-70 ${
+          className={`ml-auto shrink-0 rounded-xl bg-brand-primary px-8 py-3 font-heading text-base font-bold text-white shadow-sm transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-70 ${
             dimmed ? 'cursor-not-allowed opacity-60' : 'hover:brightness-90'
           }`}
         >

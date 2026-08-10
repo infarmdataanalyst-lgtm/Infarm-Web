@@ -12,7 +12,8 @@
       "Read(//tmp/**)",
       "Bash(npm install *)",
       "Bash(curl -s http://localhost:3000/)",
-      "PowerShell(npx tsc --noEmit 2>&1)"
+      "PowerShell(npx tsc --noEmit 2>&1)",
+      "PowerShell($r = Invoke-WebRequest \"http://localhost:3000/\" -UseBasicParsing -TimeoutSec 120; $css = [regex]::Matches\\($r.Content,'/_next/static/[^\"]+\\\\.css'\\) | ForEach-Object { $_.Value } | Select-Object -Unique; $css; foreach \\($c in $css\\) { $t = \\(Invoke-WebRequest \"http://localhost:3000$c\" -UseBasicParsing\\).Content; \"$c -> montserrat=$\\([regex]::Matches\\($t,'Montserrat'\\).Count\\) fontHeadingVar=$\\([regex]::Matches\\($t,'--font-heading'\\).Count\\) fontHeadingUtil=$\\([regex]::Matches\\($t,'\\\\.font-heading'\\).Count\\)\" })"
     ]
   }
 }

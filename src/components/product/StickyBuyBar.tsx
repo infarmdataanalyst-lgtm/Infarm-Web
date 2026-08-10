@@ -1,12 +1,16 @@
 'use client'
 
 // src/components/product/StickyBuyBar.tsx
-// Bilah aksi bawah yang menempel (fixed/sticky) di dasar layar: "Beli Langsung" & "+ Keranjang".
+// Bilah aksi produk: "Beli Langsung" & "+ Keranjang".
+// MOBILE (< lg): mengambang (fixed) di dasar layar — layar sempit, CTA harus selalu terjangkau.
+// DESKTOP (lg+): STATIS, mengalir di kolom kanan tepat di bawah harga/rating/terjual, karena di
+// layar lebar bilah mengambang malah menutupi konten saat men-scroll.
 // Tombol "+ Keranjang" memicu animasi terbang ke ikon keranjang; cookie & badge baru di-update
 // SAAT animasi tiba di ikon (lihat handleFlyComplete).
 
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useMediaQuery } from '@/hooks/use-media-query'
 import { addToCart, setCheckoutItems, showCartToast, CART_BUMP_EVENT } from '@/lib/cart-client'
 import { trackAddToCart } from '@/lib/analytics'
 import { formatRupiah } from '@/lib/format'
@@ -61,21 +65,16 @@ export default function StickyBuyBar({
     getServerSelectedVariant,
   )
 
-  // Deteksi mobile (< lg) → di mobile, pilihan varian muncul lewat bottom-sheet, bukan inline.
-  const [isMobile, setIsMobile] = useState(false)
-  useEffect(() => {
-    const mq = window.matchMedia('(max-width: 1023px)')
-    const update = () => setIsMobile(mq.matches)
-    update()
-    mq.addEventListener('change', update)
-    return () => mq.removeEventListener('change', update)
-  }, [])
+  // Deteksi mobile (< lg): dipakai dua hal — pilihan varian lewat bottom-sheet (bukan chip inline)
+  // DAN penentuan apakah bilah ini sedang mengambang.
+  const isMobile = useMediaQuery('(max-width: 1023px)')
 
   // Bottom-sheet varian (mobile): intent 'add' (ke keranjang) atau 'buy' (beli langsung).
   const [sheetIntent, setSheetIntent] = useState<'add' | 'buy' | null>(null)
 
-  // Publikasikan tinggi bilah ke --sticky-bar-h (dipakai FloatingWhatsApp agar tak bertabrakan)
-  const barRef = useStickyBarHeight<HTMLDivElement>()
+  // Publikasikan tinggi bilah ke --sticky-bar-h (dipakai FloatingWhatsApp agar tak bertabrakan).
+  // Hanya saat mengambang: di desktop bilah ikut mengalir, jadi tak ada yang perlu dihindari.
+  const barRef = useStickyBarHeight<HTMLDivElement>(isMobile)
 
   // Seed varian default ke store (jaga-jaga bila StickyBuyBar ter-mount sebelum VariantSelector).
   useEffect(() => {
@@ -189,16 +188,24 @@ export default function StickyBuyBar({
 
   return (
     <>
-      {/* ref: mendaftarkan tinggi bilah ke --sticky-bar-h agar FloatingWhatsApp naik di atasnya */}
-      <div ref={barRef} className="fixed inset-x-0 bottom-0 z-40 border-t border-zinc-200 bg-white">
+      {/* ref: mendaftarkan tinggi bilah ke --sticky-bar-h agar FloatingWhatsApp naik di atasnya.
+          `lg:static` melepas bilah dari mode mengambang di desktop — ia lalu mengalir sebagai blok
+          biasa di kolom kanan (lihat penempatannya di halaman detail produk). Di desktop latar putih,
+          border, dan padding samping DILEPAS supaya yang tampak murni tombolnya saja, bukan panel. */}
+      <div
+        ref={barRef}
+        className="fixed inset-x-0 bottom-0 z-40 border-t border-zinc-200 bg-white lg:static lg:z-auto lg:border-0 lg:bg-transparent"
+      >
         {/* Info minimum pembelian — muncul tepat di atas tombol beli agar pembeli tahu sebelum
             menekan, bukan kaget saat melihat jumlah di keranjang. */}
         {addQty > 1 && (
-          <p className="mx-auto max-w-6xl px-4 pt-2 text-xs text-orange-700">
+          <p className="mx-auto max-w-6xl px-4 pt-2 text-xs text-orange-700 lg:mx-0 lg:max-w-none lg:px-0 lg:pt-0">
             Min. beli {addQty} pcs — sekali tambah langsung {addQty} pcs.
           </p>
         )}
-        <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
+        {/* max-w-6xl+mx-auto hanya relevan saat bilah selebar layar (mobile); di desktop bilah sudah
+            dibatasi lebar kolomnya sendiri. */}
+        <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3 lg:mx-0 lg:max-w-none lg:px-0 lg:py-0">
           {barOutOfStock ? (
             // Varian terpilih habis → satu tombol nonaktif "Stok Habis"
             <button
@@ -214,7 +221,7 @@ export default function StickyBuyBar({
               <button
                 type="button"
                 onClick={handleBuyNow}
-                className="flex-1 rounded-xl border-2 border-zinc-900 bg-white py-3 text-base font-bold text-zinc-900 transition hover:bg-zinc-50 active:scale-[0.99]"
+                className="flex-1 rounded-xl border-2 border-zinc-900 bg-white py-3 font-heading text-base font-bold text-zinc-900 transition hover:bg-zinc-50 active:scale-[0.99]"
               >
                 Beli Langsung
               </button>
@@ -224,7 +231,7 @@ export default function StickyBuyBar({
                 ref={addButtonRef}
                 type="button"
                 onClick={handleAddToCart}
-                className="flex-1 rounded-xl bg-brand-primary py-3 text-base font-bold text-white shadow-sm transition hover:brightness-90 active:scale-[0.99]"
+                className="flex-1 rounded-xl bg-brand-primary py-3 font-heading text-base font-bold text-white shadow-sm transition hover:brightness-90 active:scale-[0.99]"
               >
                 {justAdded ? '✓ Ditambahkan' : '+ Keranjang'}
               </button>
@@ -264,7 +271,7 @@ export default function StickyBuyBar({
 
             {/* Harga + stok varian terpilih */}
             <div className="mb-4 flex flex-wrap items-baseline gap-x-2">
-              <span className="text-2xl font-bold text-red-500">{formatRupiah(effectivePrice)}</span>
+              <span className="text-2xl font-bold text-brand-primary">{formatRupiah(effectivePrice)}</span>
               <span className={`text-sm ${outOfStock ? 'text-red-500' : 'text-zinc-500'}`}>
                 {outOfStock ? 'Stok habis' : `Stok: ${activeVariant?.stock ?? 0}`}
               </span>
@@ -277,7 +284,7 @@ export default function StickyBuyBar({
               type="button"
               onClick={confirmSheet}
               disabled={outOfStock}
-              className="mt-5 w-full rounded-xl bg-brand-primary py-3 text-base font-bold text-white transition hover:brightness-90 active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-400"
+              className="mt-5 w-full rounded-xl bg-brand-primary py-3 font-heading text-base font-bold text-white transition hover:brightness-90 active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-400"
             >
               {outOfStock
                 ? 'Stok Habis'

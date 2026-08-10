@@ -183,8 +183,8 @@ src/
 │   │   ├── promotions/          # create | update | delete | toggle | list | active (storefront)
 │   │   └── mengantar/              # address/search (CORS-blocked → proxied) |
 │   │                               #   shipping/estimate (proxy cek ongkir → titik rate limit)
-│   ├── layout.tsx                # Root layout (font, metadata)
-│   └── globals.css               # Tailwind v4 + @config tailwind.config.ts
+│   ├── layout.tsx                # Root layout (Montserrat + Geist Sans/Mono, metadata)
+│   └── globals.css               # Tailwind v4 + @config tailwind.config.ts + token font & base h1–h4
 ├── components/
 │   ├── home/                     # Homepage: HeroSection (dual-image bg + CTA), HeroStats (3 indicator
 │   │                             #   box + count-up native), ValuePropositionBanner (grid desktop/carousel
@@ -193,6 +193,8 @@ src/
 │   ├── product/                  # ProductCard (harga hijau + coret inline + rating|terjual),
 │   │                             #   ProductCatalog (filter lengkap: sidebar/sheet, multi-kategori, harga,
 │   │                             #   sort Listbox HeadlessUI), ProductImageSlider, ProductInfo,
+│   │                             #   ProductDescription (client, lipat 5 baris + "Lihat Selengkapnya"),
+│   │                             #   StickyBuyBar (mengambang < lg, statis di lg+ bawah deskripsi),
 │   │                             #   TrackProductView. (CategoryFilterTabs DIHAPUS)
 │   ├── cart/                     # Keranjang: CartHeader (teks putih), CartItemRow & CartCheckoutBar
 │   │                             #   (checkbox custom: box putih border, centang putih di box hijau),
@@ -691,7 +693,7 @@ deskripsi 20–2000, harga 100–99.999.999, stok 0–999.999, `MAX_PRODUCT_IMAG
 ## Header & Search Persisten (storefront)
 
 - Header storefront = **`AppBar`** (Server Component, dirender di `(store)/layout.tsx`, fixed, `bg-brand-header`
-  hijau `#46B33C` + teks/ikon putih, `rounded-b-[2rem]`, `backdrop-blur`). Layout: `[hamburger+logo] — [HeaderSearch] — [cart+profil]`.
+  hijau `#00843b` + teks/ikon putih, `rounded-b-[2rem]`, `backdrop-blur`). Layout: `[hamburger+logo] — [HeaderSearch] — [cart+profil]`.
 - **Halaman mana yang memakai `AppBar`**: HANYA route group `(store)` — beranda, `/products`,
   `/produk/[id]`. Halaman di luar group punya header sendiri: `/keranjang` → `CartHeader`,
   `/checkout` → `CheckoutHeader`, `/pesanan-saya` & layanan pesanan → header masing-masing,
@@ -764,13 +766,44 @@ deskripsi 20–2000, harga 100–99.999.999, stok 0–999.999, `MAX_PRODUCT_IMAG
     `syncUrl` agar klik kategori sama setelah filter diubah manual tetap terdeteksi.
 - Label jumlah: `"{n} produk"` (+ ` · {Kategori}` bila tepat 1 kategori aktif). `CategoryFilterTabs` (kapsul lama) DIHAPUS.
 
+## Halaman Detail Produk — CTA & Deskripsi
+
+- **Tombol beli responsif per breakpoint** (`StickyBuyBar`, satu instance saja):
+  - **Mobile (< lg)**: `fixed inset-x-0 bottom-0 z-40` + latar putih & `border-t` — mengambang di
+    dasar layar, seperti sebelumnya.
+  - **Desktop (lg+)**: `lg:static lg:border-0 lg:bg-transparent` → mengalir sebagai blok biasa di
+    kolom kanan, **di bawah section Deskripsi Produk**, tanpa panel putih (murni dua tombol).
+    Bilah mengambang di layar lebar justru menutupi konten saat men-scroll.
+  - Karena `position: fixed` mengeluarkan elemen dari alur, **letaknya di markup tidak memengaruhi
+    tampilan mobile** — itulah kenapa satu instance cukup, tak perlu duplikat komponen per breakpoint.
+    Syaratnya: jangan letakkan di dalam ancestor ber-`transform`/`filter`/`backdrop-filter`
+    (akan jadi containing block, lihat catatan `MenuDrawer`).
+  - `<main>` memakai `pb-24 lg:pb-8`; `useStickyBarHeight(isMobile)` menahan `--sticky-bar-h` di 0
+    saat desktop. Deteksi breakpoint pakai `useMediaQuery('(max-width: 1023px)')`, satu flag untuk
+    dua keperluan (mode mengambang + bottom-sheet varian).
+- **Deskripsi bisa dilipat** (`ProductDescription`, kini `'use client'`): dipotong 5 baris
+  (`max-height: calc(5 * 1.625 * 0.875rem)` — dihitung dari `text-sm` × `leading-relaxed` agar
+  memotong pas di batas baris), gradient fade putih di tepi bawah, tombol "Lihat Selengkapnya" ⇄
+  "Sembunyikan", transisi `max-height` 300ms. Berlaku di semua viewport.
+  - Deteksi "perlu tombol atau tidak" = `scrollHeight > clientHeight` diukur di **ref callback**
+    (bukan `useEffect` — lint `react-hooks/set-state-in-effect` melarang `setState` di dalam efek),
+    dengan `ResizeObserver` untuk perubahan lebar. **Jangan** menebak dari jumlah karakter: deskripsi
+    berisi baris baru & baris pendek ("Isi bersih: 50 gr") sehingga panjang teks ≠ jumlah baris.
+  - Pengukuran di-skip saat sedang terbuka (dijaga `expandedRef`); tanpa itu `scrollHeight ==
+    clientHeight` dan tombolnya hilang sendiri begitu diklik.
+  - Konsekuensi: tombol baru muncul **setelah hidrasi** (tak ada di HTML server). Tanpa JS deskripsi
+    tetap terpotong 5 baris.
+
 ## Halaman Legal (Kebijakan Privasi & Syarat/Ketentuan)
 
 - Rute: `/privacy-policy` & `/terms-and-conditions` (Server Component, konten statis, di LUAR route
   group `(store)` → punya header hijau sendiri seperti `/pesanan-saya`).
-- Kerangka bersama: **`src/components/legal/LegalPageShell.tsx`** — header + judul + tanggal berlaku
-  + daftar isi anchor + `LegalSection` (`scroll-mt-16` agar judul tak tertutup header fixed),
-  `LegalList`, `LegalExternalLink` (selalu `target="_blank" rel="noopener noreferrer"`).
+- Kerangka bersama: **`src/components/legal/LegalPageShell.tsx`** — header + judul + tanggal berlaku,
+  lalu **SATU kartu putih** berisi daftar isi anchor + seluruh `LegalSection`, dipisah garis tipis
+  (`divide-y`) bukan kartu per topik. Tiap `LegalSection` = `py-5 last:pb-0` + `scroll-mt-20`
+  (lebih besar dari tinggi header karena bab punya padding atas). Anak PERTAMA kartu adalah `<nav>`
+  daftar isi, jadi jangan pasang `first:pt-0` di section. Plus `LegalList`, `LegalExternalLink`
+  (selalu `target="_blank" rel="noopener noreferrer"`).
 - Konstanta bersama: **`src/lib/data/legal.ts`** — `LEGAL_CONTACT_EMAIL`/`LEGAL_CONTACT_PHONE`
   (**PLACEHOLDER**, ganti sebelum go-live), `LEGAL_EFFECTIVE_DATE` (perbarui manual tiap revisi
   material), `PRIVACY_POLICY_PATH`/`TERMS_PATH` (dipakai footer + bilah checkout), `THIRD_PARTY_LINKS`.
@@ -790,7 +823,7 @@ Bug nyata yang pernah terjadi: bottom-sheet `z-50` di bawah `FloatingWhatsApp` `
 
 | Lapis | z-index | Contoh |
 |---|---|---|
-| Konten & bilah aksi bawah | `z-10`–`z-40` | `StickyBuyBar` (40), `CartCheckoutBar`/`CheckoutBottomBar` (30) |
+| Konten & bilah aksi bawah | `z-10`–`z-40` | `StickyBuyBar` (40, **hanya < lg**), `CartCheckoutBar`/`CheckoutBottomBar` (30) |
 | Header | `z-50` | `AppBar`, header halaman |
 | Tombol mengambang | `z-[60]` | `FloatingWhatsApp` |
 | Overlay & backdrop | `z-[70]` | backdrop `MenuDrawer`, overlay `HeaderSearch` mobile, `PhoneConfirmModal` |
@@ -826,6 +859,9 @@ mengambang. Jangan menambah lapis baru tanpa memperbarui tabel ini.
   `--sticky-bar-h` di `<html>`, reset `0px` saat unmount). Dipakai `StickyBuyBar` (detail produk) &
   `CartCheckoutBar` (keranjang). **Halaman baru dengan bilah bawah cukup memanggil hook ini** —
   jangan hardcode tinggi atau daftar route di `FloatingWhatsApp`.
+  Hook menerima argumen **`enabled`** (default `true`) untuk bilah yang mengambang hanya di sebagian
+  breakpoint: saat `false`, variable ditahan `0px`. Dipakai `StickyBuyBar` (`useStickyBarHeight(isMobile)`)
+  karena di desktop bilahnya statis — tanpa itu tombol WA terangkat tanpa ada yang perlu dihindari.
   Bubble "Pesan melalui CS kami" muncul ~2.5s, auto-hide, tombol × tutup permanen.
 - **Link CS** = constant **`WHATSAPP_CS_LINK`** di `FloatingWhatsApp.tsx` (placeholder `/404`; ganti ke `https://wa.me/62…` saat siap).
 
@@ -847,7 +883,8 @@ mengambang. Jangan menambah lapis baru tanpa memperbarui tabel ini.
 - [x] Halaman beranda (homepage) — Hero (bg dual-image) + 3 indicator box count-up (`HeroStats`)
 - [x] Halaman katalog produk (`/products`) — filter lengkap: sidebar desktop / bottom-sheet mobile,
       kategori multi-checkbox, rentang harga, sort (Listbox HeadlessUI), chip kategori aktif
-- [x] Halaman detail produk (`/produk/[id]`)
+- [x] Halaman detail produk (`/produk/[id]`) — CTA beli mengambang di mobile & statis di desktop
+      (bawah deskripsi), deskripsi dilipat 5 baris + "Lihat Selengkapnya"
 - [x] Floating WhatsApp CS di semua halaman ecommerce (`FloatingWhatsApp`, kanan bawah; link CS placeholder `/404`)
 - [x] Halaman keranjang (`/keranjang`) — data dari cookie; desktop 2 kolom (produk kiri, "Dilihat Sebelumnya" kanan), mobile 1 kolom
 - [x] Mini cart dropdown di header (desktop ≥640px) — `MiniCart`; mobile tetap navigate ke `/keranjang`
@@ -956,21 +993,25 @@ Semua halaman wajib menggunakan palet warna berikut. Jangan menggunakan warna di
 
 | Nama | HEX | Kegunaan |
 |------|-----|----------|
-| `green-primary` | `#46B33C` | Background section, tombol utama, navbar, footer |
+| `green-primary` | `#00843b` | Background section, tombol utama, navbar, footer, **harga jual** |
 | `green-light` | `#96D296` | Background card, badge, hover state |
 | `green-surface` | `#F5FFEF` | Background halaman (putih kehijauan), input background |
 | `white` | `#FFFFFF` | Teks di atas background hijau, card background |
 | `text-dark` | `#1A1A1A` | Teks utama di atas background putih/terang |
 | `text-muted` | `#6B7280` | Teks sekunder, harga asli (coret), placeholder |
-| `red-promo` | `#EF4444` | Badge promo, harga diskon, notifikasi error |
+| `red-promo` | `#EF4444` | Badge promo & badge persentase diskon, notifikasi error |
 
 ### Aturan Penggunaan Warna
 
 - Background halaman default: `#F5FFEF` (bukan pure white `#FFFFFF`)
-- Tombol primary: background `#46B33C`, teks `#FFFFFF`
-- Tombol hover: background sedikit lebih gelap dari `#46B33C` (gunakan `brightness-90`)
+- Tombol primary: background `#00843b`, teks `#FFFFFF`
+- Tombol hover: background sedikit lebih gelap dari `#00843b` (gunakan `brightness-90`)
 - Card produk: background `#FFFFFF` dengan border atau shadow tipis
-- Section banner (value proposition, footer): background `#46B33C`, teks `#FFFFFF`
+- Section banner (value proposition, footer): background `#00843b`, teks `#FFFFFF`
+- **Harga jual SELALU `text-brand-primary`** (hijau), bukan merah — konsisten di kartu produk,
+  detail produk (harga utama/varian/combo), keranjang, dan ringkasan checkout. Merah hanya untuk
+  **badge persentase diskon** (`-25%`), teks "Stok habis", pesan error, dan ikon hapus item.
+  Harga asli yang dicoret tetap `text-zinc-400`
 - Card fitur di dalam section hijau: background `#96D296`
 - **Jangan** menggunakan warna biru, ungu, atau warna brand lain tanpa konfirmasi
 - **Pengecualian fungsional** (sudah disepakati): aksi destruktif memakai `rose` (mis. tombol
@@ -988,9 +1029,13 @@ theme: {
   extend: {
     colors: {
       brand: {
-        primary: '#46B33C',   // hijau utama
+        primary: '#00843b',   // hijau utama
         light: '#96D296',     // hijau muda / card
         surface: '#F5FFEF',   // background halaman
+        soil: '#6B4E3D',      // cokelat tanah — eyebrow/aksen hangat
+        cream: '#EDE3D0',     // krem biji — background lembut alternatif
+        dark: '#3B4A2E',      // hijau zaitun gelap
+        header: '#00843b',    // background header storefront
       }
     }
   }
@@ -998,6 +1043,35 @@ theme: {
 ```
 
 Gunakan class `bg-brand-primary`, `text-brand-primary`, `bg-brand-light`, `bg-brand-surface` di seluruh project.
+
+> **Kalau hex brand diubah**, perbarui tabel palet + blok di atas sekaligus. Satu tempat yang
+> TIDAK ikut token: `src/emails/order-confirmation.html` (inline CSS, `#46b33c`) — klien email tak
+> mengenal variabel CSS, jadi hex di situ harus diganti manual.
+
+### Tipografi (sudah terpasang)
+
+Dua font, dibagi menurut peran. Terpasang lewat `next/font/google` di `src/app/layout.tsx`.
+
+| Peran | Font | Cara pakai |
+|---|---|---|
+| Judul & CTA utama (identitas merek) | **Montserrat** (variable, `display: swap`) | token `--font-heading` → utility `font-heading` |
+| Teks isi (paragraf, label, tabel) | **Geist Sans** | `--font-sans`, dipakai `body` |
+| Angka teknis (SKU, resi, invoice) | **Geist Mono** | utility `font-mono` |
+
+- **`h1`–`h4` otomatis** memakai font merek lewat aturan `@layer base` di `globals.css` — jangan
+  tambahkan `font-heading` satu per satu di komponen. **JANGAN pakai `font-sans` pada heading**:
+  utility class menang atas aturan base, jadi heading itu akan luput dari font merek (bug ini pernah
+  terjadi di headline `HeroSection`).
+- **Tombol TIDAK diikutkan** di aturan base. Hanya CTA utama yang diberi `font-heading` eksplisit
+  (`StickyBuyBar`, `CartCheckoutBar`, `CheckoutBottomBar`, `MiniCart`, CTA hero). Tombol kecil
+  (stepper qty, tutup modal, aksi tabel OMS) sengaja tetap netral & padat.
+- Wordmark teks "infarm" (footer, `LegalPageShell`) memakai `font-heading`.
+- `body` mengikuti `var(--font-sans)`; Arial hanya fallback. **Jangan hardcode `font-family` di
+  `body`** — dulu `body { font-family: Arial }` menimpa font next/font sehingga unduhannya sia-sia.
+- **Ganti font merek** (mis. ke font berlisensi seperti Mont dari Fontfabric) cukup di dua tempat:
+  deklarasi font di `layout.tsx` + nilai `--font-heading` di `globals.css`. Komponen tak perlu
+  disentuh. Font komersial WAJIB dari lisensi *webfont* yang dibeli, self-host via `next/font/local`
+  di `src/fonts/` — jangan pakai file dari situs unduhan gratis.
 
 ---
 

@@ -2,11 +2,22 @@
 // Root layout aplikasi infarm — memuat font global, globals.css, dan metadata default situs.
 
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist, Geist_Mono, Montserrat } from "next/font/google";
 import GoogleAnalyticsGate from "@/components/analytics/GoogleAnalyticsGate";
 import FloatingWhatsApp from "@/components/ui/FloatingWhatsApp";
 import "./globals.css";
 
+// Font identitas merek: dipakai untuk judul & tombol utama (class `font-heading`), BUKAN teks isi —
+// Montserrat lebih lebar dari sans netral, sehingga paragraf panjang (deskripsi produk, halaman
+// legal) jadi terlalu memanjang bila memakainya. Variable font: 100–900 dalam satu file, jadi
+// font-bold/font-extrabold tak menambah request.
+const montserrat = Montserrat({
+  variable: "--font-montserrat",
+  subsets: ["latin"],
+  display: "swap", // teks langsung tampil dengan fallback, tak ada jeda kosong
+});
+
+// Font teks isi (paragraf, label, tabel) — netral & padat.
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
@@ -38,7 +49,7 @@ export default function RootLayout({
   return (
     <html
       lang="id"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} ${montserrat.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
         {children}

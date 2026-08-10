@@ -82,7 +82,8 @@ export default function Footer() {
         <div className="mt-10 grid grid-cols-1 gap-8 border-t border-white/20 pt-8 sm:grid-cols-2">
           {/* Brand + deskripsi + sosmed */}
           <div>
-            <p className="text-3xl font-bold lowercase">infarm</p>
+            {/* Wordmark → font merek (bukan font teks isi) */}
+            <p className="font-heading text-3xl font-bold lowercase">infarm</p>
             <p className="mt-3 max-w-md text-sm leading-relaxed text-white/90">
               infarm hadir sebagai teman belajar berkebunmu. Dari langkah pertama hingga panen,
               infarm memberikan solusi lengkap agar siapa pun bisa berkebun dengan mudah dan

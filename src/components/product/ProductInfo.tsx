@@ -33,8 +33,8 @@ export default function ProductInfo({
       {/* === Harga === (disembunyikan bila produk bervarian; harga per-varian di VariantSelector) */}
       {showPrice && (
         <div className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1">
-          {/* Harga jual efektif (promoPrice) — paling menonjol */}
-          <span className="text-2xl font-bold text-red-500">{formatRupiah(promoPrice)}</span>
+          {/* Harga jual efektif (promoPrice) — paling menonjol. Hijau brand, sama dengan kartu produk */}
+          <span className="text-2xl font-bold text-brand-primary">{formatRupiah(promoPrice)}</span>
           {/* Harga asli (coret) */}
           {originalPrice > promoPrice && (
             <span className="text-sm text-zinc-400 line-through">{formatRupiah(originalPrice)}</span>

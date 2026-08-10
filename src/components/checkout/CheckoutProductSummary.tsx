@@ -45,9 +45,10 @@ export default function CheckoutProductSummary({ items }: { items: CheckoutItem[
 
               {/* Harga + kuantitas — item promo tertulis "Gratis" (bukan Rp0 polos) */}
               <div className="mt-auto flex items-center justify-between pt-1">
-                <span
-                  className={`text-sm font-bold ${item.isPromoItem ? 'text-brand-primary' : 'text-red-500'}`}
-                >
+                {/* Harga selalu hijau brand — sama dengan kartu produk di beranda/katalog.
+                    Item promo tetap terbedakan lewat badge "Bonus Promo" & teks "Gratis",
+                    bukan lewat warna. */}
+                <span className="text-sm font-bold text-brand-primary">
                   {item.isPromoItem ? 'Gratis' : formatRupiah(item.price)}
                 </span>
                 <span className="text-xs text-zinc-500">x{item.quantity}</span>

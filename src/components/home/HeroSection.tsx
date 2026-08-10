@@ -77,7 +77,7 @@ export default function HeroSection() {
       <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col justify-between px-4 pt-20 pb-12 sm:px-6 sm:pt-24 lg:px-8">
         {/* Headline marketing — putih, drop-shadow agar tetap terbaca di atas background */}
         <div>
-          <h1 className="max-w-2xl font-sans text-4xl font-extrabold leading-tight tracking-tight text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.45)] sm:text-5xl lg:text-6xl">
+          <h1 className="max-w-2xl font-heading text-4xl font-extrabold leading-tight tracking-tight text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.45)] sm:text-5xl lg:text-6xl">
             Berkebun Jadi Mudah
             <br />
             Pasti Panen
@@ -88,7 +88,7 @@ export default function HeroSection() {
         <div>
           <Link
             href="/products"
-            className="inline-flex items-center gap-2 rounded-full bg-brand-primary px-7 py-3 text-base font-bold text-white shadow-md transition hover:brightness-90 active:scale-[0.98]"
+            className="inline-flex items-center gap-2 rounded-full bg-brand-primary px-7 py-3 font-heading text-base font-bold text-white shadow-md transition hover:brightness-90 active:scale-[0.98]"
           >
             Belanja Sekarang
             <ArrowRightIcon />

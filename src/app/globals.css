@@ -13,6 +13,10 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  /* Font identitas merek (Montserrat) → utility `font-heading`. Dipakai judul & tombol utama saja;
+     teks isi tetap --font-sans agar paragraf panjang tak memanjang. Ganti nilai variabel ini bila
+     nanti pindah ke font berlisensi (mis. Mont) — sisa project tak perlu disentuh. */
+  --font-heading: var(--font-montserrat);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -25,7 +29,21 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  /* Dulu Arial hardcode — itu menimpa font yang sudah dimuat next/font sehingga unduhannya sia-sia.
+     Sekarang mengikuti --font-sans, dengan Arial hanya sebagai fallback bila font gagal dimuat. */
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
+
+/* Judul memakai font merek di semua halaman (storefront & OMS) tanpa perlu menambah class satu per
+   satu. Tombol TIDAK diikutkan di sini — hanya CTA utama yang diberi `font-heading` eksplisit,
+   supaya tombol kecil/ikon (stepper qty, tutup modal, tabel OMS) tetap netral dan padat. */
+@layer base {
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-heading), var(--font-sans), Arial, Helvetica, sans-serif;
+  }
 }
 
 /* Utility untuk menyembunyikan scrollbar pada horizontal carousel (Tailwind v4 tidak menyediakannya bawaan) */

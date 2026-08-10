@@ -161,7 +161,7 @@ export default function MiniCart({ open, onClose }: { open: boolean; onClose: ()
               <button
                 type="button"
                 onClick={handleCheckout}
-                className="flex-1 rounded-xl bg-brand-primary py-2 text-sm font-bold text-white transition hover:brightness-90 active:scale-[0.99]"
+                className="flex-1 rounded-xl bg-brand-primary py-2 font-heading text-sm font-bold text-white transition hover:brightness-90 active:scale-[0.99]"
               >
                 Checkout
               </button>
