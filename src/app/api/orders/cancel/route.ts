@@ -103,7 +103,15 @@ export async function PATCH(request: Request) {
   }
 
   // Lepaskan kembali stok yang dialokasikan untuk pesanan ini (produk OMS).
-  await restoreStock(order.items.map((i) => ({ productId: i.productId, quantity: i.quantity })))
+  // Stok dikembalikan ke GUDANG pemenuh pesanan (order.warehouseId); kosong → gudang default.
+  await restoreStock(
+    order.items.map((i) => ({
+      productId: i.productId,
+      quantity: i.quantity,
+      variantId: i.variantId ?? undefined,
+    })),
+    order.warehouseId,
+  )
 
   // Stok kembali → segarkan cache storefront agar stok tampil akurat.
   revalidatePath('/')

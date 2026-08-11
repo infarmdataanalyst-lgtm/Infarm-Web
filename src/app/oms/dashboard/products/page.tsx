@@ -11,6 +11,10 @@ import Image from 'next/image'
 import Link from 'next/link'
 import OmsHeader from '@/components/oms/OmsHeader'
 import VariantManagerModal from '@/components/oms/VariantManagerModal'
+import WarehouseStockFields, {
+  sumStock,
+  type StockByWarehouse,
+} from '@/components/oms/WarehouseStockFields'
 import { PRODUCT_CATEGORIES, getCategoryLabel } from '@/lib/data/categories'
 import {
   validateName,
@@ -123,6 +127,9 @@ export default function ProductsPage() {
   // Modal Edit
   const [editTarget, setEditTarget] = useState<Product | null>(null)
   const [form, setForm] = useState<EditForm | null>(null)
+  // Stok per gudang (mode multi). Nilai awalnya dimuat WarehouseStockFields dari server.
+  const [stockByWarehouse, setStockByWarehouse] = useState<StockByWarehouse>({})
+  const [warehouseMode, setWarehouseMode] = useState<'single' | 'multi'>('single')
   const [saving, setSaving] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
 
@@ -247,7 +254,12 @@ export default function ProductsPage() {
     setForm(null)
     setEditError(null)
     setEditSkuDuplicate(false)
+    setStockByWarehouse({}) // jangan bocor ke produk berikutnya yang dibuka
   }
+
+  // Stok yang divalidasi & disimpan: mode multi = jumlah semua gudang, single = input tunggal.
+  const effectiveStock: number | '' =
+    warehouseMode === 'multi' ? sumStock(stockByWarehouse) : (form?.stock ?? '')
 
   // Error live per field modal edit (dihitung dari form)
   const editErrors = useMemo(() => {
@@ -258,12 +270,12 @@ export default function ProductsPage() {
       category: validateCategory(form.slug),
       price: validatePrice(form.price),
       originalPrice: validateOriginalPrice(form.originalPrice, form.price),
-      stock: validateStock(form.stock),
+      stock: validateStock(effectiveStock),
       minOrderQty: validateMinOrderQty(form.minOrderQty),
       description: validateDescription(form.description),
       images: validateImages(form.images.length),
     }
-  }, [form])
+  }, [form, effectiveStock])
 
   // SKU error gabungan (format lalu duplikat) + status valid keseluruhan modal
   const editSkuError = editErrors.sku ?? (editSkuDuplicate ? 'SKU sudah digunakan produk lain' : undefined)
@@ -353,7 +365,7 @@ export default function ProductsPage() {
 
     setSaving(true)
     const price = Number(form.price) || 0
-    const stock = Number(form.stock) || 0
+    const stock = Number(effectiveStock) || 0
     const originalPrice = form.originalPrice === '' ? undefined : Number(form.originalPrice)
 
     if (editTarget.persisted) {
@@ -370,6 +382,14 @@ export default function ProductsPage() {
             price,
             originalPrice,
             stock,
+            // Rincian per gudang hanya dikirim di mode multi (server mengabaikan di mode single)
+            stockPerWarehouse:
+              warehouseMode === 'multi'
+                ? Object.entries(stockByWarehouse).map(([warehouseId, stok]) => ({
+                    warehouseId,
+                    stok: stok === '' ? 0 : stok,
+                  }))
+                : undefined,
             minOrderQty: Number(form.minOrderQty) || 1,
             description: form.description.trim(),
             imageUrl: form.images[0],
@@ -730,7 +750,18 @@ export default function ProductsPage() {
                 {editErrors.originalPrice && <p className="mt-1 text-xs font-medium text-red-600">{editErrors.originalPrice}</p>}
               </EditField>
               <EditField label="Sisa Stok (pcs)">
-                <input type="text" inputMode="numeric" value={form.stock} onChange={(e) => { const d = e.target.value.replace(/\D/g, ''); setForm({ ...form, stock: d === '' ? '' : Number(d) }) }} className={modalInput(!!editErrors.stock)} aria-invalid={!!editErrors.stock} />
+                {/* Satu input di mode single; per gudang aktif di mode multi (nilai awal dimuat
+                    dari /api/warehouses/stock oleh komponennya) */}
+                <WarehouseStockFields
+                  productId={editTarget?.persisted ? editTarget.id : undefined}
+                  singleValue={form.stock}
+                  onSingleChange={(v) => setForm({ ...form, stock: v })}
+                  value={stockByWarehouse}
+                  onChange={setStockByWarehouse}
+                  onModeResolved={setWarehouseMode}
+                  inputClassName={modalInput(!!editErrors.stock)}
+                  invalid={!!editErrors.stock}
+                />
                 {editErrors.stock && <p className="mt-1 text-xs font-medium text-red-600">{editErrors.stock}</p>}
               </EditField>
               <EditField label="Minimal Pembelian (pcs)">

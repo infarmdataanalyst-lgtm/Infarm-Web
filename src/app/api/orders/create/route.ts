@@ -13,6 +13,7 @@ import { readProducts } from '@/lib/mock-db/products'
 import { readPromotions } from '@/lib/mock-db/promotions'
 import { getVariantsByIds } from '@/lib/mock-db/variants'
 import { getMinOrderAmount } from '@/lib/mock-db/settings'
+import { resolveWarehouseForOrder } from '@/lib/warehouse'
 import { formatRupiah } from '@/lib/format'
 import { isPromotionExpired } from '@/types/promotion'
 import type { CreateOrderInput, OrderItem, OrderShippingAddress } from '@/types/order'
@@ -209,9 +210,28 @@ export async function POST(request: Request) {
       : 0
   const totalAmount = Math.max(0, subtotal + shippingCost - discount)
 
+  // === Gudang pemenuh pesanan ===
+  // Mode single → langsung gudang default (tanpa query stok/jarak). Mode multi → gudang aktif
+  // terdekat yang stoknya cukup untuk SELURUH item. Di-resolve SETELAH item final (termasuk
+  // produk hadiah promo) agar gudang yang dipilih benar-benar bisa memenuhi seluruh pesanan.
+  // null (mis. tabel gudang belum di-migrate) → RPC memakai gudang default / perilaku lama.
+  const warehouse = await resolveWarehouseForOrder(
+    pricedItems.map((it) => ({
+      productId: it.productId,
+      variantId: it.variantId ?? undefined,
+      quantity: it.quantity,
+    })),
+    body.address.destinationId,
+  )
+
   try {
     // Kirim item & total hasil hitung server (bukan dari client)
-    const saved = await saveOrder({ ...body, items: pricedItems, totalAmount })
+    const saved = await saveOrder({
+      ...body,
+      items: pricedItems,
+      totalAmount,
+      warehouseId: warehouse?.id,
+    })
 
     // Stok produk berkurang → segarkan cache storefront agar stok tampil akurat.
     // Revalidasi halaman detail tiap produk yang dipesan + beranda + katalog.

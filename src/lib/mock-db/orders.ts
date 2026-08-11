@@ -83,6 +83,7 @@ type OrderRow = {
   id_transaksi: string | null
   order_status: string
   destination_id: string | null
+  warehouse_id?: string | null // gudang pemenuh (kolom baru; null untuk pesanan lama)
   created_at: string
 }
 
@@ -199,6 +200,8 @@ function rowToOrder(row: OrderRow, items: OrderItem[]): Order {
   }
   if (row.no_tracking) order.trackingNumber = row.no_tracking
   if (row.id_transaksi) order.transactionId = row.id_transaksi
+  // Gudang pemenuh — dipakai saat pembatalan untuk mengembalikan stok ke gudang yang benar
+  if (row.warehouse_id) order.warehouseId = row.warehouse_id
   order.address = {
     shippingAddress: row.shipping_address ?? '',
     provinsi: row.provinsi ?? '',
@@ -415,6 +418,10 @@ export async function saveOrder(input: CreateOrderInput): Promise<Order> {
 
   // Coba beberapa kali untuk mengatasi tabrakan nomor_invoice acak (unique violation)
   let lastError: { message?: string } | null = null
+  // Jaring pengaman: bila migration gudang belum di-apply, RPC di DB masih versi lama (tanpa
+  // p_warehouse_id) sehingga PostgREST menolak dengan PGRST202/42883 ("function not found").
+  // Saat itu terjadi, param gudang dibuang dan pesanan tetap tersimpan seperti sebelumnya.
+  let sendWarehouseParam = true
   for (let attempt = 0; attempt < 5; attempt++) {
     const invoice = generateInvoiceNumber()
     const { error } = await supabase.rpc('create_order_with_items', {
@@ -435,6 +442,9 @@ export async function saveOrder(input: CreateOrderInput): Promise<Order> {
       p_order_status: statusDb,
       p_destination_id: input.address.destinationId,
       p_items: itemsPayload,
+      // Gudang pemenuh pesanan (hasil resolveWarehouseForOrder). null → RPC memakai gudang default,
+      // jadi pesanan tetap tercatat walau tabel warehouses belum di-seed.
+      ...(sendWarehouseParam ? { p_warehouse_id: input.warehouseId ?? null } : {}),
     })
 
     if (!error) {
@@ -459,6 +469,13 @@ export async function saveOrder(input: CreateOrderInput): Promise<Order> {
     }
     // Tabrakan nomor invoice unik → coba lagi dengan nomor baru
     if (error.code === '23505') {
+      lastError = error
+      continue
+    }
+    // RPC versi lama (migration gudang belum di-apply) → ulangi tanpa param gudang.
+    // PGRST202 = fungsi dengan signature itu tak ditemukan; 42883 = undefined_function.
+    if (sendWarehouseParam && (error.code === 'PGRST202' || error.code === '42883')) {
+      sendWarehouseParam = false
       lastError = error
       continue
     }

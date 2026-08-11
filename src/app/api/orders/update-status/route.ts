@@ -85,7 +85,14 @@ export async function PATCH(request: Request) {
 
   // Bila dibatalkan: lepaskan kembali stok yang dialokasikan untuk pesanan ini (produk OMS).
   if (newStatus === 'Dibatalkan') {
-    await restoreStock(order.items.map((i) => ({ productId: i.productId, quantity: i.quantity })))
+    await restoreStock(
+      order.items.map((i) => ({
+        productId: i.productId,
+        quantity: i.quantity,
+        variantId: i.variantId ?? undefined,
+      })),
+      order.warehouseId,
+    )
   }
 
   return NextResponse.json({ success: true, order: updated })

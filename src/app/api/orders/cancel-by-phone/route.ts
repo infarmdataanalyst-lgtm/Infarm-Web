@@ -81,8 +81,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Gagal memperbarui status pesanan.' }, { status: 500 })
   }
 
-  // Kembalikan stok yang dialokasikan untuk pesanan ini
-  await restoreStock(order.items.map((i) => ({ productId: i.productId, quantity: i.quantity })))
+  // Kembalikan stok yang dialokasikan untuk pesanan ini, ke gudang pemenuhnya
+  await restoreStock(
+    order.items.map((i) => ({
+      productId: i.productId,
+      quantity: i.quantity,
+      variantId: i.variantId ?? undefined,
+    })),
+    order.warehouseId,
+  )
 
   // Stok kembali → segarkan cache storefront (sama seperti alur cancel token)
   revalidatePath('/')

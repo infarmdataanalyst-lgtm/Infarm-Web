@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/oms-guard'
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { updateProduct } from '@/lib/mock-db/products'
+import { parseStockPerWarehouse, writeStockPerWarehouse } from '@/lib/warehouse'
 import { PRODUCT_CATEGORIES } from '@/lib/data/categories'
 import { validateMinOrderQty } from '@/lib/product-validation'
 import type { StoredProduct } from '@/types/product'
@@ -61,9 +62,21 @@ export async function PATCH(request: Request) {
     patch.images = body.images as string[]
   }
 
+  // Rincian stok per gudang (mode multi) — divalidasi sebelum menyentuh produk.
+  const perWarehouse = parseStockPerWarehouse(body.stockPerWarehouse)
+  if (perWarehouse.error) {
+    return NextResponse.json({ error: perWarehouse.error }, { status: 422 })
+  }
+
   const updated = await updateProduct(body.id, patch)
   if (!updated) {
     return NextResponse.json({ error: 'Produk tidak ditemukan.' }, { status: 404 })
+  }
+
+  // Menimpa stok tiap gudang. Dijalankan SETELAH update produk agar produk yang tak ditemukan
+  // tidak menyisakan perubahan stok.
+  if (perWarehouse.entries && perWarehouse.entries.length > 0) {
+    await writeStockPerWarehouse(body.id, perWarehouse.entries)
   }
 
   // Segarkan cache storefront agar perubahan (harga/stok/arsip) langsung tampil di ecommerce.

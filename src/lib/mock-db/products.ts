@@ -11,6 +11,11 @@
 
 import { randomUUID } from 'node:crypto'
 import { createAdminClient } from '@/lib/supabase/server'
+import {
+  getEffectiveStockMaps,
+  returnStockToWarehouse,
+  writeEffectiveStock,
+} from '@/lib/warehouse'
 import type {
   StoredProduct,
   CreateProductInput,
@@ -122,6 +127,8 @@ function sanitizeGallery(images: string[] | undefined): string[] {
 
 // Membaca seluruh produk (termasuk archived), terbaru di depan.
 // Array kosong bila terjadi error agar UI tidak crash.
+// Nilai `stock` yang dikembalikan = STOK EFEKTIF dari product_stock_per_warehouse (lihat
+// applyEffectiveStock); kolom products.stock hanya dipakai bila baris gudang belum ada.
 export async function readProducts(): Promise<StoredProduct[]> {
   const supabase = createAdminClient()
   const { data, error } = await supabase
@@ -134,7 +141,26 @@ export async function readProducts(): Promise<StoredProduct[]> {
     return []
   }
 
-  return (data as ProductRow[]).map(rowToStored)
+  return applyEffectiveStock((data as ProductRow[]).map(rowToStored))
+}
+
+// Menimpa field `stock` tiap produk dengan stok efektif dari tabel gudang.
+//
+// Kenapa di sini, bukan di tiap pemanggil: semua storefront & OMS membaca stok lewat
+// readProducts/getProductById, jadi satu titik ini membuat SELURUH aplikasi otomatis memakai
+// stok per gudang tanpa mengubah komponen mana pun. Di mode single, stok dijumlahkan dari semua
+// gudang sehingga angka yang tampil identik dengan sebelum migration.
+//
+// Dipakai versi BATCH (satu query untuk semua produk) supaya tidak terjadi N+1 query.
+// Produk yang belum punya baris gudang tetap memakai nilai products.stock (fail-safe).
+async function applyEffectiveStock(products: StoredProduct[]): Promise<StoredProduct[]> {
+  if (products.length === 0) return products
+  const { byProduct } = await getEffectiveStockMaps(products.map((p) => p.id))
+  if (byProduct.size === 0) return products // tabel gudang belum di-migrate → pakai kolom lama
+  return products.map((p) => {
+    const effective = byProduct.get(p.id)
+    return effective === undefined ? p : { ...p, stock: effective }
+  })
 }
 
 // Membaca satu produk berdasarkan id. null bila tidak ditemukan.
@@ -151,7 +177,9 @@ export async function getProductById(id: string): Promise<StoredProduct | null> 
     return null
   }
 
-  return data ? rowToStored(data as ProductRow) : null
+  if (!data) return null
+  const [product] = await applyEffectiveStock([rowToStored(data as ProductRow)])
+  return product
 }
 
 // === Tulis ===
@@ -204,7 +232,14 @@ export async function saveProduct(input: CreateProductInput): Promise<StoredProd
     throw new Error(`Gagal menyimpan produk: ${error?.message ?? 'tidak diketahui'}`)
   }
 
-  return rowToStored(data as ProductRow)
+  const saved = rowToStored(data as ProductRow)
+
+  // Stok awal dicatat ke gudang (mode single → gudang default). Kolom products.stock di atas
+  // TETAP diisi nilai yang sama: bukan sebagai sumber kebenaran, tapi agar produk baru punya
+  // fallback yang benar bila baris gudang gagal dibuat (mis. migration belum di-apply).
+  await writeEffectiveStock({ productId: saved.id, stok: input.stock })
+
+  return saved
 }
 
 // === Ubah ===
@@ -224,7 +259,6 @@ export async function updateProduct(
   if (patch.category !== undefined) dbPatch.category = patch.category
   if (patch.badge !== undefined) dbPatch.badge = patch.badge
   if (patch.sku !== undefined) dbPatch.sku = patch.sku
-  if (patch.stock !== undefined) dbPatch.stock = patch.stock
   if (patch.description !== undefined) dbPatch.description = patch.description
   if (patch.archived !== undefined) dbPatch.archived = patch.archived
   // Clamp ≥ 1 agar tak melanggar CHECK products_min_order_qty_check
@@ -237,6 +271,19 @@ export async function updateProduct(
     dbPatch.images = gallery
     if (gallery[0]) dbPatch.image_url = gallery[0]
   }
+
+  // Stok TIDAK lagi ditulis ke products.stock. Sumber kebenarannya kini
+  // product_stock_per_warehouse (mode single → gudang default). Kolom lama dibiarkan apa adanya
+  // sebagai cadangan historis. Bila penulisan ke gudang gagal (tabel belum di-migrate), stok
+  // baru dikembalikan ke kolom lama supaya perubahan admin tidak hilang.
+  if (patch.stock !== undefined) {
+    const written = await writeEffectiveStock({ productId: id, stok: patch.stock })
+    if (!written) dbPatch.stock = patch.stock
+  }
+
+  // Hanya stok yang diubah & sudah tersimpan ke gudang → tak ada kolom products yang perlu
+  // di-update. Supabase menolak update dengan payload kosong, jadi cukup baca ulang produknya.
+  if (Object.keys(dbPatch).length === 0) return getProductById(id)
 
   const supabase = createAdminClient()
   let { data, error } = await supabase
@@ -264,21 +311,42 @@ export async function updateProduct(
     return null
   }
 
-  return data ? rowToStored(data as ProductRow) : null
+  if (!data) return null
+  // Overlay stok gudang: baris products yang baru dikembalikan Supabase masih membawa nilai
+  // products.stock yang sudah tidak otoritatif.
+  const [updated] = await applyEffectiveStock([rowToStored(data as ProductRow)])
+  return updated
 }
 
 // === Stok ===
 
-// Mengembalikan stok produk ke "tersedia" saat pesanan dibatalkan: stock += quantity.
+// Mengembalikan stok produk ke "tersedia" saat pesanan dibatalkan: stok += quantity.
 // Hanya berlaku untuk produk yang ADA di DB (produk OMS); item dummy/tak dikenal dilewati.
 // Catatan: idealnya stok dikurangi saat checkout (alokasi). Selama alokasi belum ada,
 // fungsi ini menambah kembali jumlah yang dibatalkan sebagai simulasi pelepasan stok.
+//
+// `warehouseId` = gudang pemenuh pesanan (orders.warehouse_id). Kosong → gudang default, sehingga
+// pembatalan pesanan lama (sebelum kolom itu ada) tetap mengembalikan stok ke tempat yang benar
+// di mode single. Bila tabel gudang belum di-migrate, penambahan jatuh ke kolom products.stock
+// seperti perilaku sebelumnya.
 export async function restoreStock(
-  items: { productId: string; quantity: number }[],
+  items: { productId: string; quantity: number; variantId?: string }[],
+  warehouseId?: string,
 ): Promise<void> {
+  // 1. Jalur utama: kembalikan ke stok per gudang
+  await returnStockToWarehouse(
+    items.map((i) => ({ productId: i.productId, variantId: i.variantId, quantity: i.quantity })),
+    warehouseId,
+  )
+
+  // 2. Jaring pengaman untuk produk yang belum punya baris gudang (mis. tabel belum di-migrate):
+  //    tanpa ini stok yang dibatalkan tak pernah kembali.
   const supabase = createAdminClient()
-  for (const { productId, quantity } of items) {
+  const { byProduct } = await getEffectiveStockMaps(items.map((i) => i.productId))
+  for (const { productId, quantity, variantId } of items) {
     if (!quantity || quantity <= 0) continue
+    if (variantId) continue // stok varian tidak disimpan di products.stock
+    if (byProduct.has(productId)) continue // sudah ditangani jalur gudang di atas
     const product = await getProductById(productId)
     if (!product) continue // produk dummy / tidak ada di DB → lewati dengan aman
     const { error } = await supabase

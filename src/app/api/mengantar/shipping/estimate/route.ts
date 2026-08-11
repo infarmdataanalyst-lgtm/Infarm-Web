@@ -10,12 +10,29 @@
 
 import { NextResponse } from 'next/server'
 import { RATE_LIMITS, enforceRateLimit, getClientIp } from '@/lib/rate-limit'
+import { getOriginIdForWarehouse, resolveWarehouseForOrder } from '@/lib/warehouse'
+import type { StockRequirement } from '@/lib/warehouse'
+
+// createAdminClient (dipakai lapisan gudang) butuh runtime Node.js, bukan Edge
+export const runtime = 'nodejs'
 
 const ESTIMATE_URL = 'https://app.mengantar.com/api/order/allEstimatePublic'
 
-// Origin (alamat toko). Utamakan var server-only; NEXT_PUBLIC_* tetap didukung agar env lama jalan.
-const ORIGIN_ID =
-  process.env.MENGANTAR_ORIGIN_ID ?? process.env.NEXT_PUBLIC_MENGANTAR_ORIGIN_ID ?? ''
+// Mengurai param opsional `items` → daftar kebutuhan stok, untuk memilih gudang asal di mode multi.
+// Format ringkas agar tetap satu GET (bisa di-cache & di-rate-limit seperti sekarang):
+//   items=<productId>:<qty>[:<variantId>],<productId>:<qty>
+// Di mode single param ini diabaikan sepenuhnya oleh resolveWarehouseForOrder.
+function parseItemsParam(raw: string | null): StockRequirement[] {
+  if (!raw) return []
+  const items: StockRequirement[] = []
+  for (const entry of raw.split(',')) {
+    const [productId, qty, variantId] = entry.split(':')
+    const quantity = Number(qty)
+    if (!productId || !Number.isFinite(quantity) || quantity <= 0) continue
+    items.push(variantId ? { productId, quantity, variantId } : { productId, quantity })
+  }
+  return items
+}
 
 // GET: teruskan cek ongkir ke Mengantar, kembalikan respons mentahnya ({ data: {...} }).
 export async function GET(request: Request) {
@@ -32,12 +49,23 @@ export async function GET(request: Request) {
   if (!destinationId || !Number.isFinite(weight) || weight <= 0) {
     return NextResponse.json({ error: 'Parameter tujuan/berat tidak valid.' }, { status: 400 })
   }
-  if (!ORIGIN_ID) {
+
+  // Origin kini bersumber dari GUDANG, bukan langsung dari env: mode single → gudang default,
+  // mode multi → gudang terpilih untuk isi keranjang ini. getOriginIdForWarehouse tetap jatuh ke
+  // env (MENGANTAR_ORIGIN_ID / NEXT_PUBLIC_...) bila kolomnya kosong, jadi ongkir tak pernah mati
+  // hanya karena data gudang belum lengkap.
+  const warehouse = await resolveWarehouseForOrder(
+    parseItemsParam(searchParams.get('items')),
+    destinationId,
+  )
+  const originId = await getOriginIdForWarehouse(warehouse?.id)
+
+  if (!originId) {
     return NextResponse.json({ error: 'Konfigurasi pengiriman belum lengkap.' }, { status: 500 })
   }
 
   const params = new URLSearchParams({
-    origin_id: ORIGIN_ID,
+    origin_id: originId,
     destination_id: destinationId,
     weight: String(weight),
   })

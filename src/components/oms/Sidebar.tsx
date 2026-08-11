@@ -17,6 +17,7 @@ import {
   Megaphone,
   ShoppingCart,
   Star,
+  Warehouse,
   Settings,
   HelpCircle,
   LogOut,
@@ -39,6 +40,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Promosi', href: '/oms/dashboard/promosi', icon: Megaphone },
   { label: 'Pesanan', href: '/oms/dashboard/orders', icon: ShoppingCart },
   { label: 'Ulasan', href: '/oms/dashboard/reviews', icon: Star },
+  { label: 'Gudang', href: '/oms/dashboard/gudang', icon: Warehouse },
   { label: 'Pengaturan', href: '/oms/dashboard/pengaturan', icon: Settings },
 ]
 

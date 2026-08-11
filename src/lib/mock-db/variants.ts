@@ -4,6 +4,7 @@
 // & stok dari tabel products seperti biasa). Jangan diimpor dari komponen 'use client'.
 
 import { createAdminClient } from '@/lib/supabase/server'
+import { writeEffectiveStock } from '@/lib/warehouse'
 import type { ProductVariant } from '@/types/variant'
 
 type VariantRow = {
@@ -142,6 +143,13 @@ export async function createVariant(input: VariantInput): Promise<ProductVariant
   }
   const created = rowToVariant(data as VariantRow)
   if (created.isDefault) await clearOtherDefaults(supabase, created.productId, created.id)
+  // Catat stok awal varian ke gudang (mode single → gudang default). Kolom product_variants.stok
+  // di atas tetap terisi sebagai fallback bila tabel gudang belum di-migrate.
+  await writeEffectiveStock({
+    productId: created.productId,
+    variantId: created.id,
+    stok: input.stock,
+  })
   return created
 }
 
@@ -167,6 +175,14 @@ export async function updateVariant(id: string, input: VariantInput): Promise<Pr
   if (!data) return null
   const updated = rowToVariant(data as VariantRow)
   if (updated.isDefault) await clearOtherDefaults(supabase, updated.productId, updated.id)
+  // Stok varian juga disimpan per gudang. Berbeda dengan produk, kolom product_variants.stok
+  // TETAP ikut ditulis di atas: pembaca varian (detail produk, bottom-sheet, RPC fallback)
+  // membacanya langsung, dan overlay batch belum dipasang di jalur varian.
+  await writeEffectiveStock({
+    productId: updated.productId,
+    variantId: updated.id,
+    stok: input.stock,
+  })
   return updated
 }
 

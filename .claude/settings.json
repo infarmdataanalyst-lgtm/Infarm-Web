@@ -13,7 +13,11 @@
       "Bash(npm install *)",
       "Bash(curl -s http://localhost:3000/)",
       "PowerShell(npx tsc --noEmit 2>&1)",
-      "PowerShell($r = Invoke-WebRequest \"http://localhost:3000/\" -UseBasicParsing -TimeoutSec 120; $css = [regex]::Matches\\($r.Content,'/_next/static/[^\"]+\\\\.css'\\) | ForEach-Object { $_.Value } | Select-Object -Unique; $css; foreach \\($c in $css\\) { $t = \\(Invoke-WebRequest \"http://localhost:3000$c\" -UseBasicParsing\\).Content; \"$c -> montserrat=$\\([regex]::Matches\\($t,'Montserrat'\\).Count\\) fontHeadingVar=$\\([regex]::Matches\\($t,'--font-heading'\\).Count\\) fontHeadingUtil=$\\([regex]::Matches\\($t,'\\\\.font-heading'\\).Count\\)\" })"
+      "PowerShell($r = Invoke-WebRequest \"http://localhost:3000/\" -UseBasicParsing -TimeoutSec 120; $css = [regex]::Matches\\($r.Content,'/_next/static/[^\"]+\\\\.css'\\) | ForEach-Object { $_.Value } | Select-Object -Unique; $css; foreach \\($c in $css\\) { $t = \\(Invoke-WebRequest \"http://localhost:3000$c\" -UseBasicParsing\\).Content; \"$c -> montserrat=$\\([regex]::Matches\\($t,'Montserrat'\\).Count\\) fontHeadingVar=$\\([regex]::Matches\\($t,'--font-heading'\\).Count\\) fontHeadingUtil=$\\([regex]::Matches\\($t,'\\\\.font-heading'\\).Count\\)\" })",
+      "PowerShell(npx tsc --noEmit)",
+      "Bash(curl -s -o /tmp/ongkir.json -w \"HTTP %{http_code}\\\\n\" \"http://localhost:3000/api/mengantar/shipping/estimate?destination_id=5fc62dfbf8f44b34aa4be9e0&weight=1\")",
+      "Bash(curl -s -o /dev/null -w \"port3000 HTTP %{http_code}\\\\n\" \"http://localhost:3000/api/settings/min-order\")",
+      "Bash(node \"C:/Users/fiqih/AppData/Local/Temp/claude/c--Users-fiqih-OneDrive-Dokumen-Infarm-Web-Infarm-Web/96589674-dcb9-430c-854e-a231b53ed65c/scratchpad/verify-warehouse.mjs\")"
     ]
   }
 }

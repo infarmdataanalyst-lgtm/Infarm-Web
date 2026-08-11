@@ -11,6 +11,10 @@ import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import { ChevronRight, UploadCloud, Check, X } from 'lucide-react'
 import OmsHeader from '@/components/oms/OmsHeader'
+import WarehouseStockFields, {
+  sumStock,
+  type StockByWarehouse,
+} from '@/components/oms/WarehouseStockFields'
 import { PRODUCT_CATEGORIES } from '@/lib/data/categories'
 import { formatRupiah } from '@/lib/format'
 import type { ProductCategory } from '@/types/product'
@@ -48,6 +52,9 @@ export default function UploadProductPage() {
   const [price, setPrice] = useState<number | ''>(35000) // harga jual (promo)
   const [originalPrice, setOriginalPrice] = useState<number | ''>('') // harga asli (opsional, dicoret)
   const [stock, setStock] = useState<number | ''>(120)
+  // Stok per gudang (mode multi). Kosong di mode single — server memakai `stock` di atas.
+  const [stockByWarehouse, setStockByWarehouse] = useState<StockByWarehouse>({})
+  const [warehouseMode, setWarehouseMode] = useState<'single' | 'multi'>('single')
   const [minOrderQty, setMinOrderQty] = useState<number | ''>(1) // 1 = tanpa batasan
   const [description, setDescription] = useState('')
 
@@ -64,6 +71,12 @@ export default function UploadProductPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Stok yang divalidasi & dikirim sebagai total: di mode multi = jumlah seluruh gudang,
+  // di mode single = isi input tunggal. Satu sumber angka agar aturan stok yang sudah ada
+  // (0–999.999) tetap berlaku tanpa cabang validasi baru.
+  const effectiveStock: number | '' =
+    warehouseMode === 'multi' ? sumStock(stockByWarehouse) : stock
+
   // === Error live (dihitung ulang tiap render dari nilai form) ===
   const liveErrors: ProductFieldErrors = useMemo(
     () =>
@@ -73,12 +86,12 @@ export default function UploadProductPage() {
         category,
         price,
         originalPrice,
-        stock,
+        stock: effectiveStock,
         minOrderQty,
         description,
         imageCount: images.length,
       }),
-    [sku, name, category, price, originalPrice, stock, minOrderQty, description, images.length],
+    [sku, name, category, price, originalPrice, effectiveStock, minOrderQty, description, images.length],
   )
 
   // Saran minimum pembelian (hanya untuk produk berharga kecil). null → tak ada saran.
@@ -184,10 +197,8 @@ export default function UploadProductPage() {
     const digits = raw.replace(/\D/g, '')
     setOriginalPrice(digits === '' ? '' : Number(digits))
   }
-  function handleStockChange(raw: string) {
-    const digits = raw.replace(/\D/g, '')
-    setStock(digits === '' ? '' : Number(digits))
-  }
+  // Catatan: penyaringan angka untuk input stok kini ditangani WarehouseStockFields
+  // (satu tempat untuk mode single maupun per gudang).
 
   function handleMinOrderQtyChange(raw: string) {
     const digits = raw.replace(/\D/g, '')
@@ -217,7 +228,7 @@ export default function UploadProductPage() {
       category,
       price,
       originalPrice,
-      stock,
+      stock: effectiveStock,
       minOrderQty,
       description,
       imageCount: images.length,
@@ -243,7 +254,15 @@ export default function UploadProductPage() {
           category,
           price: Number(price) || 0,
           originalPrice: originalPrice === '' ? undefined : Number(originalPrice),
-          stock: Number(stock) || 0,
+          stock: Number(effectiveStock) || 0,
+          // Rincian per gudang hanya dikirim di mode multi; server mengabaikannya di mode single
+          stockPerWarehouse:
+            warehouseMode === 'multi'
+              ? Object.entries(stockByWarehouse).map(([warehouseId, stok]) => ({
+                  warehouseId,
+                  stok: stok === '' ? 0 : stok,
+                }))
+              : undefined,
           minOrderQty: Number(minOrderQty) || 1,
           description: description.trim(),
           imageUrl: images[0]?.src,
@@ -423,18 +442,20 @@ export default function UploadProductPage() {
                   <FieldError message={shownError('originalPrice')} />
                 </div>
 
-                {/* Stok */}
+                {/* Stok — satu input di mode single, per gudang di mode multi */}
                 <div id="pf-stock">
                   <Field label="Stok Tersedia">
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      value={stock}
-                      onChange={(e) => handleStockChange(e.target.value)}
-                      onBlur={() => markTouched('stock')}
-                      placeholder="0"
-                      className={inputClass(!!shownError('stock'))}
-                      aria-invalid={!!shownError('stock')}
+                    <WarehouseStockFields
+                      singleValue={stock}
+                      onSingleChange={(v) => {
+                        setStock(v)
+                        markTouched('stock')
+                      }}
+                      value={stockByWarehouse}
+                      onChange={setStockByWarehouse}
+                      onModeResolved={setWarehouseMode}
+                      inputClassName={inputClass(!!shownError('stock'))}
+                      invalid={!!shownError('stock')}
                     />
                   </Field>
                   <FieldError message={shownError('stock')} />

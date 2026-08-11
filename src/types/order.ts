@@ -62,6 +62,7 @@ export type Order = {
   trackingNumber?: string // no_tracking (diisi setelah kurir pickup)
   transactionId?: string // id_transaksi (dari Xendit setelah pembayaran)
   address?: OrderShippingAddress
+  warehouseId?: string // gudang pemenuh pesanan (orders.warehouse_id); undefined untuk pesanan lama
 }
 
 // Payload dari checkout ke API (sebelum disimpan). nomor_invoice digenerate di server.
@@ -77,6 +78,7 @@ export type CreateOrderInput = {
   address: OrderShippingAddress
   paymentStatus?: OrderPaymentStatus
   status?: OrderFulfillmentStatus
+  warehouseId?: string // gudang hasil resolveWarehouseForOrder; kosong → RPC pakai gudang default
 }
 
 // Agregasi produk terlaris — jumlah unit terjual & total pendapatan per produk.

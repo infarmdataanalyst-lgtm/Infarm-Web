@@ -6,6 +6,7 @@ import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/oms-guard'
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { saveProduct } from '@/lib/mock-db/products'
+import { parseStockPerWarehouse, writeStockPerWarehouse } from '@/lib/warehouse'
 import { PRODUCT_CATEGORIES } from '@/lib/data/categories'
 import {
   validateName,
@@ -105,7 +106,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: result.error }, { status: 422 })
   }
 
+  // Rincian stok per gudang (mode multi). Divalidasi SEBELUM produk dibuat agar payload cacat
+  // tidak meninggalkan produk tanpa stok yang benar.
+  const perWarehouse = parseStockPerWarehouse((body as Record<string, unknown>).stockPerWarehouse)
+  if (perWarehouse.error) {
+    return NextResponse.json({ error: perWarehouse.error }, { status: 422 })
+  }
+
   const saved = await saveProduct(result.input)
+
+  // saveProduct sudah menaruh `stock` ke gudang default; rincian per gudang menimpanya bila ada.
+  if (perWarehouse.entries && perWarehouse.entries.length > 0) {
+    await writeStockPerWarehouse(saved.id, perWarehouse.entries)
+  }
 
   // Segarkan cache halaman storefront agar produk baru langsung tampil saat navigasi.
   // '/produk/[id]' butuh arg 'page' karena route dinamis (revalidasi semua halaman detail).
