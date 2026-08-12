@@ -1,7 +1,10 @@
 // src/app/api/orders/list/route.ts
 // API membaca pesanan dari mock database dengan support filter & sorting server-side.
 // Dipanggil GET dari Dashboard OMS untuk mengisi tabel pesanan admin.
-// Query params: dari, sampai, kurir, pembayaran, sortBy, order
+// Query params: dari, sampai, kurir, pembayaran, status, gudang, sortBy, order
+//
+// SEMUA penyaringan dilakukan di query Supabase (bukan fetch-all-lalu-filter-di-client) supaya
+// tetap efisien saat jumlah pesanan membesar.
 
 import { NextResponse, type NextRequest } from 'next/server'
 import { requireAdmin } from '@/lib/oms-guard'
@@ -9,9 +12,25 @@ import {
   readOrders,
   readOrdersFiltered,
   getDistinctCouriers,
+  WAREHOUSE_FILTER_NONE,
   type OrderFilterOptions,
 } from '@/lib/mock-db/orders'
-import type { OrderPaymentStatus } from '@/types/order'
+import { readWarehouses } from '@/lib/mock-db/warehouses'
+import type { OrderFulfillmentStatus, OrderPaymentStatus } from '@/types/order'
+
+// Status alur pesanan yang sah. Nilai di luar daftar ini diabaikan (bukan error) agar URL lama /
+// bookmark dengan nilai usang tetap menampilkan data, hanya tanpa filter itu.
+const VALID_STATUSES: OrderFulfillmentStatus[] = [
+  'Menunggu Pembayaran',
+  'Diproses',
+  'Dikirim',
+  'Selesai',
+  'Dibatalkan',
+]
+
+// Format id gudang (UUID). Selain itu hanya WAREHOUSE_FILTER_NONE yang diterima — mencegah nilai
+// liar masuk ke query.
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 // Validasi format tanggal ISO (YYYY-MM-DD)
 function validateDate(dateStr: string | null | undefined): string | undefined {
@@ -41,6 +60,16 @@ export async function GET(request: NextRequest) {
   const sortBy = (searchParams.get('sortBy') as 'total' | 'tanggal' | null) || undefined
   const order = (searchParams.get('order') as 'asc' | 'desc' | null) || undefined
 
+  // Status alur pesanan (tab di halaman OMS). Sebelumnya param ini DIKIRIM halaman tapi tak pernah
+  // dibaca di sini, sehingga tab status tak menyaring apa pun.
+  const rawStatus = searchParams.get('status')
+  const status = VALID_STATUSES.find((s) => s === rawStatus)
+
+  // Gudang pemenuh: id gudang, atau 'none' untuk pesanan lama yang warehouse_id-nya NULL.
+  const rawGudang = (searchParams.get('gudang') ?? '').trim()
+  const gudang =
+    rawGudang === WAREHOUSE_FILTER_NONE || UUID_REGEX.test(rawGudang) ? rawGudang : undefined
+
   // Validasi: jika kedua tanggal ada, pastikan dari <= sampai
   if (dari && sampai && dari > sampai) {
     return NextResponse.json(
@@ -55,6 +84,8 @@ export async function GET(request: NextRequest) {
     sampai,
     kurir,
     pembayaran,
+    status,
+    gudang,
     sortBy,
     order,
   }
@@ -63,8 +94,15 @@ export async function GET(request: NextRequest) {
   const hasFilters = Object.values(filterOpts).some((v) => v !== undefined)
   const orders = hasFilters ? await readOrdersFiltered(filterOpts) : await readOrders()
 
-  // Ambil daftar kurir unik untuk dropdown filter di UI
-  const couriers = await getDistinctCouriers()
+  // Opsi dropdown filter di UI: kurir unik + gudang AKTIF.
+  // Gudang nonaktif tak ditawarkan sebagai pilihan filter (tak lagi menerima pesanan baru), tapi
+  // namanya tetap tampil di kolom Gudang untuk pesanan lama — lihat resolveWarehouseNames.
+  const [couriers, warehouses] = await Promise.all([getDistinctCouriers(), readWarehouses(true)])
 
-  return NextResponse.json({ orders, count: orders.length, couriers })
+  return NextResponse.json({
+    orders,
+    count: orders.length,
+    couriers,
+    warehouses: warehouses.map((w) => ({ id: w.id, nama: w.nama })),
+  })
 }

@@ -178,7 +178,8 @@ src/
 │   │   ├── products/             # create | update | delete | bulk (aksi massal OMS) | list |
 │   │   │                         #   check-sku | best-selling |
 │   │   │                         #   sales-count | best-selling-catalog | search (autocomplete) | by-ids (resolve keranjang)
-│   │   ├── orders/               # create | list (filter+sort+CSV OMS) | get | cancel (GET+PATCH token) |
+│   │   ├── orders/               # create | list (filter tanggal/kurir/pembayaran/status/gudang +
+│   │   │                         #   sort + opsi dropdown; sumber tabel & CSV OMS) | get | cancel (GET+PATCH token) |
 │   │   │                         #   track-by-phone | verify-cancel | cancel-by-phone (batalkan by no_telepon)
 │   │   ├── reviews/              # create (invoice) | list | reply | visibility | reviewed |
 │   │   │                         #   reviewable-by-phone | create-by-phone (review terverifikasi via no_telepon)
@@ -790,6 +791,23 @@ sistem tetap jalan tanpanya, hanya jatuh ke gudang default):
   `getOriginIdForWarehouse()`, bukan env langsung. Param opsional
   `items=<productId>:<qty>[:<variantId>],…` dipakai memilih gudang asal di mode multi; **diabaikan**
   di mode single.
+- **Gudang terlihat & bisa difilter di halaman Pesanan OMS**: kolom **Gudang** (setelah kolom Status)
+  + dropdown filter "Semua gudang / <gudang aktif> / Belum ditentukan", bisa dikombinasikan dengan
+  filter lain. Detailnya:
+  - Nama gudang di-resolve di data layer (`resolveWarehouseNames` di `mock-db/orders.ts`) dan
+    dilampirkan sebagai `Order.warehouseName` — hanya untuk OMS, TIDAK pernah dikirim ke storefront
+    (`getOrdersByPhone` sengaja tak memakainya).
+  - Peta nama dibangun dari **semua** gudang termasuk yang **nonaktif**: pesanan lama bisa dipenuhi
+    gudang yang kini dinonaktifkan, dan riwayatnya harus tetap terbaca. Sebaliknya **dropdown filter
+    hanya menawarkan gudang aktif** (gudang nonaktif tak lagi menerima pesanan baru).
+  - **Pesanan lama** (`orders.warehouse_id` NULL — 43 dari 44 baris per 2026-08-12) tampil sebagai
+    "Belum ditentukan", dan bisa dicari lewat opsi filter `gudang=none` → `.is('warehouse_id', null)`
+    (`WAREHOUSE_FILTER_NONE`). **Pakai `.is()`, bukan `.eq()`** — NULL tak pernah cocok dengan
+    perbandingan biasa di SQL, jadi `.eq()` akan mengembalikan nol baris tanpa error.
+  - Nilai `gudang` divalidasi di route (`UUID_REGEX` atau `'none'`); nilai lain **diabaikan**, bukan
+    error, supaya bookmark/URL lama tetap menampilkan data.
+- **Catatan data**: 18 baris `orders` punya `order_status` NULL (baris warisan sebelum enum status
+  ada) → kolom Status menampilkan "—" dan baris itu tak ikut filter status apa pun. Bukan bug filter.
 
 ### Daftar Gudang (OMS) — sudah terpasang
 
@@ -1211,9 +1229,10 @@ mengambang. Jangan menambah lapis baru tanpa memperbarui tabel ini.
       rentang tanggal + pintasan) dengan chip per filter & reset semua
 - [x] Aksi massal produk (`POST /api/products/bulk`, admin-only): arsipkan/pulihkan/ubah kategori/
       hapus + konfirmasi hapus; produk contoh dikecualikan dari seleksi
-- [x] Manajemen order (`/oms/dashboard/orders`) — filter tanggal (range + shortcut)/kurir/status pembayaran,
-      sort Total & Tanggal, kombinasi filter tersimpan di URL query params, Reset Filter, ekspor CSV
-      (server-side via `readOrdersFiltered`/`getDistinctCouriers`, `OrderFilterOptions`)
+- [x] Manajemen order (`/oms/dashboard/orders`) — filter tanggal (range + shortcut)/kurir/status
+      pembayaran/**status pesanan**/**gudang**, sort Total & Tanggal, kombinasi filter tersimpan di
+      URL query params, Reset Filter, ekspor CSV (SEMUA penyaringan server-side via
+      `readOrdersFiltered`/`getDistinctCouriers`, `OrderFilterOptions`). Kolom tabel memuat **Gudang**
 - [x] Manajemen review (`/oms/dashboard/reviews`) — create/list/reply/visibility
 - [x] Manajemen Paket & Combo (`/oms/dashboard/paket-combo`) — create/list/update/delete/toggle
 - [x] Manajemen Promosi (`/oms/dashboard/promosi`) — create/list/update/delete/toggle

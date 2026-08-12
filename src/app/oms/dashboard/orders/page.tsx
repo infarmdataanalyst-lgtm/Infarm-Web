@@ -42,6 +42,14 @@ const TABS: Array<'Semua' | OrderFulfillmentStatus> = [
 
 const PAGE_SIZE = 10
 
+// Nilai filter gudang untuk pesanan lama yang belum punya gudang pemenuh (warehouse_id NULL).
+// Harus sama dengan WAREHOUSE_FILTER_NONE di src/lib/mock-db/orders.ts.
+const WAREHOUSE_NONE = 'none'
+
+// Label kolom Gudang untuk pesanan tanpa gudang pemenuh (pesanan sebelum fitur multi-gudang,
+// atau gudangnya sudah dihapus).
+const WAREHOUSE_UNSET_LABEL = 'Belum ditentukan'
+
 // Wrapper: useSearchParams (di OrdersContent) wajib dibungkus <Suspense> agar build Next.js tidak error.
 export default function OrdersPage() {
   return (
@@ -58,6 +66,9 @@ function OrdersContent() {
   // === State ===
   const [orders, setOrders] = useState<Order[]>([])
   const [couriers, setCouriers] = useState<string[]>([])
+  // Gudang aktif untuk dropdown filter (dari endpoint list, bukan /api/warehouses/list — supaya
+  // halaman ini tetap satu request).
+  const [warehouses, setWarehouses] = useState<{ id: string; nama: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
@@ -68,6 +79,7 @@ function OrdersContent() {
   const dari = searchParams.get('dari') || ''
   const sampai = searchParams.get('sampai') || ''
   const kurir = searchParams.get('kurir') || ''
+  const gudang = searchParams.get('gudang') || ''
   const pembayaran = (searchParams.get('pembayaran') as OrderPaymentStatus | null) || null
   const sortBy = (searchParams.get('sortBy') as 'total' | 'tanggal' | null) || null
   const order = (searchParams.get('order') as 'asc' | 'desc' | null) || null
@@ -96,6 +108,7 @@ function OrdersContent() {
     if (dari) params.set('dari', dari)
     if (sampai) params.set('sampai', sampai)
     if (kurir) params.set('kurir', kurir)
+    if (gudang) params.set('gudang', gudang)
     if (pembayaran) params.set('pembayaran', pembayaran)
     if (sortBy) params.set('sortBy', sortBy)
     if (order) params.set('order', order)
@@ -106,10 +119,11 @@ function OrdersContent() {
 
     fetch(url)
       .then((res) => res.json())
-      .then((data: { orders?: Order[]; couriers?: string[] }) => {
+      .then((data: { orders?: Order[]; couriers?: string[]; warehouses?: { id: string; nama: string }[] }) => {
         if (active) {
           setOrders(data.orders ?? [])
           if (data.couriers) setCouriers(data.couriers)
+          if (data.warehouses) setWarehouses(data.warehouses)
         }
       })
       .catch(() => {
@@ -122,7 +136,7 @@ function OrdersContent() {
     return () => {
       active = false
     }
-  }, [dari, sampai, kurir, pembayaran, sortBy, order, activeTab])
+  }, [dari, sampai, kurir, gudang, pembayaran, sortBy, order, activeTab])
 
   // Pesanan untuk halaman saat ini (orders sudah di-filter di server)
   const totalPages = Math.max(1, Math.ceil(orders.length / PAGE_SIZE))
@@ -137,7 +151,7 @@ function OrdersContent() {
     const today = new Date()
     today.setHours(0, 0, 0, 0)
 
-    let fromDate = new Date(today)
+    const fromDate = new Date(today)
     if (isMonthStart) {
       fromDate.setDate(1)
     } else {
@@ -150,7 +164,13 @@ function OrdersContent() {
 
   // === Helper: Check if ANY filter is active ===
   function hasActiveFilters() {
-    return !!(dari || sampai || kurir || pembayaran || sortBy || (activeTab !== 'Semua'))
+    return !!(dari || sampai || kurir || gudang || pembayaran || sortBy || (activeTab !== 'Semua'))
+  }
+
+  // Nama gudang untuk ditampilkan di kolom tabel. warehouseName di-resolve server; kosong berarti
+  // pesanan lama (warehouse_id NULL) atau gudangnya sudah dihapus.
+  function warehouseLabel(o: Order): string {
+    return o.warehouseName ?? WAREHOUSE_UNSET_LABEL
   }
 
   // === Helper: Reset all filters ===
@@ -203,6 +223,7 @@ function OrdersContent() {
       'No. Resi',
       'Pembayaran',
       'Status',
+      'Gudang',
       'Tanggal',
     ]
 
@@ -217,6 +238,7 @@ function OrdersContent() {
         o.trackingNumber ?? '',
         o.paymentStatus,
         o.status ?? '',
+        warehouseLabel(o),
         formatDate(o.date),
       ]
         .map(esc)
@@ -344,6 +366,25 @@ function OrdersContent() {
                 <option value="Gagal">Gagal</option>
               </select>
             </div>
+
+            {/* Filter Gudang — bisa dikombinasikan dengan filter lain (semua disaring di server) */}
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Gudang</label>
+              <select
+                value={gudang}
+                onChange={(e) => updateFilters({ gudang: e.target.value || null })}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
+              >
+                <option value="">Semua gudang</option>
+                {warehouses.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.nama}
+                  </option>
+                ))}
+                {/* Pesanan sebelum fitur multi-gudang tetap bisa ditemukan & diaudit */}
+                <option value={WAREHOUSE_NONE}>{WAREHOUSE_UNSET_LABEL}</option>
+              </select>
+            </div>
           </div>
 
           {/* Sorting & Reset */}
@@ -415,6 +456,8 @@ function OrdersContent() {
                   <th className="px-5 py-3.5">No. Resi</th>
                   <th className="px-5 py-3.5">Pembayaran</th>
                   <th className="px-5 py-3.5">Status</th>
+                  {/* Ditaruh setelah Status agar status pesanan & gudang pemenuhnya terbaca sekali scan */}
+                  <th className="px-5 py-3.5">Gudang</th>
                   <th className="px-5 py-3.5">Tanggal</th>
                   <th className="px-5 py-3.5 text-right">Aksi</th>
                 </tr>
@@ -423,13 +466,13 @@ function OrdersContent() {
                 {/* Loading / kosong */}
                 {loading ? (
                   <tr>
-                    <td colSpan={9} className="px-5 py-12 text-center text-sm text-gray-400">
+                    <td colSpan={10} className="px-5 py-12 text-center text-sm text-gray-400">
                       Memuat pesanan…
                     </td>
                   </tr>
                 ) : pageOrders.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="px-5 py-16 text-center">
+                    <td colSpan={10} className="px-5 py-16 text-center">
                       <Inbox className="mx-auto h-8 w-8 text-gray-300" />
                       <p className="mt-2 text-sm font-medium text-gray-500">
                         Belum ada pesanan
@@ -486,6 +529,14 @@ function OrdersContent() {
                           <StatusBadge status={order.status} />
                         ) : (
                           <span className="text-gray-300">—</span>
+                        )}
+                      </td>
+                      {/* Gudang pemenuh — pesanan lama (warehouse_id NULL) tampil netral, tak kosong */}
+                      <td className="px-5 py-4">
+                        {order.warehouseName ? (
+                          <span className="text-gray-700">{order.warehouseName}</span>
+                        ) : (
+                          <span className="text-xs italic text-gray-400">{WAREHOUSE_UNSET_LABEL}</span>
                         )}
                       </td>
                       {/* Tanggal */}

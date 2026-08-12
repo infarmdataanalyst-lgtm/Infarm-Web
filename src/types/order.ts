@@ -63,6 +63,10 @@ export type Order = {
   transactionId?: string // id_transaksi (dari Xendit setelah pembayaran)
   address?: OrderShippingAddress
   warehouseId?: string // gudang pemenuh pesanan (orders.warehouse_id); undefined untuk pesanan lama
+  // Nama gudang pemenuh, di-resolve saat baca (join ke tabel warehouses). Hanya untuk TAMPILAN OMS —
+  // tak pernah dikirim ke storefront. undefined bila pesanan lama (warehouse_id NULL) atau gudangnya
+  // sudah dihapus; UI menampilkannya sebagai "Belum ditentukan".
+  warehouseName?: string
 }
 
 // Payload dari checkout ke API (sebelum disimpan). nomor_invoice digenerate di server.

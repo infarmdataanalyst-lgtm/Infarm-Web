@@ -15,6 +15,7 @@
 // dari komponen 'use client'.
 
 import { createAdminClient } from '@/lib/supabase/server'
+import { readWarehouses } from '@/lib/mock-db/warehouses'
 import { recordOrderStockChanges } from '@/lib/stock-audit'
 import type {
   Order,
@@ -26,11 +27,19 @@ import type {
 } from '@/types/order'
 
 // === Filter Options untuk query dinamis ===
+
+// Nilai khusus filter gudang: hanya pesanan yang BELUM punya gudang pemenuh
+// (orders.warehouse_id NULL — pesanan sebelum fitur multi-gudang ada). Dipakai agar pesanan lama
+// tetap bisa ditemukan & diaudit, bukan hilang dari daftar.
+export const WAREHOUSE_FILTER_NONE = 'none'
+
 export type OrderFilterOptions = {
   dari?: string
   sampai?: string
   kurir?: string
   pembayaran?: OrderPaymentStatus
+  status?: OrderFulfillmentStatus // status alur pesanan (tab di halaman OMS)
+  gudang?: string // id gudang, atau WAREHOUSE_FILTER_NONE untuk warehouse_id NULL
   sortBy?: 'total' | 'tanggal'
   order?: 'asc' | 'desc'
 }
@@ -181,8 +190,21 @@ function itemRowToItem(
   return item
 }
 
+// Peta id gudang → nama, untuk kolom "Gudang" di tabel Pesanan OMS.
+// Membaca SELURUH gudang (termasuk yang nonaktif): pesanan lama bisa saja dipenuhi gudang yang
+// kini dinonaktifkan, dan riwayatnya tetap harus terbaca. Jumlah gudang selalu sedikit (satuan),
+// jadi satu query tanpa filter lebih murah daripada menyusun daftar id.
+async function resolveWarehouseNames(rows: OrderRow[]): Promise<Map<string, string>> {
+  const map = new Map<string, string>()
+  // Tak ada pesanan ber-gudang → jangan buang satu query pun.
+  if (!rows.some((r) => r.warehouse_id)) return map
+  for (const warehouse of await readWarehouses()) map.set(warehouse.id, warehouse.nama)
+  return map
+}
+
 // Mengubah baris orders + item-nya menjadi Order (app-facing).
-function rowToOrder(row: OrderRow, items: OrderItem[]): Order {
+// `warehouseNames` opsional: hanya diisi pemanggil OMS yang butuh kolom Gudang.
+function rowToOrder(row: OrderRow, items: OrderItem[], warehouseNames?: Map<string, string>): Order {
   const order: Order = {
     // Fallback ke id bila nomor_invoice kosong (baris warisan sebelum kolom nomor_invoice ada)
     orderId: row.nomor_invoice ?? row.id,
@@ -202,7 +224,13 @@ function rowToOrder(row: OrderRow, items: OrderItem[]): Order {
   if (row.no_tracking) order.trackingNumber = row.no_tracking
   if (row.id_transaksi) order.transactionId = row.id_transaksi
   // Gudang pemenuh — dipakai saat pembatalan untuk mengembalikan stok ke gudang yang benar
-  if (row.warehouse_id) order.warehouseId = row.warehouse_id
+  if (row.warehouse_id) {
+    order.warehouseId = row.warehouse_id
+    // Nama hanya terisi bila pemanggil memang menyediakan petanya (OMS). Gudang yang sudah dihapus
+    // tak ada di peta → nama dibiarkan kosong, UI menampilkan "Belum ditentukan".
+    const name = warehouseNames?.get(row.warehouse_id)
+    if (name) order.warehouseName = name
+  }
   order.address = {
     shippingAddress: row.shipping_address ?? '',
     provinsi: row.provinsi ?? '',
@@ -264,6 +292,20 @@ export async function readOrdersFiltered(opts: OrderFilterOptions = {}): Promise
     query = query.eq('status_pembayaran', PAYMENT_TO_DB[opts.pembayaran])
   }
 
+  // Filter status alur pesanan (tab di halaman OMS). Label Indonesia → enum DB.
+  if (opts.status) {
+    query = query.eq('order_status', STATUS_TO_DB[opts.status])
+  }
+
+  // Filter gudang pemenuh. 'none' = pesanan lama yang belum punya gudang (warehouse_id NULL);
+  // memakai .is() bukan .eq() karena NULL tak pernah cocok dengan perbandingan biasa di SQL.
+  if (opts.gudang) {
+    query =
+      opts.gudang === WAREHOUSE_FILTER_NONE
+        ? query.is('warehouse_id', null)
+        : query.eq('warehouse_id', opts.gudang)
+  }
+
   // Sorting
   const sortColumn = opts.sortBy === 'total' ? 'jumlah_total' : 'created_at'
   const ascending = opts.order === 'asc'
@@ -295,7 +337,8 @@ export async function readOrdersFiltered(opts: OrderFilterOptions = {}): Promise
     itemsByOrder.set(ir.order_id, list)
   }
 
-  return rows.map((r) => rowToOrder(r, itemsByOrder.get(r.id) ?? []))
+  const warehouseNames = await resolveWarehouseNames(rows)
+  return rows.map((r) => rowToOrder(r, itemsByOrder.get(r.id) ?? [], warehouseNames))
 }
 
 // Membaca seluruh pesanan (terbaru dulu) beserta item-nya, untuk tabel & widget OMS.
@@ -331,7 +374,8 @@ export async function readOrders(): Promise<Order[]> {
     itemsByOrder.set(ir.order_id, list)
   }
 
-  return rows.map((r) => rowToOrder(r, itemsByOrder.get(r.id) ?? []))
+  const warehouseNames = await resolveWarehouseNames(rows)
+  return rows.map((r) => rowToOrder(r, itemsByOrder.get(r.id) ?? [], warehouseNames))
 }
 
 // Membaca satu pesanan berdasarkan nomor invoice. null bila tidak ditemukan.
@@ -357,8 +401,14 @@ export async function getOrderByOrderId(orderId: string): Promise<Order | null> 
   const itemRows = (itemData as OrderItemRow[]) ?? []
   const info = await resolveProductInfo(supabase, itemRows.map((r) => r.product_id))
   const variantInfo = await resolveVariantNames(supabase, itemRows.map((r) => r.variant_id))
+  // Nama gudang ikut di-resolve: modal detail pesanan OMS memakai objek Order yang sama.
+  const warehouseNames = await resolveWarehouseNames([row])
 
-  return rowToOrder(row, itemRows.map((ir) => itemRowToItem(ir, info, variantInfo)))
+  return rowToOrder(
+    row,
+    itemRows.map((ir) => itemRowToItem(ir, info, variantInfo)),
+    warehouseNames,
+  )
 }
 
 // Membaca SEMUA pesanan milik satu nomor telepon (untuk lacak/batalkan by no_telepon).
