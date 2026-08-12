@@ -50,14 +50,11 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Parameter tujuan/berat tidak valid.' }, { status: 400 })
   }
 
-  // Origin kini bersumber dari GUDANG, bukan langsung dari env: mode single → gudang default,
-  // mode multi → gudang terpilih untuk isi keranjang ini. getOriginIdForWarehouse tetap jatuh ke
-  // env (MENGANTAR_ORIGIN_ID / NEXT_PUBLIC_...) bila kolomnya kosong, jadi ongkir tak pernah mati
-  // hanya karena data gudang belum lengkap.
-  const warehouse = await resolveWarehouseForOrder(
-    parseItemsParam(searchParams.get('items')),
-    destinationId,
-  )
+  // Endpoint ini melayani SATU gudang saja (jalur lama). Perbandingan ongkir antar gudang untuk
+  // checkout ada di /api/mengantar/shipping/options — lihat catatan di file itu.
+  // Origin bersumber dari GUDANG, bukan env; getOriginIdForWarehouse tetap jatuh ke env bila
+  // kolomnya kosong, jadi ongkir tak pernah mati hanya karena data gudang belum lengkap.
+  const warehouse = await resolveWarehouseForOrder(parseItemsParam(searchParams.get('items')))
   const originId = await getOriginIdForWarehouse(warehouse?.id)
 
   if (!originId) {

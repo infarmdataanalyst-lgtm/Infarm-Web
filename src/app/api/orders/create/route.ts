@@ -13,7 +13,10 @@ import { readProducts } from '@/lib/mock-db/products'
 import { readPromotions } from '@/lib/mock-db/promotions'
 import { getVariantsByIds } from '@/lib/mock-db/variants'
 import { getMinOrderAmount } from '@/lib/mock-db/settings'
-import { resolveWarehouseForOrder } from '@/lib/warehouse'
+import { getEffectiveStock, resolveWarehouseForOrder, type StockRequirement } from '@/lib/warehouse'
+import { getWarehouseById } from '@/lib/mock-db/warehouses'
+import { getCachedShippingOptions, shippingOptionsKey } from '@/lib/warehouse-shipping'
+import type { Warehouse } from '@/types/warehouse'
 import { formatRupiah } from '@/lib/format'
 import { isPromotionExpired } from '@/types/promotion'
 import type { CreateOrderInput, OrderItem, OrderShippingAddress } from '@/types/order'
@@ -60,6 +63,32 @@ function isValidPayload(body: unknown): body is CreateOrderInput {
   )
 }
 
+// Memverifikasi satu gudang: ada, aktif, dan stoknya CUKUP untuk seluruh kebutuhan pesanan.
+// null bila tidak lolos — pemanggil lanjut ke kandidat berikutnya.
+//
+// Ini guard race condition: buyer bisa melihat ongkir gudang A, mengisi form beberapa menit,
+// lalu stok A habis lebih dulu oleh pembeli lain. Pengecekan memakai data FRESH (getEffectiveStock
+// membaca tabel stok per gudang langsung, bukan cache storefront).
+async function pickVerifiedWarehouse(
+  warehouseId: string | undefined,
+  requirements: StockRequirement[],
+): Promise<Warehouse | null> {
+  if (!warehouseId) return null
+  const warehouse = await getWarehouseById(warehouseId)
+  if (!warehouse || !warehouse.isActive) return null
+
+  for (const need of requirements) {
+    const stock = await getEffectiveStock(need.productId, {
+      variantId: need.variantId,
+      warehouseId,
+    })
+    // null = produk belum punya baris stok per gudang (mis. data belum di-backfill). Jangan tolak
+    // gudangnya karena itu — RPC checkout masih punya jalur fallback ke kolom stok lama.
+    if (stock !== null && stock < need.quantity) return null
+  }
+  return warehouse
+}
+
 // Menyimpan pesanan baru dari checkout
 export async function POST(request: Request) {
   // Rate limit per-IP: cegah bot membanjiri pembuatan order (dicek sebelum pekerjaan DB apa pun)
@@ -86,7 +115,14 @@ export async function POST(request: Request) {
   // === K-3: harga OTORITATIF dari server (jangan percaya harga/total dari client) ===
   // Ambil ulang harga tiap produk dari DB (promo_price), hitung subtotal & total di server.
   // Harga & totalAmount yang dikirim client diabaikan → cegah manipulasi (mis. bayar Rp1).
-  const extra = body as CreateOrderInput & { shippingCost?: unknown; discount?: unknown }
+  // warehouseId & weight datang dari hasil perbandingan ongkir di checkout — keduanya
+  // diverifikasi ulang di server (lihat pickVerifiedWarehouse), tidak dipercaya mentah.
+  const extra = body as CreateOrderInput & {
+    shippingCost?: unknown
+    discount?: unknown
+    warehouseId?: unknown
+    weight?: unknown
+  }
   const products = await readProducts()
   const byId = new Map(products.map((p) => [p.id, p]))
 
@@ -211,18 +247,49 @@ export async function POST(request: Request) {
   const totalAmount = Math.max(0, subtotal + shippingCost - discount)
 
   // === Gudang pemenuh pesanan ===
-  // Mode single → langsung gudang default (tanpa query stok/jarak). Mode multi → gudang aktif
-  // terdekat yang stoknya cukup untuk SELURUH item. Di-resolve SETELAH item final (termasuk
-  // produk hadiah promo) agar gudang yang dipilih benar-benar bisa memenuhi seluruh pesanan.
-  // null (mis. tabel gudang belum di-migrate) → RPC memakai gudang default / perilaku lama.
-  const warehouse = await resolveWarehouseForOrder(
-    pricedItems.map((it) => ({
-      productId: it.productId,
-      variantId: it.variantId ?? undefined,
-      quantity: it.quantity,
-    })),
-    body.address.destinationId,
-  )
+  // Gudang berasal dari kurir yang DIPILIH BUYER (hasil perbandingan ongkir riil antar gudang di
+  // /api/mengantar/shipping/options). Client mengirim `warehouseId`, tapi TIDAK dipercaya:
+  //   1. id-nya diverifikasi ada, aktif, dan stoknya masih cukup (guard race condition — stok bisa
+  //      habis di antara buyer melihat ongkir dan menekan bayar),
+  //   2. bila tak lolos, jatuh ke opsi ongkir termurah BERIKUTNYA dari hasil perbandingan yang
+  //      masih tersimpan di server (tanpa memanggil Mengantar lagi),
+  //   3. bila itu pun tak ada, resolveWarehouseForOrder memilih gudang ber-stok cukup / default.
+  // Di-resolve SETELAH item final (termasuk produk hadiah promo) agar penilaian stoknya lengkap.
+  const requirements = pricedItems.map((it) => ({
+    productId: it.productId,
+    variantId: it.variantId ?? undefined,
+    quantity: it.quantity,
+  }))
+
+  const requestedWarehouseId =
+    typeof extra.warehouseId === 'string' && extra.warehouseId ? extra.warehouseId : undefined
+
+  let warehouse = await pickVerifiedWarehouse(requestedWarehouseId, requirements)
+
+  if (!warehouse) {
+    // Gudang pilihan buyer tak lolos verifikasi → coba opsi termurah berikutnya dari cache
+    // perbandingan ongkir (kunci: tujuan + berat + isi keranjang).
+    const weight = typeof extra.weight === 'number' && extra.weight > 0 ? extra.weight : 1
+    const cached = getCachedShippingOptions(
+      shippingOptionsKey(body.address.destinationId, weight, requirements),
+    )
+    if (cached) {
+      // Urutan cache sudah termurah → termahal; ambil gudang pertama yang lolos verifikasi.
+      const tried = new Set<string>(requestedWarehouseId ? [requestedWarehouseId] : [])
+      for (const option of cached.options) {
+        if (tried.has(option.warehouseId)) continue
+        tried.add(option.warehouseId)
+        const candidate = await pickVerifiedWarehouse(option.warehouseId, requirements)
+        if (candidate) {
+          warehouse = candidate
+          break
+        }
+      }
+    }
+  }
+
+  // Masih belum dapat → jalur fallback lama (gudang ber-stok cukup, default didahulukan).
+  if (!warehouse) warehouse = await resolveWarehouseForOrder(requirements)
 
   try {
     // Kirim item & total hasil hitung server (bukan dari client)

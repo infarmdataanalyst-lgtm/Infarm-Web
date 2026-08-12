@@ -2,19 +2,21 @@
 
 // src/app/oms/dashboard/products/page.tsx
 // Halaman Manajemen Produk & Inventaris OMS — area internal Infarm.
-// Menampilkan ringkasan stok + tabel produk dengan aksi Edit (lengkap) & Hapus.
+// Menampilkan ringkasan stok + tabel produk dengan filter, seleksi massal, dan aksi per produk.
 // Produk hasil input OMS (mock DB) bisa diedit/dihapus permanen via API;
 // produk contoh bawaan (dummy) hanya bisa diubah sementara di layar.
+//
+// FILTER: state disimpan di URL query params (pola sama dengan halaman Pesanan) agar bisa
+// di-bookmark & di-share, tapi PENYARINGANNYA di client atas data yang sudah dimuat —
+// /api/products/list juga dipakai storefront, jadi endpoint itu sengaja tidak disentuh.
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
+import { useRouter, useSearchParams } from 'next/navigation'
+
 import OmsHeader from '@/components/oms/OmsHeader'
 import VariantManagerModal from '@/components/oms/VariantManagerModal'
-import WarehouseStockFields, {
-  sumStock,
-  type StockByWarehouse,
-} from '@/components/oms/WarehouseStockFields'
 import { PRODUCT_CATEGORIES, getCategoryLabel } from '@/lib/data/categories'
 import {
   validateName,
@@ -22,7 +24,6 @@ import {
   validateCategory,
   validatePrice,
   validateOriginalPrice,
-  validateStock,
   validateMinOrderQty,
   validateDescription,
   validateImages,
@@ -53,6 +54,7 @@ type Product = {
   images?: string[] // galeri foto (maks 9)
   persisted: boolean // true bila tersimpan di mock DB (bisa diedit/dihapus permanen)
   archived: boolean // true = disembunyikan dari ecommerce, tetap ada di OMS
+  createdAt?: string // ISO date dari DB; undefined untuk produk contoh → tersaring saat filter tanggal
 }
 
 // Bentuk data form pada modal edit
@@ -70,6 +72,22 @@ type EditForm = {
 
 const LOW_STOCK_THRESHOLD = 10 // di bawah angka ini dianggap stok menipis
 const MAX_IMAGES = 9 // maksimal foto per produk (sesuai slider detail produk)
+const PAGE_SIZE = 10 // baris per halaman (sama dengan halaman Pesanan)
+
+// Opsi filter status stok. Ambang batas mengikuti LOW_STOCK_THRESHOLD agar konsisten dengan
+// kartu ringkasan "Stok Menipis" di atas tabel.
+const STOCK_FILTERS = [
+  { value: 'habis', label: 'Stok Habis' },
+  { value: 'menipis', label: 'Stok Menipis' },
+  { value: 'tersedia', label: 'Tersedia' },
+] as const
+type StockFilter = (typeof STOCK_FILTERS)[number]['value']
+
+const STATUS_FILTERS = [
+  { value: 'aktif', label: 'Aktif' },
+  { value: 'arsip', label: 'Diarsipkan' },
+] as const
+type StatusFilter = (typeof STATUS_FILTERS)[number]['value']
 
 // Ringkasan varian per produk (dari /api/variants/summary) — untuk tampilan harga & stok agregat.
 type VariantSummary = { count: number; totalStock: number; minPrice: number; maxPrice: number }
@@ -108,6 +126,7 @@ function mapStored(p: StoredProduct): Product {
     images: p.images,
     persisted: true,
     archived: p.archived ?? false,
+    createdAt: p.createdAt,
   }
 }
 
@@ -120,16 +139,53 @@ function formatRupiah(value: number): string {
   }).format(value)
 }
 
+// Wrapper: useSearchParams (dipakai ProductsContent) WAJIB dibungkus <Suspense>, kalau tidak
+// build Next.js gagal. Pola sama dengan halaman Pesanan.
 export default function ProductsPage() {
+  return (
+    <Suspense fallback={<OmsHeader title="Produk" notificationCount={3} />}>
+      <ProductsContent />
+    </Suspense>
+  )
+}
+
+function ProductsContent() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+
+  // === Filter (sumber kebenaran = URL query params) ===
+  const dari = searchParams.get('dari') ?? ''
+  const sampai = searchParams.get('sampai') ?? ''
+  const kategori = searchParams.get('kategori') ?? ''
+  const stok = (searchParams.get('stok') as StockFilter | null) ?? ''
+  const status = (searchParams.get('status') as StatusFilter | null) ?? ''
+  const q = searchParams.get('q') ?? ''
+
+  // Input pencarian punya state sendiri supaya mengetik terasa instan; URL baru diperbarui
+  // setelah user berhenti mengetik (debounce), agar tak menumpuk entri history.
+  const [searchInput, setSearchInput] = useState(q)
+  const searchTimer = useRef<number | null>(null)
+
+  // Paginasi (client-side, atas hasil filter)
+  const [page, setPage] = useState(1)
+
+  // Seleksi massal — berisi id produk TERSIMPAN saja (produk contoh tak bisa dipilih)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [bulkConfirm, setBulkConfirm] = useState<'delete' | null>(null)
+  const [bulkCategoryOpen, setBulkCategoryOpen] = useState(false)
+
+  // Menu ⋮ per baris yang sedang terbuka (id produk)
+  const [rowMenu, setRowMenu] = useState<string | null>(null)
+
   // === State ===
   const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS)
 
   // Modal Edit
   const [editTarget, setEditTarget] = useState<Product | null>(null)
   const [form, setForm] = useState<EditForm | null>(null)
-  // Stok per gudang (mode multi). Nilai awalnya dimuat WarehouseStockFields dari server.
-  const [stockByWarehouse, setStockByWarehouse] = useState<StockByWarehouse>({})
-  const [warehouseMode, setWarehouseMode] = useState<'single' | 'multi'>('single')
+  // Catatan: modal edit TIDAK lagi menyimpan stok. Stok hanya bisa diubah di
+  // Gudang → Kelola Stok (satu tempat, tercatat di riwayat mutasi), jadi tak ada state stok di sini.
   const [saving, setSaving] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
 
@@ -158,15 +214,22 @@ export default function ProductsPage() {
   const [editSkuDuplicate, setEditSkuDuplicate] = useState(false)
   const [toast, setToast] = useState('')
 
-  // Toast sukses setelah upload produk baru (flag di-set halaman upload sebelum redirect)
+  // Toast sukses setelah upload produk baru (flag di-set halaman upload sebelum redirect).
+  // setToast dijalankan lewat timer 0ms, BUKAN langsung di badan efek: lint
+  // `react-hooks/set-state-in-effect` melarang setState sinkron di dalam efek, dan toast ini
+  // memang notifikasi sesudah render — bukan state yang dibutuhkan saat render pertama.
   useEffect(() => {
+    let timer: number | undefined
     try {
       if (sessionStorage.getItem('oms_product_saved')) {
         sessionStorage.removeItem('oms_product_saved')
-        setToast('Produk berhasil disimpan.')
+        timer = window.setTimeout(() => setToast('Produk berhasil disimpan.'), 0)
       }
     } catch {
       // sessionStorage bisa gagal (mode privat) — abaikan
+    }
+    return () => {
+      if (timer !== undefined) window.clearTimeout(timer)
     }
   }, [])
 
@@ -213,6 +276,188 @@ export default function ProductsPage() {
     }
   }, [rangeDays])
 
+  // === Filter: sinkronisasi URL ===
+
+  // Memperbarui sebagian filter di URL. Nilai kosong/null menghapus param-nya.
+  // router.replace dipakai (bukan push) supaya menyaring tidak menumpuk riwayat back button.
+  const updateFilters = useCallback(
+    (next: Record<string, string | null>) => {
+      const params = new URLSearchParams(searchParams)
+      for (const [key, value] of Object.entries(next)) {
+        if (value === null || value === '') params.delete(key)
+        else params.set(key, value)
+      }
+      const query = params.toString()
+      router.replace(`/oms/dashboard/products${query ? `?${query}` : ''}`, { scroll: false })
+      setPage(1)
+      setSelected(new Set()) // hasil berubah → seleksi lama tak lagi relevan
+    },
+    [router, searchParams],
+  )
+
+  // Debounce dilakukan DI EVENT HANDLER, bukan lewat useEffect: menulis URL berarti memanggil
+  // setState (page & seleksi ikut di-reset), dan lint `react-hooks/set-state-in-effect` melarang
+  // setState sinkron di dalam efek.
+  function handleSearchChange(value: string) {
+    setSearchInput(value)
+    if (searchTimer.current !== null) window.clearTimeout(searchTimer.current)
+    searchTimer.current = window.setTimeout(() => updateFilters({ q: value || null }), 400)
+  }
+
+  // Bersihkan timer bila komponen dilepas sebelum jeda selesai (tak ada setState di sini)
+  useEffect(
+    () => () => {
+      if (searchTimer.current !== null) window.clearTimeout(searchTimer.current)
+    },
+    [],
+  )
+
+  const hasActiveFilters = Boolean(dari || sampai || kategori || stok || status || q)
+
+  function resetFilters() {
+    setSearchInput('')
+    router.replace('/oms/dashboard/products', { scroll: false })
+    setPage(1)
+    setSelected(new Set())
+  }
+
+  // Pintasan rentang tanggal (hari ini, 7/30 hari terakhir, bulan ini) — pola halaman Pesanan.
+  function applyDateShortcut(days: number, monthStart = false) {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const from = new Date(today)
+    if (monthStart) from.setDate(1)
+    else from.setDate(today.getDate() - days)
+    const fmt = (d: Date) => d.toISOString().split('T')[0]
+    updateFilters({ dari: fmt(from), sampai: fmt(today) })
+  }
+
+  // === Filter: penyaringan ===
+
+  // Stok efektif satu produk (produk bervarian → total stok varian, seperti kolom Sisa Stok).
+  const stockOf = useCallback(
+    (p: Product) => summaries[p.id]?.totalStock ?? p.stock,
+    [summaries],
+  )
+
+  const filtered = useMemo(() => {
+    const keyword = q.trim().toLowerCase()
+    // Tanggal dibandingkan sebagai teks 'YYYY-MM-DD' (ISO), bukan objek Date — createdAt dari
+    // Supabase sudah ISO sehingga perbandingan leksikografisnya setara perbandingan waktu.
+    const fromDay = dari || null
+    const toDay = sampai || null
+
+    return products.filter((p) => {
+      if (keyword && !`${p.name} ${p.sku}`.toLowerCase().includes(keyword)) return false
+      if (kategori && p.slug !== kategori) return false
+      if (status === 'aktif' && p.archived) return false
+      if (status === 'arsip' && !p.archived) return false
+
+      if (stok) {
+        const s = stockOf(p)
+        if (stok === 'habis' && s !== 0) return false
+        if (stok === 'menipis' && !(s > 0 && s < LOW_STOCK_THRESHOLD)) return false
+        if (stok === 'tersedia' && s < LOW_STOCK_THRESHOLD) return false
+      }
+
+      if (fromDay || toDay) {
+        // Produk contoh tak punya createdAt → sengaja disaring keluar saat filter tanggal aktif,
+        // karena mengklaim tanggal apa pun untuknya akan menyesatkan.
+        if (!p.createdAt) return false
+        const day = p.createdAt.slice(0, 10)
+        if (fromDay && day < fromDay) return false
+        if (toDay && day > toDay) return false
+      }
+
+      return true
+    })
+  }, [products, q, kategori, status, stok, dari, sampai, stockOf])
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const currentPage = Math.min(page, totalPages)
+  const pageProducts = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+
+  // === Seleksi massal ===
+
+  // Hanya produk tersimpan yang boleh dipilih — produk contoh tak ada di database, jadi aksi
+  // massal atasnya tak bisa menyimpan apa pun.
+  const selectableOnPage = pageProducts.filter((p) => p.persisted)
+  const allOnPageSelected =
+    selectableOnPage.length > 0 && selectableOnPage.every((p) => selected.has(p.id))
+  const selectedCount = selected.size
+
+  function toggleSelect(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  // "Pilih semua" berlaku untuk baris di HALAMAN AKTIF saja (bukan seluruh hasil filter),
+  // supaya jumlah yang terpilih selalu sama dengan yang terlihat di layar.
+  function toggleSelectAllOnPage() {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (allOnPageSelected) selectableOnPage.forEach((p) => next.delete(p.id))
+      else selectableOnPage.forEach((p) => next.add(p.id))
+      return next
+    })
+  }
+
+  // Menjalankan aksi massal ke API lalu memperbarui daftar di layar.
+  async function runBulk(action: 'archive' | 'restore' | 'delete' | 'category', category?: string) {
+    const ids = [...selected]
+    if (ids.length === 0) return
+    setBulkBusy(true)
+    try {
+      const res = await fetch('/api/products/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, ids, category }),
+      })
+      const data = (await res.json().catch(() => ({}))) as { error?: string; affected?: number }
+      if (!res.ok) {
+        setToast(data.error ?? 'Aksi massal gagal.')
+        return
+      }
+
+      // Perbarui state lokal sesuai aksi (hindari refetch penuh agar filter & halaman tak reset)
+      const idSet = new Set(ids)
+      if (action === 'delete') {
+        setProducts((prev) => prev.filter((p) => !idSet.has(p.id)))
+      } else if (action === 'archive' || action === 'restore') {
+        const archived = action === 'archive'
+        setProducts((prev) => prev.map((p) => (idSet.has(p.id) ? { ...p, archived } : p)))
+      } else if (category) {
+        const label = getCategoryLabel(category as ProductCategory) ?? category
+        setProducts((prev) =>
+          prev.map((p) =>
+            idSet.has(p.id) ? { ...p, slug: category as ProductCategory, categoryLabel: label } : p,
+          ),
+        )
+      }
+
+      const verb =
+        action === 'delete'
+          ? 'dihapus'
+          : action === 'archive'
+            ? 'diarsipkan'
+            : action === 'restore'
+              ? 'dipulihkan'
+              : 'diubah kategorinya'
+      setToast(`${data.affected ?? ids.length} produk ${verb}.`)
+      setSelected(new Set())
+    } catch {
+      setToast('Aksi massal gagal. Periksa koneksi lalu coba lagi.')
+    } finally {
+      setBulkBusy(false)
+      setBulkConfirm(null)
+      setBulkCategoryOpen(false)
+    }
+  }
+
   // === Ringkasan stok ===
   const summary = useMemo(() => {
     const total = products.length
@@ -254,14 +499,10 @@ export default function ProductsPage() {
     setForm(null)
     setEditError(null)
     setEditSkuDuplicate(false)
-    setStockByWarehouse({}) // jangan bocor ke produk berikutnya yang dibuka
   }
 
-  // Stok yang divalidasi & disimpan: mode multi = jumlah semua gudang, single = input tunggal.
-  const effectiveStock: number | '' =
-    warehouseMode === 'multi' ? sumStock(stockByWarehouse) : (form?.stock ?? '')
-
-  // Error live per field modal edit (dihitung dari form)
+  // Error live per field modal edit (dihitung dari form).
+  // Stok TIDAK divalidasi di sini karena tidak bisa diubah dari modal ini.
   const editErrors = useMemo(() => {
     if (!form) return {} as Record<string, string | undefined>
     return {
@@ -270,12 +511,11 @@ export default function ProductsPage() {
       category: validateCategory(form.slug),
       price: validatePrice(form.price),
       originalPrice: validateOriginalPrice(form.originalPrice, form.price),
-      stock: validateStock(effectiveStock),
       minOrderQty: validateMinOrderQty(form.minOrderQty),
       description: validateDescription(form.description),
       images: validateImages(form.images.length),
     }
-  }, [form, effectiveStock])
+  }, [form])
 
   // SKU error gabungan (format lalu duplikat) + status valid keseluruhan modal
   const editSkuError = editErrors.sku ?? (editSkuDuplicate ? 'SKU sudah digunakan produk lain' : undefined)
@@ -286,7 +526,6 @@ export default function ProductsPage() {
     !editErrors.category &&
     !editErrors.price &&
     !editErrors.originalPrice &&
-    !editErrors.stock &&
     !editErrors.minOrderQty &&
     !editErrors.description &&
     !editErrors.images
@@ -355,7 +594,6 @@ export default function ProductsPage() {
       editErrors.category ??
       editErrors.price ??
       editErrors.originalPrice ??
-      editErrors.stock ??
       editErrors.description ??
       editErrors.images
     if (firstError) {
@@ -365,7 +603,8 @@ export default function ProductsPage() {
 
     setSaving(true)
     const price = Number(form.price) || 0
-    const stock = Number(effectiveStock) || 0
+    // Stok tidak ikut dikirim: nilainya hanya ditampilkan. Perubahan stok lewat Kelola Stok.
+    const stock = Number(form.stock) || 0
     const originalPrice = form.originalPrice === '' ? undefined : Number(form.originalPrice)
 
     if (editTarget.persisted) {
@@ -381,15 +620,9 @@ export default function ProductsPage() {
             category: form.slug,
             price,
             originalPrice,
-            stock,
-            // Rincian per gudang hanya dikirim di mode multi (server mengabaikan di mode single)
-            stockPerWarehouse:
-              warehouseMode === 'multi'
-                ? Object.entries(stockByWarehouse).map(([warehouseId, stok]) => ({
-                    warehouseId,
-                    stok: stok === '' ? 0 : stok,
-                  }))
-                : undefined,
+            // stock & stockPerWarehouse SENGAJA tidak dikirim: modal ini tak boleh mengubah stok
+            // (satu-satunya jalur = POST /api/warehouses/stock/set dari halaman Kelola Stok).
+            // Tanpa field itu, /api/products/update membiarkan stok apa adanya.
             minOrderQty: Number(form.minOrderQty) || 1,
             description: form.description.trim(),
             imageUrl: form.images[0],
@@ -507,6 +740,190 @@ export default function ProductsPage() {
           <SummaryCard label="Stok Habis" value={`${summary.outOfStock} Produk`} valueClass="text-red-600" accentClass="bg-red-50 text-red-600" icon={<EmptyIcon />} />
         </section>
 
+        {/* === Bilah Filter === */}
+        <section className="mt-6 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+            {/* Pencarian nama / SKU */}
+            <div className="lg:col-span-2">
+              <label htmlFor="pf-q" className="mb-1.5 block text-xs font-semibold text-gray-600">
+                Cari nama atau SKU
+              </label>
+              <input
+                id="pf-q"
+                type="search"
+                value={searchInput}
+                onChange={(e) => handleSearchChange(e.target.value)}
+                placeholder="mis. Cocopeat atau INF-CC-001"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+              />
+            </div>
+
+            {/* Kategori — opsi dari konstanta PRODUCT_CATEGORIES (satu sumber dengan storefront) */}
+            <div>
+              <label htmlFor="pf-kategori" className="mb-1.5 block text-xs font-semibold text-gray-600">
+                Kategori
+              </label>
+              <select
+                id="pf-kategori"
+                value={kategori}
+                onChange={(e) => updateFilters({ kategori: e.target.value || null })}
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+              >
+                <option value="">Semua kategori</option>
+                {PRODUCT_CATEGORIES.map((c) => (
+                  <option key={c.slug} value={c.slug}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Status stok */}
+            <div>
+              <label htmlFor="pf-stok" className="mb-1.5 block text-xs font-semibold text-gray-600">
+                Status stok
+              </label>
+              <select
+                id="pf-stok"
+                value={stok}
+                onChange={(e) => updateFilters({ stok: e.target.value || null })}
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+              >
+                <option value="">Semua stok</option>
+                {STOCK_FILTERS.map((f) => (
+                  <option key={f.value} value={f.value}>
+                    {f.label}
+                    {f.value === 'menipis' ? ` (< ${LOW_STOCK_THRESHOLD})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Status produk */}
+            <div>
+              <label htmlFor="pf-status" className="mb-1.5 block text-xs font-semibold text-gray-600">
+                Status produk
+              </label>
+              <select
+                id="pf-status"
+                value={status}
+                onChange={(e) => updateFilters({ status: e.target.value || null })}
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+              >
+                <option value="">Semua status</option>
+                {STATUS_FILTERS.map((f) => (
+                  <option key={f.value} value={f.value}>
+                    {f.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Rentang tanggal dibuat — input date native (tanpa library) */}
+            <div>
+              <label htmlFor="pf-dari" className="mb-1.5 block text-xs font-semibold text-gray-600">
+                Dibuat dari
+              </label>
+              <input
+                id="pf-dari"
+                type="date"
+                value={dari}
+                max={sampai || undefined}
+                onChange={(e) => updateFilters({ dari: e.target.value || null })}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+              />
+            </div>
+            <div>
+              <label htmlFor="pf-sampai" className="mb-1.5 block text-xs font-semibold text-gray-600">
+                Sampai
+              </label>
+              <input
+                id="pf-sampai"
+                type="date"
+                value={sampai}
+                min={dari || undefined}
+                onChange={(e) => updateFilters({ sampai: e.target.value || null })}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+              />
+            </div>
+          </div>
+
+          {/* Pintasan rentang tanggal */}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium text-gray-500">Pintasan:</span>
+            {[
+              { label: 'Hari ini', days: 0 },
+              { label: '7 hari', days: 7 },
+              { label: '30 hari', days: 30 },
+            ].map((s) => (
+              <button
+                key={s.label}
+                type="button"
+                onClick={() => applyDateShortcut(s.days)}
+                className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-semibold text-gray-600 transition hover:bg-gray-50"
+              >
+                {s.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => applyDateShortcut(0, true)}
+              className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-semibold text-gray-600 transition hover:bg-gray-50"
+            >
+              Bulan ini
+            </button>
+          </div>
+
+          {/* Chip filter aktif — tiap chip bisa dihapus sendiri */}
+          {hasActiveFilters && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-gray-100 pt-3">
+              {q && (
+                <FilterChip
+                  label={`Cari: "${q}"`}
+                  onRemove={() => {
+                    setSearchInput('')
+                    updateFilters({ q: null })
+                  }}
+                />
+              )}
+              {kategori && (
+                <FilterChip
+                  label={getCategoryLabel(kategori as ProductCategory) ?? kategori}
+                  onRemove={() => updateFilters({ kategori: null })}
+                />
+              )}
+              {stok && (
+                <FilterChip
+                  label={STOCK_FILTERS.find((f) => f.value === stok)?.label ?? stok}
+                  onRemove={() => updateFilters({ stok: null })}
+                />
+              )}
+              {status && (
+                <FilterChip
+                  label={STATUS_FILTERS.find((f) => f.value === status)?.label ?? status}
+                  onRemove={() => updateFilters({ status: null })}
+                />
+              )}
+              {dari && (
+                <FilterChip label={`Dari ${dari}`} onRemove={() => updateFilters({ dari: null })} />
+              )}
+              {sampai && (
+                <FilterChip
+                  label={`Sampai ${sampai}`}
+                  onRemove={() => updateFilters({ sampai: null })}
+                />
+              )}
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="ml-1 text-xs font-semibold text-emerald-700 underline underline-offset-2 transition hover:text-emerald-800"
+              >
+                Reset semua filter
+              </button>
+            </div>
+          )}
+        </section>
+
         {/* === Filter Rentang Penjualan (kolom Terjual) === */}
         <div className="mt-6 flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium text-gray-600">Terjual dalam:</span>
@@ -528,121 +945,313 @@ export default function ProductsPage() {
           </div>
         </div>
 
+        {/* === Bilah Aksi Massal (sticky di atas tabel, hanya saat ada yang dipilih) === */}
+        {selectedCount > 0 && (
+          <div className="sticky top-4 z-20 mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 shadow-sm">
+            <span className="text-sm font-semibold text-emerald-900">
+              {selectedCount} produk dipilih
+            </span>
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={bulkBusy}
+                onClick={() => runBulk('archive')}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 transition hover:bg-gray-50 disabled:opacity-60"
+              >
+                <ArchiveIcon />
+                Arsipkan Terpilih
+              </button>
+              <button
+                type="button"
+                disabled={bulkBusy}
+                onClick={() => runBulk('restore')}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 transition hover:bg-gray-50 disabled:opacity-60"
+              >
+                <RestoreIcon />
+                Pulihkan Terpilih
+              </button>
+              <div className="relative">
+                <button
+                  type="button"
+                  disabled={bulkBusy}
+                  onClick={() => setBulkCategoryOpen((v) => !v)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 transition hover:bg-gray-50 disabled:opacity-60"
+                >
+                  Ubah Kategori
+                </button>
+                {bulkCategoryOpen && (
+                  <div className="absolute right-0 top-full z-30 mt-1 w-52 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+                    {PRODUCT_CATEGORIES.map((c) => (
+                      <button
+                        key={c.slug}
+                        type="button"
+                        onClick={() => runBulk('category', c.slug)}
+                        className="block w-full px-3 py-2 text-left text-xs font-medium text-gray-700 transition hover:bg-gray-50"
+                      >
+                        {c.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                disabled={bulkBusy}
+                onClick={() => setBulkConfirm('delete')}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-600 transition hover:bg-red-50 disabled:opacity-60"
+              >
+                <TrashIcon />
+                Hapus Terpilih
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelected(new Set())}
+                className="text-xs font-semibold text-emerald-800 underline underline-offset-2"
+              >
+                Batalkan pilihan
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* === Tabel Produk === */}
         <section className="mt-4 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+          {/* Info jumlah hasil filter */}
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 px-5 py-3 text-xs text-gray-500">
+            <span>
+              Menampilkan {pageProducts.length} dari {filtered.length} produk
+              {hasActiveFilters ? ' (terfilter)' : ''}
+            </span>
+            {totalPages > 1 && (
+              <span>
+                Halaman {currentPage} dari {totalPages}
+              </span>
+            )}
+          </div>
+
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
+            {/* table-fixed + <colgroup>: lebar kolom ditentukan eksplisit, bukan diserahkan ke
+                browser. Tanpa ini kolom Produk melebar mengikuti nama terpanjang dan mendorong
+                kolom lain sampai tabel butuh scroll horizontal di layar normal. */}
+            <table className="w-full min-w-[900px] table-fixed text-left text-sm">
+              <colgroup>
+                <col className="w-10" />
+                <col className="w-[26%]" />
+                <col className="w-28" />
+                <col className="w-36" />
+                <col className="w-32" />
+                <col className="w-28" />
+                <col className="w-20" />
+                <col className="w-24" />
+              </colgroup>
               <thead className="border-b border-gray-200 bg-gray-50 text-xs font-semibold uppercase tracking-wide text-gray-500">
                 <tr>
+                  <th className="px-3 py-3.5">
+                    <input
+                      type="checkbox"
+                      checked={allOnPageSelected}
+                      onChange={toggleSelectAllOnPage}
+                      disabled={selectableOnPage.length === 0}
+                      aria-label="Pilih semua produk di halaman ini"
+                      title="Pilih semua produk di halaman ini"
+                      className="h-4 w-4 accent-emerald-700 disabled:opacity-40"
+                    />
+                  </th>
                   <th className="px-5 py-3.5">Produk</th>
-                  <th className="px-5 py-3.5">SKU / Kode</th>
-                  <th className="px-5 py-3.5">Kategori</th>
-                  <th className="px-5 py-3.5">Harga</th>
-                  <th className="px-5 py-3.5">Sisa Stok</th>
-                  <th className="px-5 py-3.5">Terjual</th>
-                  <th className="px-5 py-3.5 text-right">Aksi</th>
+                  <th className="px-3 py-3.5">SKU / Kode</th>
+                  <th className="px-3 py-3.5">Kategori</th>
+                  <th className="px-3 py-3.5">Harga</th>
+                  <th className="px-3 py-3.5">Sisa Stok</th>
+                  <th className="px-3 py-3.5">Terjual</th>
+                  <th className="px-3 py-3.5 text-right">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {products.map((product) => (
-                  <tr key={product.id} className={`hover:bg-gray-50/70 ${product.archived ? 'bg-gray-50/60' : ''}`}>
+                {pageProducts.length === 0 && (
+                  <tr>
+                    <td colSpan={8} className="px-5 py-12 text-center text-sm text-gray-500">
+                      Tidak ada produk yang cocok dengan filter.{' '}
+                      {hasActiveFilters && (
+                        <button
+                          type="button"
+                          onClick={resetFilters}
+                          className="font-semibold text-emerald-700 underline underline-offset-2"
+                        >
+                          Reset filter
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                )}
+                {pageProducts.map((product) => (
+                  <tr key={product.id} className={`hover:bg-gray-50/70 ${product.archived ? 'bg-gray-50/60' : ''} ${selected.has(product.id) ? 'bg-emerald-50/40' : ''}`}>
+                    {/* Checkbox seleksi — produk contoh dinonaktifkan (tak ada di database) */}
+                    <td className="px-3 py-4">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(product.id)}
+                        onChange={() => toggleSelect(product.id)}
+                        disabled={!product.persisted}
+                        aria-label={`Pilih ${product.name}`}
+                        title={
+                          product.persisted
+                            ? `Pilih ${product.name}`
+                            : 'Produk contoh — tidak tersimpan di database, tak bisa diaksi massal'
+                        }
+                        className="h-4 w-4 accent-emerald-700 disabled:opacity-40"
+                      />
+                    </td>
                     <td className="px-5 py-4">
                       <div className={`flex items-center gap-3 ${product.archived ? 'opacity-60' : ''}`}>
                         <div className="relative h-11 w-11 flex-none overflow-hidden rounded-lg border border-gray-200 bg-gray-100">
                           <Image src={product.image} alt={product.name} fill unoptimized sizes="44px" className="object-cover" />
                         </div>
-                        <div>
-                          <span className="font-medium text-gray-900">{product.name}</span>
+                        {/* min-w-0 wajib: tanpanya flex item menolak menyusut sehingga line-clamp
+                            tak pernah aktif dan nama panjang mendorong lebar kolom. */}
+                        <div className="min-w-0">
+                          {/* Nama dipotong 2 baris; nama penuh lewat title (tooltip native) */}
+                          <span
+                            title={product.name}
+                            className="line-clamp-2 font-medium text-gray-900"
+                          >
+                            {product.name}
+                          </span>
                           {product.archived && (
-                            <span className="ml-2 inline-flex rounded-full bg-gray-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                            <span className="mt-1 inline-flex rounded-full bg-gray-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
                               Diarsipkan
                             </span>
                           )}
                         </div>
                       </div>
                     </td>
-                    <td className={`px-5 py-4 font-mono text-xs text-gray-500 ${product.archived ? 'opacity-60' : ''}`}>{product.sku}</td>
-                    <td className={`px-5 py-4 ${product.archived ? 'opacity-60' : ''}`}>
-                      <span className="inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
+                    <td className={`px-3 py-4 font-mono text-xs text-gray-500 ${product.archived ? 'opacity-60' : ''}`}>
+                      <span title={product.sku} className="block truncate">{product.sku}</span>
+                    </td>
+                    <td className={`px-3 py-4 ${product.archived ? 'opacity-60' : ''}`}>
+                      <span
+                        title={product.categoryLabel}
+                        className="inline-flex max-w-full truncate rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700"
+                      >
                         {product.categoryLabel}
                       </span>
                     </td>
-                    <td className={`px-5 py-4 text-gray-700 ${product.archived ? 'opacity-60' : ''}`}>
+                    <td className={`px-3 py-4 text-gray-700 ${product.archived ? 'opacity-60' : ''}`}>
                       {summaries[product.id] ? (
                         // Produk bervarian → tampilkan rentang harga varian (bukan harga produk)
-                        <span>
+                        <span className="block truncate" title={`${summaries[product.id].count} varian`}>
                           {summaries[product.id].minPrice === summaries[product.id].maxPrice
                             ? formatRupiah(summaries[product.id].minPrice)
                             : `${formatRupiah(summaries[product.id].minPrice)} – ${formatRupiah(summaries[product.id].maxPrice)}`}
                           <span className="ml-1 text-xs text-emerald-600">({summaries[product.id].count} varian)</span>
                         </span>
                       ) : (
-                        formatRupiah(product.price)
+                        <span className="block truncate">{formatRupiah(product.price)}</span>
                       )}
                     </td>
-                    <td className="px-5 py-4">
-                      <div className="flex items-center gap-2">
+                    <td className="px-3 py-4">
+                      {/* Arsip cepat untuk produk stok habis kini jadi ikon saja agar kolom tetap
+                          sempit; labelnya lewat title. */}
+                      <div className="flex items-center gap-1.5">
                         {/* Produk bervarian → total stok semua varian */}
                         <StockBadge stock={summaries[product.id]?.totalStock ?? product.stock} />
-                        {/* Arsip cepat untuk produk stok habis yang belum diarsipkan */}
                         {product.stock === 0 && !product.archived && (
                           <button
                             type="button"
                             onClick={() => toggleArchive(product)}
-                            className="inline-flex items-center gap-1 rounded-lg bg-amber-500 px-2 py-1 text-[11px] font-semibold text-white transition hover:bg-amber-600"
+                            aria-label={`Arsipkan ${product.name}`}
+                            title="Arsipkan (stok habis)"
+                            className="inline-flex items-center rounded-lg bg-amber-500 p-1.5 text-white transition hover:bg-amber-600"
                           >
                             <ArchiveIcon />
-                            Arsipkan
                           </button>
                         )}
                       </div>
                     </td>
                     {/* Terjual dalam rentang waktu terpilih */}
-                    <td className={`px-5 py-4 ${product.archived ? 'opacity-60' : ''}`}>
+                    <td className={`px-3 py-4 ${product.archived ? 'opacity-60' : ''}`}>
                       <span className="font-semibold text-gray-900">
                         {(soldCounts[product.id] ?? 0).toLocaleString('id-ID')}
                       </span>
                       <span className="ml-1 text-xs text-gray-400">pcs</span>
                     </td>
-                    {/* Aksi: Edit + Arsip + Hapus */}
-                    <td className="px-5 py-4">
-                      <div className="flex items-center justify-end gap-2">
+                    {/* Aksi: Edit & Varian sebagai ikon (paling sering dipakai), Arsip & Hapus
+                        di dropdown ⋮ — Hapus yang destruktif jadi butuh satu klik ekstra. */}
+                    <td className="px-3 py-4">
+                      <div className="flex items-center justify-end gap-1">
                         <button
                           type="button"
                           onClick={() => openEdit(product)}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50"
+                          aria-label={`Edit ${product.name}`}
+                          title="Edit produk"
+                          className="inline-flex items-center rounded-lg border border-emerald-200 bg-white p-2 text-emerald-700 transition hover:bg-emerald-50"
                         >
                           <PencilIcon />
-                          Edit
                         </button>
                         {/* Kelola varian — hanya produk tersimpan (mock DB / Supabase), bukan produk contoh */}
                         {product.persisted && (
                           <button
                             type="button"
                             onClick={() => setVariantTarget(product)}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50"
+                            aria-label={`Kelola varian ${product.name}`}
+                            title={`Kelola varian${summaries[product.id] ? ` (${summaries[product.id].count} varian)` : ''}`}
+                            className="relative inline-flex items-center rounded-lg border border-emerald-200 bg-white p-2 text-emerald-700 transition hover:bg-emerald-50"
                           >
                             <LayersIcon />
-                            Varian{summaries[product.id] ? ` (${summaries[product.id].count})` : ''}
+                            {summaries[product.id] && (
+                              <span className="absolute -right-1 -top-1 rounded-full bg-emerald-700 px-1 text-[10px] font-bold leading-4 text-white">
+                                {summaries[product.id].count}
+                              </span>
+                            )}
                           </button>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => toggleArchive(product)}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-600 transition hover:bg-gray-50"
-                          title={product.archived ? 'Pulihkan ke ecommerce' : 'Arsipkan (sembunyikan dari ecommerce)'}
-                        >
-                          {product.archived ? <RestoreIcon /> : <ArchiveIcon />}
-                          {product.archived ? 'Pulihkan' : 'Arsip'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setDeleteTarget(product)}
-                          aria-label={`Hapus ${product.name}`}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-red-600 transition hover:bg-red-50"
-                        >
-                          <TrashIcon />
-                        </button>
+
+                        {/* Dropdown ⋮ — tutup lewat klik-luar (overlay transparan) */}
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={() => setRowMenu(rowMenu === product.id ? null : product.id)}
+                            aria-label={`Aksi lain untuk ${product.name}`}
+                            aria-expanded={rowMenu === product.id}
+                            title="Aksi lain"
+                            className="inline-flex items-center rounded-lg border border-gray-200 bg-white p-2 text-gray-500 transition hover:bg-gray-50"
+                          >
+                            <DotsIcon />
+                          </button>
+                          {rowMenu === product.id && (
+                            <>
+                              <button
+                                type="button"
+                                aria-label="Tutup menu"
+                                onClick={() => setRowMenu(null)}
+                                className="fixed inset-0 z-20 cursor-default"
+                              />
+                              <div className="absolute right-0 top-full z-30 mt-1 w-48 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 text-left shadow-lg">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    toggleArchive(product)
+                                    setRowMenu(null)
+                                  }}
+                                  className="flex w-full items-center gap-2 px-3 py-2 text-xs font-medium text-gray-700 transition hover:bg-gray-50"
+                                >
+                                  {product.archived ? <RestoreIcon /> : <ArchiveIcon />}
+                                  {product.archived ? 'Pulihkan ke ecommerce' : 'Arsipkan'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setDeleteTarget(product)
+                                    setRowMenu(null)
+                                  }}
+                                  className="flex w-full items-center gap-2 px-3 py-2 text-xs font-medium text-red-600 transition hover:bg-red-50"
+                                >
+                                  <TrashIcon />
+                                  Hapus produk
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </div>
                       </div>
                     </td>
                   </tr>
@@ -650,8 +1259,72 @@ export default function ProductsPage() {
               </tbody>
             </table>
           </div>
+
+          {/* Paginasi (client-side atas hasil filter) */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between gap-2 border-t border-gray-100 px-5 py-3">
+              <button
+                type="button"
+                disabled={currentPage <= 1}
+                onClick={() => setPage(currentPage - 1)}
+                className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-600 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Sebelumnya
+              </button>
+              <span className="text-xs text-gray-500">
+                Halaman {currentPage} dari {totalPages}
+              </span>
+              <button
+                type="button"
+                disabled={currentPage >= totalPages}
+                onClick={() => setPage(currentPage + 1)}
+                className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-600 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Berikutnya
+              </button>
+            </div>
+          )}
         </section>
       </div>
+
+      {/* === Konfirmasi Hapus Massal === */}
+      {bulkConfirm === 'delete' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button
+            type="button"
+            aria-label="Tutup konfirmasi"
+            onClick={() => setBulkConfirm(null)}
+            className="absolute inset-0 bg-gray-900/50"
+          />
+          <div className="relative w-full max-w-sm rounded-xl bg-white p-5 shadow-xl">
+            <h2 className="text-base font-bold text-gray-900">
+              Hapus {selectedCount} produk terpilih?
+            </h2>
+            <p className="mt-1 text-sm leading-relaxed text-gray-500">
+              Produk beserta varian dan stok per gudangnya akan dihapus permanen dan{' '}
+              <strong>tidak bisa dibatalkan</strong>. Riwayat pesanan lama tetap tersimpan. Kalau
+              hanya ingin menyembunyikan dari ecommerce, gunakan Arsipkan.
+            </p>
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setBulkConfirm(null)}
+                className="flex-1 rounded-lg border border-gray-200 py-2.5 text-sm font-semibold text-gray-700 transition hover:bg-gray-50"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                disabled={bulkBusy}
+                onClick={() => runBulk('delete')}
+                className="flex-1 rounded-lg bg-red-600 py-2.5 text-sm font-bold text-white transition hover:brightness-90 disabled:opacity-60"
+              >
+                {bulkBusy ? 'Menghapus…' : 'Ya, Hapus Permanen'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* === Modal Edit Produk === */}
       {editTarget && form && (
@@ -749,20 +1422,29 @@ export default function ProductsPage() {
                 <input type="text" inputMode="numeric" value={form.originalPrice} onChange={(e) => { const d = e.target.value.replace(/\D/g, ''); setForm({ ...form, originalPrice: d === '' ? '' : Number(d) }) }} placeholder="Kosong = tanpa diskon" className={modalInput(!!editErrors.originalPrice)} aria-invalid={!!editErrors.originalPrice} />
                 {editErrors.originalPrice && <p className="mt-1 text-xs font-medium text-red-600">{editErrors.originalPrice}</p>}
               </EditField>
+              {/* Stok TIDAK bisa diubah dari sini. Satu-satunya tempat mengedit stok adalah
+                  halaman Gudang → Kelola Stok, supaya setiap perubahan punya konteks gudang dan
+                  tercatat di riwayat mutasi. Di sini hanya ringkasan read-only. */}
               <EditField label="Sisa Stok (pcs)">
-                {/* Satu input di mode single; per gudang aktif di mode multi (nilai awal dimuat
-                    dari /api/warehouses/stock oleh komponennya) */}
-                <WarehouseStockFields
-                  productId={editTarget?.persisted ? editTarget.id : undefined}
-                  singleValue={form.stock}
-                  onSingleChange={(v) => setForm({ ...form, stock: v })}
-                  value={stockByWarehouse}
-                  onChange={setStockByWarehouse}
-                  onModeResolved={setWarehouseMode}
-                  inputClassName={modalInput(!!editErrors.stock)}
-                  invalid={!!editErrors.stock}
-                />
-                {editErrors.stock && <p className="mt-1 text-xs font-medium text-red-600">{editErrors.stock}</p>}
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5">
+                  <div className="min-w-0">
+                    <p className="flex items-center gap-1.5 text-xs text-gray-500">
+                      <LockIcon />
+                      Total stok, semua gudang
+                    </p>
+                    <p className="mt-0.5 text-xl font-bold tabular-nums text-gray-800">
+                      {form.stock === '' ? 0 : form.stock}
+                    </p>
+                  </div>
+                  {editTarget?.persisted && (
+                    <Link
+                      href={`/oms/dashboard/gudang/stok?search=${encodeURIComponent(form.sku.trim())}`}
+                      className="flex-none whitespace-nowrap text-xs font-semibold text-emerald-700 transition hover:text-emerald-800 hover:underline"
+                    >
+                      Kelola stok gudang →
+                    </Link>
+                  )}
+                </div>
               </EditField>
               <EditField label="Minimal Pembelian (pcs)">
                 <input type="text" inputMode="numeric" value={form.minOrderQty} onChange={(e) => { const d = e.target.value.replace(/\D/g, ''); setForm({ ...form, minOrderQty: d === '' ? '' : Number(d) }) }} placeholder="1" className={modalInput(!!editErrors.minOrderQty)} aria-invalid={!!editErrors.minOrderQty} />
@@ -945,6 +1627,46 @@ function TrashIcon() {
       <line x1="10" y1="11" x2="10" y2="17" />
       <line x1="14" y1="11" x2="14" y2="17" />
     </svg>
+  )
+}
+
+// Ikon gembok — penanda field read-only (stok, yang hanya bisa diubah di Gudang → Kelola Stok).
+function LockIcon() {
+  return (
+    <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="11" width="18" height="11" rx="2" />
+      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+  )
+}
+
+// Ikon titik tiga vertikal — pemicu dropdown aksi lain per baris.
+function DotsIcon() {
+  return (
+    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <circle cx="12" cy="5" r="2" />
+      <circle cx="12" cy="12" r="2" />
+      <circle cx="12" cy="19" r="2" />
+    </svg>
+  )
+}
+
+// Chip satu filter aktif + tombol hapus filter itu saja.
+function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 py-1 pl-2.5 pr-1 text-xs font-medium text-emerald-800">
+      {label}
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={`Hapus filter ${label}`}
+        className="rounded-full p-0.5 transition hover:bg-emerald-100"
+      >
+        <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" aria-hidden="true">
+          <path d="M18 6 6 18M6 6l12 12" />
+        </svg>
+      </button>
+    </span>
   )
 }
 

@@ -3,29 +3,37 @@
 // src/components/checkout/ShippingOptions.tsx
 // Pemilihan kurir & ongkir (Mengantar) lewat pola bottom sheet (seperti PaymentModal):
 // tombol trigger menampilkan kurir terpilih → klik membuka bottom sheet berisi daftar kurir
-// (radio card, termurah→termahal, unsupported disembunyikan) → "Konfirmasi" menyimpan pilihan.
-// Cek ongkir tetap otomatis di-fetch saat alamat tujuan / berat berubah.
+// (radio card, termurah→termahal) → "Konfirmasi" menyimpan pilihan.
+//
+// Daftar kurir = GABUNGAN hasil perbandingan ongkir dari SEMUA gudang yang stoknya cukup
+// (/api/mengantar/shipping/options). Buyer tidak perlu tahu tarif itu dari gudang mana — ia hanya
+// memilih kurir & harga. Gudang asal ikut tersimpan di pilihan (`warehouseId`) dan dikirim saat
+// membuat order, lalu diverifikasi ulang di server.
 
 import { useEffect, useMemo, useState } from 'react'
 import { Truck, ChevronRight, Loader2, AlertTriangle, Check, X } from 'lucide-react'
 import { formatRupiah } from '@/lib/format'
 import BottomSheet from '@/components/checkout/BottomSheet'
-import { fetchShippingEstimate, type ShippingCourier } from '@/lib/mengantar'
+import { fetchShippingOptions, type WarehouseShippingOption } from '@/lib/mengantar'
 
 // Menampilkan tombol trigger + bottom sheet pemilihan kurir.
 // onSelect dipanggil saat buyer menekan "Konfirmasi" (bukan saat sekadar memilih card).
 export default function ShippingOptions({
   destinationId,
   weight,
+  items,
   selected,
   onSelect,
 }: {
   destinationId: string
   weight: number
-  selected: ShippingCourier | null
-  onSelect: (courier: ShippingCourier | null) => void
+  // Isi keranjang — dipakai server untuk menilai gudang mana yang stoknya cukup sebelum
+  // membandingkan ongkir. Tanpa ini perbandingan bisa menawarkan gudang yang barangnya tak ada.
+  items: { productId: string; quantity: number; variantId?: string }[]
+  selected: WarehouseShippingOption | null
+  onSelect: (courier: WarehouseShippingOption | null) => void
 }) {
-  const [couriers, setCouriers] = useState<ShippingCourier[]>([])
+  const [couriers, setCouriers] = useState<WarehouseShippingOption[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [retry, setRetry] = useState(0)
@@ -33,17 +41,47 @@ export default function ShippingOptions({
   const [open, setOpen] = useState(false)
   const [draftId, setDraftId] = useState('') // pilihan sementara di dalam sheet (belum dikonfirmasi)
 
-  // === Fetch ongkir otomatis saat alamat tujuan / berat berubah (atau "Coba lagi") ===
+  // Ringkas isi keranjang jadi string stabil supaya efek di bawah tidak berjalan ulang tiap render
+  // hanya karena array-nya objek baru (referensi berubah, isinya sama).
+  const itemsKey = useMemo(
+    () =>
+      items
+        .map((i) => `${i.productId}:${i.variantId ?? ''}:${i.quantity}`)
+        .sort()
+        .join(','),
+    [items],
+  )
+
+  // === Fetch ongkir otomatis saat alamat tujuan / berat / isi keranjang berubah (atau "Coba lagi") ===
   useEffect(() => {
     if (!destinationId) return
     const ctrl = new AbortController()
+    // items dibangun ulang dari itemsKey agar efek ini tidak bergantung pada referensi array
+    const parsedItems = itemsKey
+      ? itemsKey.split(',').map((entry) => {
+          const [productId, variantId, quantity] = entry.split(':')
+          return variantId
+            ? { productId, variantId, quantity: Number(quantity) }
+            : { productId, quantity: Number(quantity) }
+        })
+      : []
+
     async function load() {
       setLoading(true)
       setError('')
       try {
-        const list = await fetchShippingEstimate(destinationId, weight, ctrl.signal)
+        const { options, reason } = await fetchShippingOptions(
+          destinationId,
+          weight,
+          parsedItems,
+          ctrl.signal,
+        )
         if (ctrl.signal.aborted) return
-        setCouriers(list)
+        setCouriers(options)
+        // Semua gudang gagal/timeout → beri tahu bahwa ini layak dicoba ulang, bukan alamatnya salah
+        if (options.length === 0 && reason === 'ESTIMATE_UNAVAILABLE') {
+          setError('Gagal memuat ongkos kirim, silakan coba lagi')
+        }
       } catch (err) {
         if (!ctrl.signal.aborted) {
           // Pesan dari server dipakai bila ada (mis. 429 "terlalu banyak percobaan")
@@ -56,13 +94,11 @@ export default function ShippingOptions({
     }
     load()
     return () => ctrl.abort()
-  }, [destinationId, weight, retry])
+  }, [destinationId, weight, itemsKey, retry])
 
-  // Hanya kurir yang melayani tujuan, diurutkan dari ongkir termurah
-  const supported = useMemo(
-    () => couriers.filter((c) => !c.unsupported).sort((a, b) => a.price - b.price),
-    [couriers],
-  )
+  // Server sudah memfilter kurir tak terlayani & mengurutkan termurah; pengurutan diulang di sini
+  // sebagai jaring pengaman agar tampilan tetap benar walau bentuk respons berubah.
+  const supported = useMemo(() => [...couriers].sort((a, b) => a.price - b.price), [couriers])
 
   const disabled = !destinationId
   const draftValid = supported.some((c) => c.id === draftId)

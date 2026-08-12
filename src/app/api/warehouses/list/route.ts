@@ -24,7 +24,9 @@ export async function GET() {
   const usage = await Promise.all(warehouses.map((w) => getWarehouseUsage(w.id)))
 
   return NextResponse.json({
-    mode: getWarehouseMode(), // UI memberi tahu admin mode yang sedang aktif
+    // await WAJIB: getWarehouseMode membaca store_settings (async). Tanpa await, nilainya Promise
+    // dan mode hilang dari respons — UI lalu diam-diam jatuh ke default 'single'.
+    mode: await getWarehouseMode(),
     warehouses: warehouses.map((w, i) => ({ ...w, usage: usage[i] })),
   })
 }

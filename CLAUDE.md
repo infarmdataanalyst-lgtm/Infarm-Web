@@ -171,10 +171,12 @@ src/
 │   ├── oms/                      # OMS / back office
 │   │   ├── login/page.tsx
 │   │   └── dashboard/            # dashboard, products (+upload), orders, reviews, pengaturan,
-│   │       │                     #   gudang (Kelola Gudang), paket-combo (+baru, [id]/edit),
+│   │       │                     #   gudang (Daftar Gudang + /stok Kelola Stok + /riwayat Riwayat
+│   │       │                     #   Mutasi), paket-combo (+baru, [id]/edit),
 │   │       │                     #   promosi (+baru, [id]/edit)
 │   ├── api/                      # Route Handlers (runtime nodejs)
-│   │   ├── products/             # create | update | delete | list | check-sku | best-selling |
+│   │   ├── products/             # create | update | delete | bulk (aksi massal OMS) | list |
+│   │   │                         #   check-sku | best-selling |
 │   │   │                         #   sales-count | best-selling-catalog | search (autocomplete) | by-ids (resolve keranjang)
 │   │   ├── orders/               # create | list (filter+sort+CSV OMS) | get | cancel (GET+PATCH token) |
 │   │   │                         #   track-by-phone | verify-cancel | cancel-by-phone (batalkan by no_telepon)
@@ -182,10 +184,13 @@ src/
 │   │   │                         #   reviewable-by-phone | create-by-phone (review terverifikasi via no_telepon)
 │   │   ├── combos/              # create | update | delete | toggle | list | active (storefront)
 │   │   ├── promotions/          # create | update | delete | toggle | list | active (storefront)
-│   │   ├── warehouses/         # list | create | update | set-default | toggle | delete | stock
+│   │   ├── warehouses/         # list | create | update | set-default | toggle | delete | stock |
+│   │   │                        #   stock/matrix (matrix produk×gudang) | stock/set (tulis 1 sel)
 │   │   │                        #   (SEMUA admin-only — memuat origin id & koordinat gudang)
+│   │   ├── stock-mutations/    # list (riwayat mutasi stok, admin-only)
 │   │   └── mengantar/              # address/search (CORS-blocked → proxied) |
-│   │                               #   shipping/estimate (proxy cek ongkir → titik rate limit)
+│   │                               #   shipping/estimate (1 gudang) | shipping/options (POST,
+│   │                               #   perbandingan ongkir semua gudang → titik rate limit)
 │   ├── layout.tsx                # Root layout (Montserrat + Geist Sans/Mono, metadata)
 │   └── globals.css               # Tailwind v4 + @config tailwind.config.ts + token font & base h1–h4
 ├── components/
@@ -207,8 +212,9 @@ src/
 │   ├── order-cancellation/       # OrderCancellationView (client)
 │   ├── review/                   # Komponen review
 │   ├── track/                    # Komponen pelacakan
-│   ├── oms/                      # Sidebar, header, chart, ComboForm, PromotionForm,
-│   │                             #   WarehouseStockFields (input stok: tunggal / per gudang)
+│   ├── oms/                      # Sidebar (mendukung sub-menu), header, chart, ComboForm,
+│   │                             #   PromotionForm, GudangTabs (sub-nav area Gudang),
+│   │                             #   WarehouseStockFields (input stok awal — HANYA form Tambah Produk)
 │   └── ui/                       # UI generik: AppBar (menu+logo+HeaderSearch tengah+cart/profil),
 │                                 #   MenuDrawer (drawer kiri: nav+kategori), ProfileIconLink
 │                                 #   (ikon akun → dropdown layanan pesanan desktop / hub mobile), HeaderSearch
@@ -219,8 +225,11 @@ src/
 │   ├── recently-viewed.ts        # Riwayat "pernah dilihat" (guest, localStorage, maks 10)
 │   ├── promo-cart.ts             # Helper murni: progres/hadiah promo + relevansi & alokasi harga combo (keranjang)
 │   ├── product-validation.ts     # Validasi form produk (SKU, nama, kategori, harga jual/asli, stok, deskripsi, foto)
-│   ├── warehouse.ts              # SATU pintu pergudangan: mode, resolve gudang order, stok efektif,
-│   │                             #   origin id, Haversine (server-only)
+│   ├── warehouse.ts              # SATU pintu pergudangan: mode (DB), resolve gudang (fallback),
+│   │                             #   stok efektif, origin id (server-only; TANPA jarak/Haversine)
+│   ├── warehouse-shipping.ts     # Perbandingan ongkir riil antar gudang (paralel + cache 10 mnt)
+│   ├── mengantar-estimate.ts     # Pemetaan respons estimasi Mengantar (dipakai client & server)
+│   ├── stock-audit.ts            # SATU pintu pencatatan riwayat stok → stock_mutations (server-only)
 │   ├── warehouse-validation.ts   # Validasi form gudang (nama, origin id 24 hex, lat/long berpasangan)
 │   ├── format.ts                 # Util format: formatRupiah + formatSold (mis. 523 → "500+")
 │   ├── phone.ts                  # Validasi & normalisasi no. telepon ID (checkout)
@@ -231,15 +240,17 @@ src/
 │   ├── order-token.ts            # Token HMAC tautan pembatalan (server-only)
 │   ├── supabase/                 # Client Supabase: server.ts (admin/SSR) + browser.ts
 │   ├── mock-db/                  # Akses data Supabase: products, orders, reviews, combos, promotions,
-│   │                             #   settings (store_settings key-value), warehouses (gudang + stok
-│   │                             #   per gudang) — server only
+│   │                             #   admins, variants, settings (store_settings key-value),
+│   │                             #   warehouses (gudang + stok per gudang),
+│   │                             #   stock-mutations (riwayat stok) — server only
 │   │                             #   + cached-reads.ts (wrapper unstable_cache storefront: revalidate 30s + tags)
 │   └── data/                     # Dummy data tampilan pelengkap (dummy-*.ts)
 ├── emails/                       # Template HTML email (order-confirmation.html) — placeholder {{...}}
 ├── hooks/                        # use-debounce.ts, use-media-query.ts (breakpoint reaktif),
 │                                 #   use-sticky-bar-height.ts (tinggi bilah bawah → CSS var --sticky-bar-h)
 └── types/                        # product.ts (+ CatalogCardProduct: rating/soldCount opsional), cart, order, combo,
-                                  #   promotion, warehouse (Warehouse, WarehouseStock, WarehouseMode)
+                                  #   promotion, warehouse (Warehouse, WarehouseStock, WarehouseMode),
+                                  #   stock-mutation (StockMutation + label alasan)
 
 # Root: next.config.ts, tailwind.config.ts, eslint.config.mjs, postcss.config.mjs,
 #       tsconfig.json, AGENTS.md, CLAUDE.md, .env.local (tidak di-commit)
@@ -387,10 +398,27 @@ middleware). Login diverifikasi ke **tabel Supabase `admin_users`** (bukan lagi 
 sesi disimpan sebagai **cookie httpOnly bertanda tangan HMAC** (bukan lagi penanda `"1"` forgeable).
 
 - **Tabel `admin_users`**: `username` (unik), `password_hash` (scrypt, format `saltHex:hashHex`),
-  `name`, `is_active`. RLS aktif tanpa policy publik → akses hanya server (service_role).
-  Migration `supabase/migrations/20260708120000_init_admin_users.sql` (+ seed admin awal).
+  `name`, `is_active`, **`role`**. RLS aktif tanpa policy publik → akses hanya server (service_role).
+  Migration `supabase/migrations/20260708120000_init_admin_users.sql` (+ seed admin awal) &
+  `20260814120000_add_admin_users_role.sql`.
 - **Verifikasi password**: `src/lib/mock-db/admins.ts` (server-only, `node:crypto` scrypt +
-  `timingSafeEqual`). `authenticateAdmin(username, password)`.
+  `timingSafeEqual`). `authenticateAdmin(username, password)` & `getAdminById(id)` — keduanya
+  mengembalikan `AdminIdentity { id, name, role }`. `admin_users` **tak punya kolom email**; nama
+  tampilan = `name`, fallback `username`.
+- **Peran (`role`)** — hanya DUA nilai, dijaga CHECK constraint (menambah nilai baru = ubah
+  constraint juga):
+  | Peran | Wewenang |
+  |---|---|
+  | `admin` | akses penuh, termasuk **menulis stok gudang** |
+  | `staff` | boleh melihat stok & halaman OMS; **tak boleh menulis stok** |
+  - `DEFAULT 'admin'` disengaja supaya akun yang sudah ada tak kehilangan akses saat migration jalan.
+  - Kolom belum di-migrate (`42703`) → dianggap `'admin'`. Menambahkan sistem peran tak boleh
+    mengunci admin dari pekerjaannya.
+  - **Peran SELALU dibaca ulang dari DB** (`getAdminIdentity()` di `oms-guard.ts`), tidak disimpan di
+    cookie sesi — menurunkan peran seseorang langsung berlaku tanpa menunggu sesinya kedaluwarsa.
+  - Guard tulis stok: **`requireStockEditor()`** → `401` bila tak login, **`403`** bila peran salah
+    (ia sudah login; yang kurang wewenang). Dipakai `POST /api/warehouses/stock/set`.
+    `canEdit` yang dikirim endpoint matrix HANYA untuk menyembunyikan tombol — UI bukan penjagaan.
 - **Token sesi**: `src/lib/oms-auth.ts` — `createSessionToken`/`verifySessionToken`
   (HMAC-SHA256 via Web Crypto, jalan di edge & node), `sanitizeOmsRedirect`,
   `OMS_SESSION_COOKIE`. Secret dari env `OMS_SESSION_SECRET` (fallback dev).
@@ -404,7 +432,9 @@ sesi disimpan sebagai **cookie httpOnly bertanda tangan HMAC** (bukan lagi penan
 - **Catatan**: proxy hanya menjaga **halaman** dashboard. Route handler mutasi OMS
   (`/api/products|combos|promotions|reviews/...`, `/api/orders/list`) **belum** dijaga per-endpoint
   (lihat temuan K-1 di `docs/security-audit-2026-07-08.md`) — roadmap berikutnya.
-- **Roadmap**: pertimbangkan Supabase Auth penuh bila butuh multi-peran/reset password.
+- **Roadmap**: pertimbangkan Supabase Auth penuh bila butuh peran lebih banyak/reset password.
+  Belum ada UI kelola akun admin — membuat akun `staff` masih lewat SQL (`insert into admin_users`
+  dengan `role = 'staff'` + `password_hash` dari `hashPassword()`).
 
 ## Pembatalan Pesanan Guest (token-protected)
 
@@ -681,28 +711,30 @@ bisa di bawah minimum payment gateway):
 ## Pergudangan — GUDANG CABANG (multi-gudang) adalah mode resmi sistem
 
 **Keputusan bisnis (2026-08-11, final): infarm beroperasi dengan GUDANG CABANG.** Mode multi bukan
-opsi atau rencana — itu **default di kode**: `getWarehouseMode()` mengembalikan `'multi'` untuk env
-kosong/typo/tak diset, sehingga tak ada deployment yang diam-diam turun ke satu gudang. Berlaku di
-localhost dan production tanpa perlu mengisi env apa pun.
+opsi atau rencana.
 
-`WAREHOUSE_MODE=single` **hanya tuas ROLLBACK DARURAT** (mis. data gudang cabang belum siap):
-sistem kembali memakai gudang default saja, tanpa query stok/jarak. Jangan pakai sebagai mode normal.
+**Mode disimpan di DATABASE, bukan env** (2026-08-12): baris `store_settings.warehouse_mode`, diubah
+lewat **toggle di OMS → Gudang**. Berlaku SEKETIKA tanpa redeploy — itu inti tujuannya: toko
+dijalankan satu developer, jadi tuas rollback harus bisa ditarik kapan saja. Env `WAREHOUSE_MODE`
+sudah **dihapus**; jangan dihidupkan lagi (dua sumber kebenaran).
+
+Gagal membaca setting (DB down / baris belum ada) → `'multi'`, konsisten dengan mode resmi. Aman
+karena query stok per gudang juga gagal saat itu sehingga pemilihan jatuh ke gudang default.
+Nilai `single` = rollback darurat: sistem memakai gudang default saja, tanpa query stok/ongkir.
 
 Konsekuensi saat menulis kode baru: **jangan pernah berasumsi hanya ada satu gudang**, dan jangan
 membaca stok/origin di luar `src/lib/warehouse.ts`.
 
 **Yang harus diisi admin agar gudang cabang benar-benar bermanfaat** (bukan prasyarat teknis —
 sistem tetap jalan tanpanya, hanya jatuh ke gudang default):
-1. Gudang cabang dibuat di OMS → Gudang, `mengantar_origin_id` **dan** `latitude`/`longitude` terisi
-   (gudang tanpa koordinat selalu diurutkan paling akhir).
-2. `latitude`/`longitude` gudang utama diisi — masih `null` per 2026-08-11.
-3. Stok tiap produk dialokasikan per gudang (form produk). Gudang tanpa baris stok dianggap tak
-   memenuhi apa pun, jadi selalu kalah dari gudang default.
-4. **Produk bervarian**: stok per gudang per varian belum bisa lewat UI (lihat celah di bawah) —
-   siapkan jalur SQL atau tahan produk bervarian di gudang cabang dulu.
-5. Sumber koordinat TUJUAN belum ada (Mengantar tak mengembalikan lat/long) → pemilihan "terdekat"
-   praktis jatuh ke "gudang default lebih dulu". Sampai itu ada, manfaat gudang cabang adalah
-   pemisahan stok, BUKAN optimasi jarak.
+1. Gudang cabang dibuat di OMS → Gudang dengan **`mengantar_origin_id` terisi**. Itu satu-satunya
+   field yang menentukan hasil: tanpa origin id, gudang itu tak bisa dibandingkan ongkirnya.
+2. `latitude`/`longitude` **TIDAK perlu diisi** — pemilihan gudang memakai perbandingan ongkir riil,
+   bukan jarak. Kolomnya tetap ada untuk keperluan peta di masa depan (keduanya masih `null`).
+3. Stok tiap produk dialokasikan per gudang lewat **OMS → Gudang → Kelola Stok**. Gudang tanpa baris
+   stok dianggap tak memenuhi apa pun, jadi tak ikut dibandingkan ongkirnya.
+4. **Produk bervarian sudah didukung**: stok per gudang per varian diatur dari matrix Kelola Stok
+   (baris produk dibuka `▸`). Tak perlu lagi jalur SQL manual.
 
 - **Tabel** (migration `20260811120000_init_warehouses.sql`):
   - `warehouses` — `nama`, `alamat`, `mengantar_origin_id`, `latitude`/`longitude`, `is_default`,
@@ -716,23 +748,40 @@ sistem tetap jalan tanpanya, hanya jatuh ke gudang default):
   Statusnya kini **fallback**, bukan sumber kebenaran. Semua jalur baca/tulis punya penanganan bila
   tabel gudang belum di-apply (kode `PGRST205`/`PGRST204`/`42P01`/`42703` → anggap belum ada).
 - **SATU pintu akses: `src/lib/warehouse.ts`** (server-only). Komponen/route **JANGAN** membaca
-  `process.env.WAREHOUSE_MODE`, `*MENGANTAR_ORIGIN_ID`, atau kolom stok mentah sendiri:
-  - `getWarehouseMode()` / `isMultiWarehouse()` — **default `'multi'`**; hanya `WAREHOUSE_MODE=single`
-    (eksplisit) yang menurunkannya ke satu gudang
+  setting mode, `*MENGANTAR_ORIGIN_ID`, atau kolom stok mentah sendiri:
+  - `getWarehouseMode()` / `isMultiWarehouse()` — **async** (baca `store_settings`); default
+    `'multi'`. Semua pemanggil WAJIB `await` — tanpa await nilainya Promise dan mode diam-diam
+    dianggap salah (bug ini pernah terjadi di `/api/warehouses/list`)
+  - `setWarehouseMode(mode)` — dipakai toggle OMS lewat `PATCH /api/settings/warehouse-mode`
   - `getDefaultWarehouse()`
-  - `resolveWarehouseForOrder(items, destinationId?, destination?)` — mode single: langsung gudang
-    default, **tanpa query stok/jarak**. Mode multi: gudang aktif ber-stok cukup untuk SEMUA item,
-    diurutkan jarak Haversine ke tujuan; tak ada yang cukup → gudang default
+  - `resolveWarehouseForOrder(items)` — **FALLBACK saja** (bukan jalur utama): mode single → gudang
+    default tanpa query; mode multi → gudang ber-stok cukup, default didahulukan. **Tanpa jarak.**
   - `getEffectiveStock(productId, {variantId, warehouseId})` — single: JUMLAH semua gudang; multi:
     stok gudang tertentu. **`getEffectiveStockMaps(ids)` = versi batch, WAJIB dipakai untuk daftar**
     (per-produk = N+1 query)
   - `writeEffectiveStock(...)`, `returnStockToWarehouse(...)`, `getOriginIdForWarehouse(id)`
-  - `haversineDistanceKm(a, b)` — rumus manual, tanpa library
+- **Pemilihan gudang = PERBANDINGAN ONGKIR RIIL, bukan jarak** (`src/lib/warehouse-shipping.ts`):
+  - `resolveShippingOptions(items, destinationId, weight)` — gudang aktif ber-stok cukup → panggil
+    `allEstimatePublic` **paralel** (`Promise.allSettled`, timeout 4,5s/gudang) → gabungkan semua
+    kurir + tandai `warehouseId` → urut termurah. Gudang yang gagal/timeout **dilewati**, tidak
+    menggagalkan yang lain.
+  - Hasilnya di-cache in-memory 10 menit (`getCachedShippingOptions`) — bukan untuk performa, tapi
+    agar `orders/create` bisa jatuh ke opsi termurah berikutnya **tanpa memanggil Mengantar lagi**.
+  - **Haversine SUDAH DIHAPUS.** Kolom `latitude`/`longitude` tetap ada tapi TIDAK boleh jadi dasar
+    keputusan gudang — jarak lurus bukan ukuran biaya kirim. Bukti pada data infarm (tujuan sama,
+    1kg): JNE dari Gudang Utama Rp10.900, dari Gudang Jakarta Rp8.000.
+  - Endpoint checkout: `POST /api/mengantar/shipping/options` (POST karena isi keranjang ikut
+    dikirim). `GET .../shipping/estimate` (satu gudang) dipertahankan untuk pemanggil lama.
 - **Data layer sudah diarahkan**: `readProducts`/`getProductById` menimpa field `stock` dengan stok
   efektif (`applyEffectiveStock`, batch) → **seluruh storefront & OMS otomatis** memakai stok gudang
   tanpa mengubah komponen. `updateProduct` **tidak lagi menulis `products.stock`** (hanya menulis ke
   gudang; kolom lama diisi ulang HANYA bila penulisan gudang gagal). `saveProduct`/`createVariant`
   mengisi baris gudang + kolom lama sebagai cadangan awal.
+- **Gudang order = ikut kurir pilihan buyer**, lalu **diverifikasi ulang di server**
+  (`orders/create` → `pickVerifiedWarehouse`): gudang harus ada, aktif, dan stoknya masih cukup
+  (data fresh). Gagal → opsi termurah berikutnya dari cache perbandingan → `resolveWarehouseForOrder`.
+  Ini guard race condition: stok bisa habis di antara buyer melihat ongkir dan menekan bayar.
+  Client mengirim `warehouseId` + `weight`, keduanya **tidak dipercaya mentah**.
 - **Checkout tetap atomik**: RPC `create_order_with_items` dapat param `p_warehouse_id` dan
   mengurangi `product_stock_per_warehouse` (dikunci `FOR UPDATE`) **plus mirror** ke kolom lama.
   Bila baris gudang tak ada, RPC otomatis kembali ke perilaku lama. `saveOrder` punya fallback:
@@ -741,13 +790,12 @@ sistem tetap jalan tanpanya, hanya jatuh ke gudang default):
   `getOriginIdForWarehouse()`, bukan env langsung. Param opsional
   `items=<productId>:<qty>[:<variantId>],…` dipakai memilih gudang asal di mode multi; **diabaikan**
   di mode single.
-- **Jarak di mode multi masih terbatas**: alamat Mengantar TIDAK mengembalikan lat/long, jadi
-  `destination` biasanya `undefined` → urutan jatuh ke "gudang default lebih dulu". Untuk jarak nyata,
-  perlu sumber koordinat tujuan (geocoding / peta kelurahan→koordinat).
-### Kelola Gudang (OMS) — sudah terpasang
 
-- **Halaman**: `/oms/dashboard/gudang` (client, kartu per gudang + modal tambah/edit). Menampilkan
-  mode aktif (`WAREHOUSE_MODE`) sebagai konteks — mode TIDAK bisa diubah dari halaman ini (env).
+### Daftar Gudang (OMS) — sudah terpasang
+
+- **Halaman**: `/oms/dashboard/gudang` (client, kartu per gudang + modal tambah/edit) — sub-halaman
+  pertama area Gudang. Mode pergudangan **bisa diubah dari sini** lewat toggle
+  (`PATCH /api/settings/warehouse-mode`, tersimpan di `store_settings`, berlaku seketika).
 - **API** `/api/warehouses/{list,create,update,set-default,toggle,delete}` — **SEMUA `requireAdmin()`**,
   termasuk `list`: barisnya memuat `mengantar_origin_id` & koordinat, data operasional yang tak boleh
   ter-expose ke publik. Storefront tak pernah menyentuh endpoint ini.
@@ -765,27 +813,154 @@ sistem tetap jalan tanpanya, hanya jatuh ke gudang default):
      `warehouses_single_default_idx` menolak dua default sekaligus).
 - Setiap mutasi memanggil `revalidateTag('products', 'max')` karena gudang default menentukan stok
   efektif & origin ongkir.
-### Stok per gudang di form produk (OMS) — sudah terpasang
+### Sub-halaman area Gudang (OMS)
 
-- **Komponen bersama `src/components/oms/WarehouseStockFields.tsx`** dipakai form tambah produk
-  (`products/upload`) DAN modal edit (`products/page.tsx`) agar keduanya tak pernah berbeda perilaku:
-  - Mode single → **satu input**, persis seperti sebelum fitur gudang ada (admin tak melihat gudang).
-  - Mode multi → satu input **per gudang aktif** + baris total, plus catatan penjelas.
-  - Gagal memuat daftar gudang → jatuh ke input tunggal (form tak pernah mengunci admin).
-  - `sumStock()` = total; parent memakainya untuk field `stock` pada payload **dan** untuk validasi,
-    sehingga aturan stok lama (0–999.999) tetap berlaku tanpa cabang validasi baru.
-- **Nilai awal saat edit** dimuat dari `GET /api/warehouses/stock?productId=` (admin-only, read-only).
-  Hanya baris `variant_id NULL` yang diisi ke form — stok per varian tetap dikelola `VariantManagerModal`.
-- **Payload**: `stockPerWarehouse: [{ warehouseId, stok }]` dikirim HANYA di mode multi.
-  `/api/products/{create,update}` memvalidasinya lewat `parseStockPerWarehouse()` **sebelum**
-  menyentuh produk (payload cacat → `422`, produk tak berubah), lalu menulis via
-  `writeStockPerWarehouse()` setelah produk tersimpan.
-- **CELAH yang harus ditutup untuk gudang cabang**: stok **produk bervarian** per gudang belum bisa
-  diatur dari UI. `VariantManagerModal` menyimpan stok varian ke `product_variants.stok` + baris
-  gudang **default saja** (`writeEffectiveStock` tanpa `warehouseId`). Kolom `variant_id` di
-  `product_stock_per_warehouse` sudah siap — yang belum ada murni UI-nya.
-- **Belum dikerjakan**: halaman matriks "Stok per Gudang" (`/oms/dashboard/stok`) untuk edit massal,
-  dan mutasi stok antar gudang + riwayatnya (butuh tabel `stock_transfers` tersendiri).
+Menu **Gudang** punya tiga sub-halaman; sidebar (`components/oms/Sidebar.tsx`, `NAV_ITEMS[].children`,
+sub-menu hanya dirender saat induknya aktif) dan `GudangTabs` di dalam halaman memakai daftar yang sama:
+
+| Sub-halaman | Rute | Isi |
+|---|---|---|
+| Daftar Gudang | `/oms/dashboard/gudang` | master data gudang + toggle mode |
+| Kelola Stok | `/oms/dashboard/gudang/stok` | matrix produk × gudang — **satu-satunya tempat stok bisa diedit** |
+| Riwayat Mutasi | `/oms/dashboard/gudang/riwayat` | daftar kronologis `stock_mutations` |
+
+**Pencocokan rute wajib PERSIS** (`pathname === href`) untuk sub-menu/tab: href "Daftar Gudang"
+adalah prefiks dua href lainnya, jadi `startsWith` akan menyalakan ketiganya sekaligus.
+
+### Kelola Stok Gudang (matrix) — SATU-SATUNYA tempat mengedit stok
+
+- **Baca**: `GET /api/warehouses/stock/matrix` — sesi admin apa pun perannya (staff perlu melihat
+  stok). Satu respons berisi mode, `role`, `canEdit`, gudang **aktif**, dan semua produk beserta
+  `cells` per gudang + `variants[]`. Gudang nonaktif TIDAK ditampilkan (stoknya tak dipakai memenuhi
+  pesanan, jadi mengeditnya menyesatkan); datanya tetap utuh.
+- **Tulis**: `POST /api/warehouses/stock/set` — **`requireStockEditor()`**: sesi valid + peran
+  `admin`; peran `staff` → `403 FORBIDDEN_ROLE`. Payload `{ changes: [{productId, variantId?,
+  warehouseId, stok}] }`, maks 100 → **satu request = satu baris produk** (bukan satu sel).
+  Urutannya: validasi SELURUH entri dulu (satu cacat → `422`, **tak ada** yang ditulis) → baca nilai
+  lama → `setWarehouseStock` per entri → selaraskan kolom lama bila varian → catat `stock_mutations`
+  (satu insert) → `revalidateTag('products','max')` + `revalidatePath`. Respons memuat `previous[]`
+  (nilai lama dari server) supaya UI bisa menawarkan undo tanpa menebak.
+
+#### Mode edit eksplisit (menggantikan autosave) — enam lapis anti human error
+
+Versi pertama halaman ini menyimpan otomatis saat blur. Dibuang: satu ketikan tak sengaja langsung
+mengubah stok yang dilihat pembeli dan menentukan pesanan bisa masuk atau tidak.
+
+1. **Baris read-only** — menyentuh tabel tidak mengubah apa pun.
+2. **Tombol "Edit" per baris** (kolom **Aksi**; kolom "Riwayat" per baris DIHAPUS, riwayat kini lewat
+   tautan di bawah tabel). **Satu baris saja** yang bisa dibuka; baris lain diredupkan & tombolnya
+   dinonaktifkan, filter + pencarian dikunci selama mengedit (mengganti kolom yang tampil di tengah
+   pengeditan akan menyembunyikan sel yang sudah diubah tapi belum disimpan).
+3. **Indikator perubahan** — sel yang berbeda dari nilai tersimpan jadi kuning + keterangan
+   `lama → baru (+/−delta)`; kolom Total menampilkan pratinjau + angka lama tercoret; bilah aksi
+   baris merangkum semua perubahan sebagai teks.
+4. **Undo & Batal** — Undo memulihkan seluruh sel baris ke nilai tersimpan (tanpa request); Batal
+   keluar dari mode edit. Sel dikosongkan → Simpan diblokir dengan pesan (BUKAN diam-diam jadi 0).
+5. **Dialog konfirmasi** — rekap per sel (`lama` tercoret → `baru` + delta) sebelum request dikirim.
+6. **Undo setelah simpan** — toast 12 detik dengan tombol "Batalkan" yang menulis balik `previous[]`
+   dari server. Ini **compensating write**: riwayat memuat DUA baris (perubahan + pembatalannya),
+   bukan menghapus jejak yang pertama.
+
+Produk bervarian otomatis dibuka saat masuk mode edit (sel yang bisa diedit ada di sub-baris varian),
+dan barisnya tak bisa ditutup selama diedit.
+- **Kolom Total selalu read-only** dan menjumlahkan **SEMUA gudang aktif**, bukan hanya kolom yang
+  sedang tampil. Alasannya: angka itu harus sama dengan kolom Stok di halaman Produk dan dengan stok
+  yang dilihat pembeli. Filter gudang hanya **menyembunyikan kolom**.
+- **Produk bervarian**: sel level-produk **DIKUNCI** (ikon gembok), baris dibuka `▸` untuk mengedit
+  per varian. Menulis di level produk akan membuat baris `variant_id NULL` yang berjalan paralel
+  dengan baris varian → total ganda. Ini menutup celah "stok varian per gudang belum ada UI".
+- **Pencarian client-side, tanpa paginasi** — jumlah produk saat ini 11. Ambang pindah ke server-side
+  + paginasi: **~200 produk**, dan tempat mengubahnya adalah endpoint `stock/matrix` (payload sudah
+  per produk sehingga UI tak perlu berubah).
+- `<input type="text" inputMode="numeric">`, bukan `type="number"`: panah spinner mudah tersenggol
+  saat men-scroll tabel. Indikator per sel: spinner saat menyimpan → centang 1,5s → ikon merah + pesan
+  di bawah sel bila gagal. `Escape` memulihkan nilai terakhir; sel dikosongkan lalu blur = tidak menyimpan.
+
+### Stok di form produk (OMS) — Tambah = bisa, Edit = read-only
+
+- **Tambah Produk** (`products/upload`) TETAP punya input stok awal (`WarehouseStockFields`:
+  satu input di mode single, per gudang di mode multi + total). Alasannya sengaja: memaksa admin
+  membuka dua halaman hanya untuk mengisi stok pertama akan memperlambat alur yang paling sering dipakai.
+  Payload `stockPerWarehouse` divalidasi `parseStockPerWarehouse()` sebelum produk dibuat, ditulis
+  `writeStockPerWarehouse()` setelahnya, lalu dicatat ke riwayat dengan alasan `product_form`
+  (stok sebelum = 0, supaya baris pertama riwayat sebuah produk tidak "muncul entah dari mana").
+- **Modal Edit Produk** (`products/page.tsx`) **TIDAK LAGI** punya input stok — diganti kotak
+  read-only berikon gembok ("Total stok, semua gudang" + angka) dan tautan
+  `Kelola stok gudang → /oms/dashboard/gudang/stok?search=<sku>`. Field `stock` &
+  `stockPerWarehouse` **sengaja tidak dikirim** ke `/api/products/update`; tanpa field itu route
+  membiarkan stok apa adanya. Validasi `stock` juga dilepas dari `editErrors`.
+- `/api/products/update` **masih menerima** `stockPerWarehouse` untuk pemanggil lain/skrip, dan
+  cabang itu ikut mencatat riwayat (`product_form`). **Kalau menambah titik tulis stok baru, WAJIB
+  ikut mencatat lewat `src/lib/stock-audit.ts`** — kalau bolong, riwayat berbohong.
+- **Stok varian kini otoritatif dari gudang**: `getVariantsByProduct` meng-overlay `stock` varian
+  dari `product_stock_per_warehouse` (jumlah semua gudang). Sebelumnya `byVariant` dihitung tapi tak
+  pernah dipakai, sehingga stok varian yang diedit tak akan pernah terlihat di storefront.
+  Kolom lama `product_variants.stok` tetap diselaraskan (`syncVariantLegacyStock`) sebagai jaring pengaman.
+- **Belum dikerjakan**: mutasi/transfer stok ANTAR gudang (butuh tabel `stock_transfers` sendiri —
+  beda dari `stock_mutations` yang mencatat perubahan, bukan perpindahan).
+
+### Riwayat Mutasi Stok (`stock_mutations`)
+
+- **Migration** `supabase/migrations/20260813120000_init_stock_mutations.sql`. RLS aktif TANPA policy
+  publik (riwayat stok mengungkap volume penjualan & sebaran gudang).
+- **`changed_by` mengarah ke `admin_users(id)`, BUKAN `auth.users(id)`** — project ini tidak memakai
+  Supabase Auth. `getAdminId()` (cookie sesi HMAC) sudah mengembalikan UUID admin, jadi tak perlu
+  perubahan auth. Perubahan yang dipicu pembeli (pesanan/pembatalan) sengaja `NULL` → UI menampilkan
+  "Sistem (pembeli)". `admin_users` tak punya kolom email; yang ditampilkan `name` (fallback `username`).
+- **Semua FK `ON DELETE SET NULL` + snapshot nama** (`product_name`, `variant_name`, `warehouse_name`,
+  `order_invoice`). `restrict` akan mematikan aksi massal "Hapus produk" begitu produk punya riwayat;
+  `cascade` menghapus jejak audit justru saat paling dibutuhkan. Snapshot membuat riwayat tetap
+  terbaca setelah barisnya hilang (pola sama `order_items` & `product_combo_items`).
+- **Empat `reason`** (dijaga CHECK constraint — menambah nilai baru WAJIB ubah constraint juga):
+  `manual_update` (matrix Kelola Stok) · `product_form` · `order` (pesanan masuk) ·
+  `order_cancelled` (pembatalan, ketiga jalurnya: token, by-phone, dan update-status OMS).
+- **Dicatat dari APLIKASI, bukan trigger DB** — lebih mudah di-debug solo dev, dan hanya lapisan app
+  yang tahu admin mana yang login. Titik masuk tunggal: `src/lib/stock-audit.ts`
+  (`recordAdminStockChanges`, `recordOrderStockChanges`).
+- Untuk pesanan, nilai **"sesudah" dibaca dari DB setelah** RPC/restore selesai, lalu "sebelum"
+  dihitung dari quantity. Yang wajib benar adalah stok akhir; membacanya setelah perubahan
+  menghindari kunci baris tambahan hanya demi riwayat. `order_id` diisi lewat
+  `getOrderUuidByInvoice()` karena lapisan app memakai `nomor_invoice`, sedangkan FK butuh `orders.id`.
+- **Pencatatan BEST EFFORT**: gagal menulis riwayat tak pernah menggagalkan perubahan stok atau
+  pembuatan pesanan (error ditelan + `console.error`). Tabel belum di-migrate → kode `PGRST205`
+  dianggap "belum ada" dan halaman riwayat tampil kosong.
+
+## Halaman Produk OMS — tabel, filter, aksi massal
+
+- **Lebar kolom eksplisit**: `<table className="table-fixed min-w-[900px]">` + `<colgroup>`.
+  Tanpa `table-fixed`, browser membagi lebar dari konten → kolom Produk melebar mengikuti nama
+  terpanjang dan mendorong kolom lain sampai butuh scroll horizontal. Nama produk `line-clamp-2`
+  + `title` (tooltip nama penuh); pembungkusnya **wajib `min-w-0`** — tanpa itu flex item menolak
+  menyusut dan line-clamp tak pernah aktif.
+- **Kolom Aksi**: Edit & Varian = ikon bertooltip (aksi tersering, badge jumlah varian di ikon);
+  Arsip/Pulihkan & Hapus di dropdown **⋮** (klik-luar ditutup overlay transparan). Hapus destruktif
+  sengaja butuh satu klik ekstra.
+- **Filter**: state di **URL query params** (`q`, `kategori`, `stok`, `status`, `dari`, `sampai`) —
+  bisa di-bookmark/di-share, pola sama dengan halaman Pesanan. **Penyaringannya di CLIENT** atas
+  data yang sudah dimuat; `/api/products/list` sengaja TIDAK disentuh karena endpoint itu juga
+  dipakai storefront (checkout/katalog/ReviewForm).
+  - Opsi kategori dari konstanta `PRODUCT_CATEGORIES` (bukan query DB — kategori dibatasi CHECK
+    constraint, jadi tak ada ejaan bebas yang perlu di-`ilike`).
+  - Tanggal pakai `<input type="date">` native + pintasan (hari ini/7/30 hari/bulan ini) — **tanpa
+    library date-picker**.
+  - Ambang "Stok Menipis" = `LOW_STOCK_THRESHOLD` (10), satu angka dengan kartu ringkasan di atas tabel.
+  - Chip per filter aktif (bisa dihapus satu-satu) + "Reset semua filter".
+  - **Debounce pencarian ada di EVENT HANDLER, bukan `useEffect`** — menulis URL memicu setState
+    (page & seleksi di-reset) dan lint `react-hooks/set-state-in-effect` melarangnya di dalam efek.
+- **Paginasi client-side** `PAGE_SIZE = 10` (sama dengan Pesanan) atas hasil filter.
+- **Seleksi massal**: checkbox per baris + "pilih semua" **halaman aktif saja** (bukan seluruh hasil
+  filter) supaya jumlah terpilih selalu sama dengan yang terlihat. Bilah aksi sticky muncul saat ada
+  yang dipilih: Arsipkan / Pulihkan / Ubah Kategori / Hapus + "Batalkan pilihan". Hapus massal wajib
+  lewat dialog konfirmasi.
+  - **Produk contoh (`persisted: false`, `INITIAL_PRODUCTS`) checkbox-nya dinonaktifkan** — tak ada
+    di database, jadi aksi massal atasnya tak bisa menyimpan apa pun. Tooltip menjelaskan alasannya.
+  - Filter tanggal juga menyaring produk contoh keluar (tak punya `createdAt`).
+- **Endpoint** `POST /api/products/bulk` (`requireAdmin`): `action` ∈ `archive|restore|delete|category`,
+  `ids[]` (maks 200, di-dedupe). Satu query `.in('id', ids)` per aksi lewat `bulkSetArchived` /
+  `bulkSetCategory` / `bulkDeleteProducts` di `mock-db/products.ts` — bukan loop per produk.
+  Menutup dengan `revalidatePath` + `revalidateTag('products','max')` seperti create/update.
+  Hapus massal mengandalkan FK CASCADE (varian & stok per gudang ikut terhapus; `order_items`
+  menyimpan `product_id` nullable sehingga riwayat pesanan tetap utuh).
 
 ## Validasi Form Produk (OMS)
 
@@ -1030,6 +1205,12 @@ mengambang. Jangan menambah lapis baru tanpa memperbarui tabel ini.
 - [x] Dashboard OMS (`/oms/dashboard`)
 - [x] Manajemen produk (list, upload/create, update, delete) via API + Supabase — multi-foto (maks 9),
       harga jual/asli (coret), validasi form, kolom "Terjual" + rentang waktu
+- [x] Tabel produk: lebar kolom eksplisit (`table-fixed` + `colgroup`), nama `line-clamp-2` + tooltip,
+      aksi ikon + dropdown ⋮, paginasi 10/hal
+- [x] Filter produk di URL params (cari nama/SKU debounce, kategori, status stok, status produk,
+      rentang tanggal + pintasan) dengan chip per filter & reset semua
+- [x] Aksi massal produk (`POST /api/products/bulk`, admin-only): arsipkan/pulihkan/ubah kategori/
+      hapus + konfirmasi hapus; produk contoh dikecualikan dari seleksi
 - [x] Manajemen order (`/oms/dashboard/orders`) — filter tanggal (range + shortcut)/kurir/status pembayaran,
       sort Total & Tanggal, kombinasi filter tersimpan di URL query params, Reset Filter, ekspor CSV
       (server-side via `readOrdersFiltered`/`getDistinctCouriers`, `OrderFilterOptions`)
@@ -1038,9 +1219,17 @@ mengambang. Jangan menambah lapis baru tanpa memperbarui tabel ini.
 - [x] Manajemen Promosi (`/oms/dashboard/promosi`) — create/list/update/delete/toggle
 - [x] Kelola Gudang (`/oms/dashboard/gudang`) — CRUD `warehouses` + set default + aktif/nonaktif,
       semua endpoint `requireAdmin`; penjagaan hapus/nonaktif gudang default & gudang terpakai
-- [x] Stok per gudang di form produk — `WarehouseStockFields` (satu input di mode single, per gudang
-      di mode multi + total); payload `stockPerWarehouse` divalidasi & ditulis di server
-- [ ] Halaman matriks "Stok per Gudang" (edit massal) + mutasi stok antar gudang
+- [x] Stok awal di form **Tambah** Produk — `WarehouseStockFields` (satu input di mode single, per
+      gudang di mode multi + total); payload `stockPerWarehouse` divalidasi & ditulis di server
+- [x] Kelola Stok Gudang (`/oms/dashboard/gudang/stok`) — matrix produk × gudang, **mode edit
+      eksplisit per baris** (tombol Edit di kolom Aksi → indikator perubahan → Undo/Batal → dialog
+      konfirmasi → undo setelah simpan), baris varian bisa dibuka, filter gudang + cari nama/SKU.
+      **Satu-satunya tempat stok bisa diedit** → stok di modal Edit Produk kini read-only
+- [x] Pembatasan peran: menulis stok butuh `admin_users.role = 'admin'` (`requireStockEditor`);
+      peran `staff` hanya melihat. Belum ada UI kelola akun admin (buat akun staff via SQL)
+- [x] Riwayat Mutasi Stok (`/oms/dashboard/gudang/riwayat`) — tabel `stock_mutations`; mencatat edit
+      manual, form produk, pesanan masuk, & pembatalan (`changed_by` → `admin_users`, bukan `auth.users`)
+- [ ] Mutasi/transfer stok ANTAR gudang (butuh tabel `stock_transfers` tersendiri)
 - [~] Autentikasi admin: sudah DB-backed (`admin_users` + scrypt + sesi HMAC httpOnly); Supabase Auth
       penuh (multi-peran/reset password) + proteksi per-endpoint API OMS masih menyusul
 - [~] Stok berkurang atomik saat checkout (RPC `create_order_with_items`); alokasi/rilis stok penuh
@@ -1082,12 +1271,10 @@ MENGANTAR_ORIGIN_ID              # server-only, OPSIONAL; alias non-public dari 
                                  # warehouses.mengantar_origin_id kosong.
 
 # Sudah dipakai sekarang (Pergudangan)
-WAREHOUSE_MODE                   # server-only; TIDAK PERLU DISET. Mode resmi = 'multi' (gudang
-                                 # cabang) dan itu sudah default di kode — env kosong/typo/tak diset
-                                 # tetap 'multi'. JANGAN NEXT_PUBLIC_. Dibaca HANYA lewat
-                                 # getWarehouseMode() di src/lib/warehouse.ts.
-                                 # Isi 'single' HANYA untuk rollback darurat ke satu gudang;
-                                 # di Vercel wajib redeploy agar perubahannya terpakai.
+# (DIHAPUS) WAREHOUSE_MODE       # Mode gudang TIDAK lagi dari env. Sumber kebenarannya baris DB
+                                 # store_settings.warehouse_mode, diubah lewat toggle di OMS →
+                                 # Gudang (berlaku seketika, tanpa redeploy). Jangan hidupkan
+                                 # kembali env ini — dua sumber kebenaran = bug menunggu terjadi.
 
 # Sudah dipakai sekarang (Google Analytics 4)
 NEXT_PUBLIC_GA_ID                # PUBLIC/client; Measurement ID GA4 (format G-XXXXXXXXXX). Dipasang di

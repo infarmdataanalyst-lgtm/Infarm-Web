@@ -9,8 +9,9 @@
 
 import { NextResponse } from 'next/server'
 import { revalidatePath, revalidateTag } from 'next/cache'
-import { getOrderByOrderId, updateOrderStatus } from '@/lib/mock-db/orders'
+import { getOrderByOrderId, getOrderUuidByInvoice, updateOrderStatus } from '@/lib/mock-db/orders'
 import { restoreStock } from '@/lib/mock-db/products'
+import { recordOrderStockChanges } from '@/lib/stock-audit'
 import { normalizePhone, isValidPhone } from '@/lib/phone'
 import type { OrderFulfillmentStatus } from '@/types/order'
 import { RATE_LIMITS, enforceRateLimit, getClientIp } from '@/lib/rate-limit'
@@ -90,6 +91,20 @@ export async function POST(request: Request) {
     })),
     order.warehouseId,
   )
+
+  // Riwayat mutasi: stok kembali karena pembatalan oleh pembeli (lihat catatan di orders/cancel).
+  const orderUuid = await getOrderUuidByInvoice(order.orderId)
+  await recordOrderStockChanges({
+    items: order.items.map((i) => ({
+      productId: i.productId,
+      ...(i.variantId ? { variantId: i.variantId } : {}),
+      quantity: i.quantity,
+    })),
+    ...(order.warehouseId ? { warehouseId: order.warehouseId } : {}),
+    orderInvoice: order.orderId,
+    ...(orderUuid ? { orderId: orderUuid } : {}),
+    direction: 'in',
+  })
 
   // Stok kembali → segarkan cache storefront (sama seperti alur cancel token)
   revalidatePath('/')

@@ -3,14 +3,18 @@
 // "gudang mana?" dan "stok efektifnya berapa?". SERVER ONLY (memanggil mock-db/warehouses
 // yang memakai service_role).
 //
-// Kenapa terpusat: supaya peralihan mode 1 gudang ↔ multi gudang cukup mengubah satu env
-// (WAREHOUSE_MODE) tanpa menyentuh route/komponen mana pun. Pemanggil TIDAK boleh membaca
-// process.env.WAREHOUSE_MODE, process.env.*MENGANTAR_ORIGIN_ID, atau kolom stok mentah sendiri.
+// Kenapa terpusat: peralihan mode 1 gudang ↔ gudang cabang cukup mengubah SATU baris di
+// store_settings tanpa menyentuh route/komponen mana pun. Pemanggil TIDAK boleh membaca
+// setting mode, *MENGANTAR_ORIGIN_ID, atau kolom stok mentah sendiri.
 //
 // MODE OPERASI SISTEM = 'multi' (gudang cabang) — keputusan bisnis 2026-08-11, sudah final.
-// Env kosong/typo/tak diset → 'multi', jadi tak ada deployment yang diam-diam kembali ke satu
-// gudang hanya karena env belum diisi. `WAREHOUSE_MODE=single` kini berfungsi sebagai TUAS
-// ROLLBACK darurat saja (mis. data gudang cabang belum siap), bukan mode normal.
+// Sumber kebenarannya BARIS DATABASE `store_settings.warehouse_mode`, bukan environment variable:
+// toko dijalankan satu developer, jadi tuas rollback harus bisa ditarik dari OMS kapan saja tanpa
+// redeploy. Env WAREHOUSE_MODE sudah TIDAK dibaca lagi (dihapus agar tak ada dua sumber kebenaran).
+//
+// Gagal membaca setting (DB down / tabel belum di-migrate) → 'multi', konsisten dengan mode resmi.
+// Aman karena query stok per gudang juga akan gagal saat itu, sehingga pemilihan otomatis jatuh
+// ke gudang default.
 
 import type { StockTarget, Warehouse, WarehouseMode } from '@/types/warehouse'
 import {
@@ -21,18 +25,28 @@ import {
   readWarehouses,
   setWarehouseStock,
 } from '@/lib/mock-db/warehouses'
+import { getSetting, setSetting, WAREHOUSE_MODE_KEY } from '@/lib/mock-db/settings'
 
 // === Mode ===
 
-// Membaca mode pergudangan dari env. HANYA nilai eksplisit 'single' yang menurunkan sistem ke
-// satu gudang; apa pun selain itu (termasuk env tak diset) → 'multi', sesuai mode operasi resmi.
-export function getWarehouseMode(): WarehouseMode {
-  return process.env.WAREHOUSE_MODE?.trim().toLowerCase() === 'single' ? 'single' : 'multi'
+// Membaca mode pergudangan dari store_settings. HANYA nilai eksplisit 'single' yang menurunkan
+// sistem ke satu gudang; nilai lain / baris tak ada / gagal baca → 'multi' (mode resmi).
+export async function getWarehouseMode(): Promise<WarehouseMode> {
+  const value = await getSetting(WAREHOUSE_MODE_KEY)
+  return value?.trim().toLowerCase() === 'single' ? 'single' : 'multi'
 }
 
 // true bila sistem sedang menjalankan lebih dari satu gudang.
-export function isMultiWarehouse(): boolean {
-  return getWarehouseMode() === 'multi'
+export async function isMultiWarehouse(): Promise<boolean> {
+  return (await getWarehouseMode()) === 'multi'
+}
+
+// Mengubah mode pergudangan (dipakai toggle di OMS → Gudang). Mengembalikan mode tersimpan.
+// Nilai divalidasi di sini agar tak ada teks liar masuk ke store_settings.
+export async function setWarehouseMode(mode: WarehouseMode): Promise<WarehouseMode> {
+  const safe: WarehouseMode = mode === 'single' ? 'single' : 'multi'
+  await setSetting(WAREHOUSE_MODE_KEY, safe)
+  return safe
 }
 
 // === Gudang ===
@@ -43,28 +57,26 @@ export async function getDefaultWarehouse(): Promise<Warehouse | null> {
   return getDefaultWarehouseRow()
 }
 
-// Titik koordinat tujuan pengiriman (opsional). Mengantar TIDAK mengembalikan lat/long pada
-// hasil pencarian alamat, jadi selama sumber koordinat belum ada, parameter ini undefined dan
-// pemilihan gudang jatuh ke urutan berjenjang di resolveWarehouseForOrder.
-export type DestinationPoint = { latitude: number; longitude: number }
-
 // Item yang perlu dipenuhi satu gudang. Bentuk minimal agar bisa dipanggil dari mana saja
 // (keranjang, cek ongkir, pembuatan order) tanpa menyeret tipe CartItem/OrderItem.
 export type StockRequirement = StockTarget & { quantity: number }
 
-// Menentukan gudang mana yang memenuhi satu pesanan.
+// Menentukan gudang pemenuh pesanan TANPA membandingkan ongkir — dipakai sebagai FALLBACK saja:
+// saat buyer tak membawa pilihan kurir (mis. order dibuat lewat jalur lain) atau saat gudang
+// pilihannya ternyata sudah tak berstok.
 //
-// Mode single  : LANGSUNG gudang default — tanpa query stok, tanpa hitung jarak sama sekali.
-// Mode multi   : hanya gudang aktif yang stoknya cukup untuk SELURUH item; diurutkan berdasarkan
-//                jarak terdekat ke tujuan (Haversine) bila koordinat tujuan & gudang tersedia.
-//                Tidak ada yang memenuhi → fallback ke gudang default (pesanan tetap bisa dibuat,
-//                kekurangan stok ditangani RPC checkout yang akan menolak secara atomik).
+// Perbandingan ongkir riil ada di src/lib/warehouse-shipping.ts (resolveShippingOptions) dan
+// ITULAH jalur utama pemilihan gudang. Fungsi ini SENGAJA tidak memakai koordinat/jarak: jarak
+// lurus bukan ukuran biaya kirim (lihat catatan di warehouse-shipping.ts).
+//
+// Mode single : LANGSUNG gudang default — tanpa query stok sama sekali.
+// Mode multi  : gudang aktif ber-stok cukup untuk SELURUH item, gudang default didahulukan agar
+//               hasilnya deterministik. Tak ada yang memenuhi → gudang default (kekurangan stok
+//               tetap ditolak atomik oleh RPC checkout).
 export async function resolveWarehouseForOrder(
   orderItems: StockRequirement[],
-  destinationId?: string,
-  destination?: DestinationPoint,
 ): Promise<Warehouse | null> {
-  if (!isMultiWarehouse()) return getDefaultWarehouse()
+  if (!(await isMultiWarehouse())) return getDefaultWarehouse()
 
   const [warehouses, fallback] = await Promise.all([readWarehouses(true), getDefaultWarehouse()])
   if (warehouses.length === 0) return fallback
@@ -91,25 +103,8 @@ export async function resolveWarehouseForOrder(
 
   if (eligible.length === 0) return fallback
 
-  // Tanpa koordinat tujuan, "terdekat" tak bisa dihitung → dahulukan gudang default agar
-  // hasilnya deterministik, bukan bergantung urutan baris dari DB.
-  if (!destination) {
-    return eligible.find((w) => w.isDefault) ?? eligible[0]
-  }
-
-  const withDistance = eligible.map((w) => ({
-    warehouse: w,
-    // Gudang tanpa koordinat ditaruh paling belakang (Infinity), bukan dianggap jarak 0.
-    distance:
-      w.latitude !== undefined && w.longitude !== undefined
-        ? haversineDistanceKm(
-            { latitude: w.latitude, longitude: w.longitude },
-            destination,
-          )
-        : Number.POSITIVE_INFINITY,
-  }))
-  withDistance.sort((a, b) => a.distance - b.distance)
-  return withDistance[0]?.warehouse ?? fallback
+  // Gudang default didahulukan agar hasilnya deterministik, bukan bergantung urutan baris dari DB.
+  return eligible.find((w) => w.isDefault) ?? eligible[0]
 }
 
 // Mengambil origin_id Mengantar (kelurahan asal kirim) milik satu gudang.
@@ -149,7 +144,7 @@ export async function getEffectiveStock(
   )
   if (relevant.length === 0) return null
 
-  const warehouseId = isMultiWarehouse() ? options?.warehouseId : undefined
+  const warehouseId = (await isMultiWarehouse()) ? options?.warehouseId : undefined
   if (warehouseId) {
     const row = relevant.find((r) => r.warehouseId === warehouseId)
     return row ? row.stok : null
@@ -171,7 +166,7 @@ export async function getEffectiveStockMaps(
   const byProduct = new Map<string, number>()
   const byVariant = new Map<string, number>()
 
-  const warehouseId = isMultiWarehouse() ? options?.warehouseId : undefined
+  const warehouseId = (await isMultiWarehouse()) ? options?.warehouseId : undefined
 
   for (const row of rows) {
     // Mode multi dengan gudang spesifik → abaikan baris gudang lain.
@@ -267,26 +262,10 @@ export async function returnStockToWarehouse(
   }
 }
 
-// === Jarak (Haversine) ===
-
-const EARTH_RADIUS_KM = 6371
-
-function toRadians(deg: number): number {
-  return (deg * Math.PI) / 180
-}
-
-// Jarak dua titik bumi dalam kilometer (rumus Haversine, tanpa library eksternal).
-// Cukup akurat untuk memilih gudang terdekat; bukan jarak tempuh jalan raya.
-export function haversineDistanceKm(a: DestinationPoint, b: DestinationPoint): number {
-  const dLat = toRadians(b.latitude - a.latitude)
-  const dLon = toRadians(b.longitude - a.longitude)
-  const lat1 = toRadians(a.latitude)
-  const lat2 = toRadians(b.latitude)
-
-  const h =
-    Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2
-  return 2 * EARTH_RADIUS_KM * Math.asin(Math.min(1, Math.sqrt(h)))
-}
+// Catatan: fungsi jarak Haversine SUDAH DIHAPUS. Pemilihan gudang memakai perbandingan ongkir
+// riil per gudang (src/lib/warehouse-shipping.ts), karena jarak lurus bukan ukuran biaya kirim.
+// Kolom latitude/longitude di tabel warehouses tetap ada untuk keperluan lain (mis. tampilan
+// peta), tapi TIDAK boleh dipakai lagi sebagai dasar keputusan gudang pemenuh pesanan.
 
 // === Util internal ===
 

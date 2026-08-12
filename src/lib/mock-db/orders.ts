@@ -15,6 +15,7 @@
 // dari komponen 'use client'.
 
 import { createAdminClient } from '@/lib/supabase/server'
+import { recordOrderStockChanges } from '@/lib/stock-audit'
 import type {
   Order,
   OrderItem,
@@ -396,6 +397,24 @@ export async function getOrdersByPhone(phone: string): Promise<Order[]> {
   return rows.map((r) => rowToOrder(r, itemsByOrder.get(r.id) ?? []))
 }
 
+// Mengambil UUID internal pesanan dari nomor invoice. Dipakai untuk mengisi
+// stock_mutations.order_id (FK ke orders.id) — di lapisan app pesanan diidentifikasi oleh
+// nomor_invoice, sementara FK butuh id aslinya.
+export async function getOrderUuidByInvoice(invoice: string): Promise<string | null> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('orders')
+    .select('id')
+    .eq('nomor_invoice', invoice)
+    .maybeSingle()
+
+  if (error) {
+    console.error('Gagal membaca id pesanan:', error.message)
+    return null
+  }
+  return (data as { id: string } | null)?.id ?? null
+}
+
 // === Tulis ===
 
 // Menyimpan pesanan baru + item + kurangi stok, ATOMIK lewat Postgres RPC
@@ -448,6 +467,22 @@ export async function saveOrder(input: CreateOrderInput): Promise<Order> {
     })
 
     if (!error) {
+      // Catat pergerakan stok akibat pesanan ini. Dijalankan SETELAH RPC sukses (stok sudah
+      // berkurang di DB) supaya nilai "sesudah" yang dibaca adalah kondisi nyata. Best effort:
+      // gagal mencatat riwayat tak boleh menggagalkan pesanan yang sudah tersimpan.
+      const orderUuid = await getOrderUuidByInvoice(invoice)
+      await recordOrderStockChanges({
+        items: input.items.map((it) => ({
+          productId: it.productId,
+          ...(it.variantId ? { variantId: it.variantId } : {}),
+          quantity: it.quantity,
+        })),
+        ...(input.warehouseId ? { warehouseId: input.warehouseId } : {}),
+        orderInvoice: invoice,
+        ...(orderUuid ? { orderId: orderUuid } : {}),
+        direction: 'out',
+      })
+
       const order = await getOrderByOrderId(invoice)
       if (order) return order
       // Fallback bila re-fetch gagal: kembalikan bentuk minimal dari input

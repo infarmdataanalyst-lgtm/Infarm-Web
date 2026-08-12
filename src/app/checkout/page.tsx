@@ -21,7 +21,7 @@ import PaymentModal from '@/components/checkout/PaymentModal'
 import PhoneConfirmModal from '@/components/checkout/PhoneConfirmModal'
 import { validateAddress } from '@/lib/checkout-validation'
 import { formatRupiah } from '@/lib/format'
-import { type ShippingCourier } from '@/lib/mengantar'
+import { type WarehouseShippingOption } from '@/lib/mengantar'
 import { dummyProducts } from '@/lib/data/dummy-products'
 import {
   subscribeCheckout,
@@ -71,7 +71,7 @@ export default function CheckoutPage() {
   const isAddressValid = useMemo(() => validateAddress(address).valid, [address])
 
   // === Kurir terpilih (selected_courier) hasil cek ongkir ===
-  const [selectedCourier, setSelectedCourier] = useState<ShippingCourier | null>(null)
+  const [selectedCourier, setSelectedCourier] = useState<WarehouseShippingOption | null>(null)
 
   // Saat alamat berubah/di-reset (destination_id berganti), reset pilihan kurir → cek ongkir ulang.
   function handleAddressChange(next: AddressFormState) {
@@ -186,6 +186,19 @@ export default function CheckoutPage() {
     [orderItems, freeCheckoutItems],
   )
 
+  // Kebutuhan stok yang dikirim ke perbandingan ongkir: hanya produk yang dibeli (produk hadiah
+  // promo TIDAK diikutkan — ketersediaannya dievaluasi server saat membuat order, dan menyertakannya
+  // di sini bisa mengecualikan gudang yang sebenarnya sanggup mengirim pesanan utama).
+  const shippingItems = useMemo(
+    () =>
+      orderItems.map((item) => ({
+        productId: item.id,
+        quantity: item.quantity,
+        variantId: item.variantId ?? undefined,
+      })),
+    [orderItems],
+  )
+
   // === Minimum total belanja (pengaturan toko) ===
   // Dibandingkan dengan SUBTOTAL BARANG (bukan subtotal+ongkir) agar pesan 'kurang Rp X lagi'
   // sama persis dengan yang tampil di keranjang, dan tetap konsisten dengan validasi server.
@@ -280,6 +293,11 @@ export default function CheckoutPage() {
           totalAmount: total, // dikirim untuk kompatibilitas; server tetap hitung ulang
           shippingCost: selectedCourier.price,
           logistics: { courier: selectedCourier.name, service: selectedCourier.estimatedDate },
+          // Gudang asal tarif yang dipilih buyer + berat yang dipakai saat cek ongkir.
+          // Server memverifikasi ulang gudang ini (aktif & stok cukup) dan, bila gagal, jatuh ke
+          // opsi termurah berikutnya dari perbandingan ongkir yang masih tersimpan di server.
+          warehouseId: selectedCourier.warehouseId,
+          weight: shippingWeight,
           // Alamat terstruktur dari form + hasil search Mengantar
           address: {
             shippingAddress: address.street,
@@ -327,10 +345,12 @@ export default function CheckoutPage() {
         {/* 3 — Form input alamat pengiriman */}
         <AddressForm ref={addressFormRef} onChange={handleAddressChange} />
 
-        {/* 4 — Pilihan kurir & ongkir (bottom sheet) berdasarkan alamat terpilih */}
+        {/* 4 — Pilihan kurir & ongkir (bottom sheet). Isi keranjang dikirim agar server bisa
+               membandingkan ongkir dari tiap gudang yang stoknya cukup. */}
         <ShippingOptions
           destinationId={address.destination_id}
           weight={shippingWeight}
+          items={shippingItems}
           selected={selectedCourier}
           onSelect={setSelectedCourier}
         />

@@ -6,6 +6,8 @@ import { requireAdmin } from '@/lib/oms-guard'
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { updateProduct } from '@/lib/mock-db/products'
 import { parseStockPerWarehouse, writeStockPerWarehouse } from '@/lib/warehouse'
+import { readStockRows } from '@/lib/mock-db/warehouses'
+import { recordAdminStockChanges } from '@/lib/stock-audit'
 import { PRODUCT_CATEGORIES } from '@/lib/data/categories'
 import { validateMinOrderQty } from '@/lib/product-validation'
 import type { StoredProduct } from '@/types/product'
@@ -75,8 +77,24 @@ export async function PATCH(request: Request) {
 
   // Menimpa stok tiap gudang. Dijalankan SETELAH update produk agar produk yang tak ditemukan
   // tidak menyisakan perubahan stok.
+  //
+  // Catatan: modal edit produk SUDAH TIDAK mengirim stockPerWarehouse (stok hanya bisa diubah di
+  // Gudang → Kelola Stok). Cabang ini dipertahankan untuk pemanggil lain / skrip, dan karena itu
+  // ikut dicatat ke riwayat dengan alasan 'product_form'.
   if (perWarehouse.entries && perWarehouse.entries.length > 0) {
+    // Nilai lama dibaca SEBELUM ditimpa, untuk stok_before di riwayat.
+    const previous = await readStockRows({ productIds: [body.id] })
     await writeStockPerWarehouse(body.id, perWarehouse.entries)
+    await recordAdminStockChanges(
+      perWarehouse.entries.map((entry) => ({
+        productId: body.id as string,
+        warehouseId: entry.warehouseId,
+        stokBefore:
+          previous.find((r) => r.warehouseId === entry.warehouseId && !r.variantId)?.stok ?? 0,
+        stokAfter: entry.stok,
+      })),
+      'product_form',
+    )
   }
 
   // Segarkan cache storefront agar perubahan (harga/stok/arsip) langsung tampil di ecommerce.

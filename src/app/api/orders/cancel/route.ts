@@ -6,8 +6,9 @@
 
 import { NextResponse } from 'next/server'
 import { revalidatePath, revalidateTag } from 'next/cache'
-import { getOrderByOrderId, updateOrderStatus } from '@/lib/mock-db/orders'
+import { getOrderByOrderId, getOrderUuidByInvoice, updateOrderStatus } from '@/lib/mock-db/orders'
 import { restoreStock } from '@/lib/mock-db/products'
+import { recordOrderStockChanges } from '@/lib/stock-audit'
 import { verifyCancelToken } from '@/lib/order-token'
 import type { Order, OrderFulfillmentStatus } from '@/types/order'
 
@@ -112,6 +113,21 @@ export async function PATCH(request: Request) {
     })),
     order.warehouseId,
   )
+
+  // Riwayat mutasi: stok kembali karena pembatalan. Pelakunya PEMBELI (bukan admin), jadi kolom
+  // "diubah oleh" di riwayat dibiarkan kosong dan ditampilkan sebagai "Sistem (pembeli)".
+  const orderUuid = await getOrderUuidByInvoice(order.orderId)
+  await recordOrderStockChanges({
+    items: order.items.map((i) => ({
+      productId: i.productId,
+      ...(i.variantId ? { variantId: i.variantId } : {}),
+      quantity: i.quantity,
+    })),
+    ...(order.warehouseId ? { warehouseId: order.warehouseId } : {}),
+    orderInvoice: order.orderId,
+    ...(orderUuid ? { orderId: orderUuid } : {}),
+    direction: 'in',
+  })
 
   // Stok kembali → segarkan cache storefront agar stok tampil akurat.
   revalidatePath('/')

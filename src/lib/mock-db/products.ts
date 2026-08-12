@@ -357,6 +357,50 @@ export async function restoreStock(
   }
 }
 
+// === Aksi massal (OMS) ===
+
+// Mengarsipkan / memulihkan BANYAK produk sekaligus. Mengembalikan jumlah baris terpengaruh.
+// Satu query `.in('id', ids)` — bukan loop update — agar aksi massal atas puluhan produk tetap
+// satu perjalanan ke database.
+export async function bulkSetArchived(ids: string[], archived: boolean): Promise<number> {
+  if (ids.length === 0) return 0
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('products')
+    .update({ archived })
+    .in('id', ids)
+    .select('id')
+
+  if (error) throw new Error(`Gagal memperbarui status arsip: ${error.message}`)
+  return data?.length ?? 0
+}
+
+// Mengubah kategori BANYAK produk sekaligus. Kategori divalidasi pemanggil (route handler)
+// terhadap PRODUCT_CATEGORIES — DB juga menolak nilai di luar CHECK constraint.
+export async function bulkSetCategory(ids: string[], category: ProductCategory): Promise<number> {
+  if (ids.length === 0) return 0
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('products')
+    .update({ category })
+    .in('id', ids)
+    .select('id')
+
+  if (error) throw new Error(`Gagal mengubah kategori: ${error.message}`)
+  return data?.length ?? 0
+}
+
+// Menghapus BANYAK produk sekaligus. Baris stok per gudang & varian ikut terhapus lewat
+// FK ON DELETE CASCADE; order_items menyimpan product_id nullable sehingga riwayat pesanan aman.
+export async function bulkDeleteProducts(ids: string[]): Promise<number> {
+  if (ids.length === 0) return 0
+  const supabase = createAdminClient()
+  const { data, error } = await supabase.from('products').delete().in('id', ids).select('id')
+
+  if (error) throw new Error(`Gagal menghapus produk: ${error.message}`)
+  return data?.length ?? 0
+}
+
 // === Hapus ===
 
 // Menghapus produk berdasarkan id. true bila terhapus, false bila tidak ditemukan.

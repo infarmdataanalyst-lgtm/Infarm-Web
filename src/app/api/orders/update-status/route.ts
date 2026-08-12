@@ -7,8 +7,9 @@
 
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/oms-guard'
-import { getOrderByOrderId, updateOrderStatus } from '@/lib/mock-db/orders'
+import { getOrderByOrderId, getOrderUuidByInvoice, updateOrderStatus } from '@/lib/mock-db/orders'
 import { restoreStock } from '@/lib/mock-db/products'
+import { recordOrderStockChanges } from '@/lib/stock-audit'
 import { canTransition } from '@/lib/order-status-machine'
 import type { OrderFulfillmentStatus } from '@/types/order'
 
@@ -93,6 +94,22 @@ export async function PATCH(request: Request) {
       })),
       order.warehouseId,
     )
+
+    // Riwayat mutasi. Di jalur ini pelakunya ADMIN (pembatalan dari OMS), jadi recordOrderStockChanges
+    // tetap dipakai untuk alasan 'order_cancelled' — kolom "diubah oleh" memang tak diisi di sini
+    // supaya semua baris pembatalan konsisten; nomor invoice sudah menunjukkan asal perubahannya.
+    const orderUuid = await getOrderUuidByInvoice(order.orderId)
+    await recordOrderStockChanges({
+      items: order.items.map((i) => ({
+        productId: i.productId,
+        ...(i.variantId ? { variantId: i.variantId } : {}),
+        quantity: i.quantity,
+      })),
+      ...(order.warehouseId ? { warehouseId: order.warehouseId } : {}),
+      orderInvoice: order.orderId,
+      ...(orderUuid ? { orderId: orderUuid } : {}),
+      direction: 'in',
+    })
   }
 
   return NextResponse.json({ success: true, order: updated })

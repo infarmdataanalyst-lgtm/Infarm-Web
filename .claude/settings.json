@@ -17,7 +17,12 @@
       "PowerShell(npx tsc --noEmit)",
       "Bash(curl -s -o /tmp/ongkir.json -w \"HTTP %{http_code}\\\\n\" \"http://localhost:3000/api/mengantar/shipping/estimate?destination_id=5fc62dfbf8f44b34aa4be9e0&weight=1\")",
       "Bash(curl -s -o /dev/null -w \"port3000 HTTP %{http_code}\\\\n\" \"http://localhost:3000/api/settings/min-order\")",
-      "Bash(node \"C:/Users/fiqih/AppData/Local/Temp/claude/c--Users-fiqih-OneDrive-Dokumen-Infarm-Web-Infarm-Web/96589674-dcb9-430c-854e-a231b53ed65c/scratchpad/verify-warehouse.mjs\")"
+      "Bash(node \"C:/Users/fiqih/AppData/Local/Temp/claude/c--Users-fiqih-OneDrive-Dokumen-Infarm-Web-Infarm-Web/96589674-dcb9-430c-854e-a231b53ed65c/scratchpad/verify-warehouse.mjs\")",
+      "Bash(sed -i '81s|if \\(!isMultiWarehouse\\(\\)\\) return getDefaultWarehouse\\(\\)|if \\(!\\(await isMultiWarehouse\\(\\)\\)\\) return getDefaultWarehouse\\(\\)|' src/lib/warehouse.ts)",
+      "Bash(sed -i '166s|const warehouseId = isMultiWarehouse\\(\\) ? options?.warehouseId : undefined|const warehouseId = \\(await isMultiWarehouse\\(\\)\\) ? options?.warehouseId : undefined|' src/lib/warehouse.ts)",
+      "Bash(sed -i '188s|const warehouseId = isMultiWarehouse\\(\\) ? options?.warehouseId : undefined|const warehouseId = \\(await isMultiWarehouse\\(\\)\\) ? options?.warehouseId : undefined|' src/lib/warehouse.ts)",
+      "Bash(sed -i \"24s|import { type ShippingCourier } from '@/lib/mengantar'|import { type WarehouseShippingOption } from '@/lib/mengantar'|\" src/app/checkout/page.tsx)",
+      "Bash(sed -i \"74s|useState<ShippingCourier \\\\| null>\\(null\\)|useState<WarehouseShippingOption \\\\| null>\\(null\\)|\" src/app/checkout/page.tsx)"
     ]
   }
 }

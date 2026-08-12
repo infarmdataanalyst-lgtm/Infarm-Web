@@ -7,6 +7,38 @@ import { createAdminClient } from '@/lib/supabase/server'
 
 // Kunci setting yang dikenal aplikasi
 export const MIN_ORDER_AMOUNT_KEY = 'min_order_amount'
+export const WAREHOUSE_MODE_KEY = 'warehouse_mode'
+
+// === Akses generik ===
+
+// Membaca satu setting mentah. null bila tak ada / tabel belum di-migrate / gangguan koneksi —
+// pemanggil WAJIB punya nilai cadangan sendiri (jangan biarkan gangguan setting mematikan fitur).
+export async function getSetting(key: string): Promise<string | null> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('store_settings')
+    .select('value')
+    .eq('key', key)
+    .maybeSingle()
+
+  if (error) {
+    console.error(`Gagal membaca setting ${key}:`, error.message)
+    return null
+  }
+  const value = data?.value
+  return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+// Menyimpan satu setting (upsert by key). Melempar Error bila gagal agar route bisa membalas 500 —
+// admin harus tahu kalau perubahannya TIDAK tersimpan.
+export async function setSetting(key: string, value: string): Promise<void> {
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('store_settings')
+    .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' })
+
+  if (error) throw new Error(`Gagal menyimpan setting ${key}: ${error.message}`)
+}
 
 // Nilai cadangan bila tabel belum di-migrate / baris terhapus / nilai tak valid.
 // Dipilih di atas batas minimum Xendit (±Rp10.000) agar order tetap bisa dibuatkan invoice.

@@ -7,6 +7,7 @@ import { requireAdmin } from '@/lib/oms-guard'
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { saveProduct } from '@/lib/mock-db/products'
 import { parseStockPerWarehouse, writeStockPerWarehouse } from '@/lib/warehouse'
+import { recordAdminStockChanges } from '@/lib/stock-audit'
 import { PRODUCT_CATEGORIES } from '@/lib/data/categories'
 import {
   validateName,
@@ -118,6 +119,18 @@ export async function POST(request: Request) {
   // saveProduct sudah menaruh `stock` ke gudang default; rincian per gudang menimpanya bila ada.
   if (perWarehouse.entries && perWarehouse.entries.length > 0) {
     await writeStockPerWarehouse(saved.id, perWarehouse.entries)
+
+    // Stok AWAL produk baru ikut dicatat ke riwayat: tanpa ini, baris pertama riwayat sebuah produk
+    // akan seolah muncul dari angka yang tak pernah diisi siapa pun. Produk baru → stok sebelum = 0.
+    await recordAdminStockChanges(
+      perWarehouse.entries.map((entry) => ({
+        productId: saved.id,
+        warehouseId: entry.warehouseId,
+        stokBefore: 0,
+        stokAfter: entry.stok,
+      })),
+      'product_form',
+    )
   }
 
   // Segarkan cache halaman storefront agar produk baru langsung tampil saat navigasi.

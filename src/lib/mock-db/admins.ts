@@ -16,6 +16,20 @@ type AdminRow = {
   password_hash: string
   name: string | null
   is_active: boolean
+  role?: string | null
+}
+
+// Peran akun OMS (kolom admin_users.role, migration 20260814120000).
+// 'admin' = akses penuh termasuk menulis stok; 'staff' = hanya melihat stok.
+export type AdminRole = 'admin' | 'staff'
+
+// Identitas admin yang dipakai guard & pencatatan riwayat.
+export type AdminIdentity = { id: string; name: string; role: AdminRole }
+
+// Menormalkan nilai kolom role. Nilai tak dikenal / kolom belum di-migrate → 'admin', supaya
+// menambahkan fitur role TIDAK pernah mengunci admin yang sudah ada dari pekerjaannya.
+function toRole(value: string | null | undefined): AdminRole {
+  return value?.trim().toLowerCase() === 'staff' ? 'staff' : 'admin'
 }
 
 // Membuat hash password scrypt berformat "saltHex:hashHex" (dipakai saat seeding/ganti password).
@@ -39,18 +53,58 @@ export function verifyPassword(password: string, stored: string): boolean {
   }
 }
 
+// Mengambil identitas admin (termasuk peran) dari id sesi — dipakai guard otorisasi dan untuk
+// mengisi kolom "diubah oleh" pada riwayat mutasi stok.
+// null bila tak ditemukan (mis. akun sudah dihapus tapi cookie sesinya masih ada di browser).
+export async function getAdminById(id: string): Promise<AdminIdentity | null> {
+  const supabase = createAdminClient()
+  let { data, error } = await supabase
+    .from('admin_users')
+    .select('id, username, name, role')
+    .eq('id', id)
+    .maybeSingle()
+
+  // Kolom role belum di-migrate (42703 = kolom tak ada) → ulangi tanpa kolom itu, lalu perlakukan
+  // sebagai 'admin'. Tanpa fallback ini, halaman OMS mati total sebelum migration dijalankan.
+  if (error?.code === '42703') {
+    ;({ data, error } = await supabase
+      .from('admin_users')
+      .select('id, username, name')
+      .eq('id', id)
+      .maybeSingle())
+  }
+
+  if (error) {
+    console.error('Gagal membaca admin by id dari Supabase:', error.message)
+    return null
+  }
+  const row = data as { id: string; username: string; name: string | null; role?: string | null } | null
+  if (!row) return null
+  // admin_users TIDAK punya kolom email; nama tampilan = name, fallback ke username.
+  return { id: row.id, name: row.name ?? row.username, role: toRole(row.role) }
+}
+
 // Mencari admin aktif berdasarkan username (case-insensitive) & memverifikasi password.
 // Mengembalikan { id, name } bila cocok, atau null bila tidak ada / password salah / nonaktif.
 export async function authenticateAdmin(
   username: string,
   password: string,
-): Promise<{ id: string; name: string } | null> {
+): Promise<AdminIdentity | null> {
   const supabase = createAdminClient()
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('admin_users')
-    .select('id, username, password_hash, name, is_active')
+    .select('id, username, password_hash, name, is_active, role')
     .ilike('username', username.trim())
     .maybeSingle()
+
+  // Kolom role belum di-migrate → login tetap harus bisa jalan (lihat catatan di getAdminById).
+  if (error?.code === '42703') {
+    ;({ data, error } = await supabase
+      .from('admin_users')
+      .select('id, username, password_hash, name, is_active')
+      .ilike('username', username.trim())
+      .maybeSingle())
+  }
 
   if (error) {
     console.error('Gagal membaca admin dari Supabase:', error.message)
@@ -60,5 +114,5 @@ export async function authenticateAdmin(
   if (!row || !row.is_active) return null
   if (!verifyPassword(password, row.password_hash)) return null
 
-  return { id: row.id, name: row.name ?? row.username }
+  return { id: row.id, name: row.name ?? row.username, role: toRole(row.role) }
 }

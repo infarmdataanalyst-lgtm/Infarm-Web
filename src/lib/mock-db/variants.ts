@@ -4,7 +4,7 @@
 // & stok dari tabel products seperti biasa). Jangan diimpor dari komponen 'use client'.
 
 import { createAdminClient } from '@/lib/supabase/server'
-import { writeEffectiveStock } from '@/lib/warehouse'
+import { getEffectiveStockMaps, writeEffectiveStock } from '@/lib/warehouse'
 import type { ProductVariant } from '@/types/variant'
 
 type VariantRow = {
@@ -33,6 +33,9 @@ function rowToVariant(row: VariantRow): ProductVariant {
 }
 
 // Membaca semua varian sebuah produk (urut: default dulu, lalu terlama). Kosong bila produk tak bervarian.
+// Nilai `stock` = STOK EFEKTIF dari product_stock_per_warehouse (sejumlah semua gudang), sama
+// perlakuannya seperti produk biasa di readProducts. Kolom product_variants.stok hanya dipakai
+// bila varian itu belum punya baris gudang.
 export async function getVariantsByProduct(productId: string): Promise<ProductVariant[]> {
   const supabase = createAdminClient()
   const { data, error } = await supabase
@@ -47,7 +50,45 @@ export async function getVariantsByProduct(productId: string): Promise<ProductVa
     console.error('Gagal membaca varian produk dari Supabase:', error.message)
     return []
   }
+  const variants = ((data as VariantRow[]) ?? []).map(rowToVariant)
+  if (variants.length === 0) return variants
+
+  // Overlay stok gudang. Tanpa ini, stok varian yang diedit di halaman "Kelola Stok Gudang"
+  // tak akan pernah terlihat di storefront (VariantSelector membaca daftar ini).
+  const { byVariant } = await getEffectiveStockMaps([productId])
+  if (byVariant.size === 0) return variants
+  return variants.map((v) => (byVariant.has(v.id) ? { ...v, stock: byVariant.get(v.id) ?? 0 } : v))
+}
+
+// Membaca SELURUH varian (semua produk) — dipakai matrix "Kelola Stok Gudang" agar tak perlu
+// satu query per produk. Stok di sini SENGAJA nilai kolom lama: matrix menghitung totalnya
+// sendiri dari baris per gudang.
+export async function readAllVariants(): Promise<ProductVariant[]> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('product_variants')
+    .select('*')
+    .order('product_id', { ascending: true })
+    .order('is_default', { ascending: false })
+    .order('created_at', { ascending: true })
+
+  if (error) {
+    console.error('Gagal membaca seluruh varian dari Supabase:', error.message)
+    return []
+  }
   return ((data as VariantRow[]) ?? []).map(rowToVariant)
+}
+
+// Menyelaraskan kolom lama product_variants.stok dengan total stok varian di semua gudang.
+// Dipanggil setelah menulis stok varian per gudang. Kolom lama tetap diisi sebagai jaring
+// pengaman untuk jalur baca yang belum memakai overlay stok gudang.
+export async function syncVariantLegacyStock(variantId: string, stok: number): Promise<void> {
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('product_variants')
+    .update({ stok: Math.max(0, Math.trunc(stok)) })
+    .eq('id', variantId)
+  if (error) console.error('Gagal menyelaraskan stok lama varian:', error.message)
 }
 
 // Membaca beberapa varian sekaligus by id (dipakai saat resolve nama varian di order/keranjang).
