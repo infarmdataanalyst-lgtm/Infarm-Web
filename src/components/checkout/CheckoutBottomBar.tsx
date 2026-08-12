@@ -5,7 +5,7 @@
 
 import Link from 'next/link'
 import { formatRupiah } from '@/lib/format'
-import { PRIVACY_POLICY_PATH, TERMS_PATH } from '@/lib/data/legal'
+import { LEGAL_PAGES_ENABLED, PRIVACY_POLICY_PATH, TERMS_PATH } from '@/lib/data/legal'
 
 // Menampilkan total pembayaran & tombol bayar; total diberikan dari parent (reaktif).
 // isPaying: saat true tombol dinonaktifkan & berubah jadi "Memproses…" (cegah double submit).
@@ -39,28 +39,32 @@ export default function CheckoutBottomBar({
         </p>
       )}
 
-      {/* Pemberitahuan persetujuan — tautan target="_blank" agar isian checkout tetap utuh */}
-      <p className="mx-auto max-w-6xl px-4 pt-2 text-[11px] leading-snug text-zinc-500">
-        Dengan melanjutkan pembayaran, Anda menyetujui{' '}
-        <Link
-          href={TERMS_PATH}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="font-medium text-brand-primary underline decoration-brand-light underline-offset-2"
-        >
-          Syarat &amp; Ketentuan
-        </Link>{' '}
-        dan{' '}
-        <Link
-          href={PRIVACY_POLICY_PATH}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="font-medium text-brand-primary underline decoration-brand-light underline-offset-2"
-        >
-          Kebijakan Privasi
-        </Link>{' '}
-        kami.
-      </p>
+      {/* Pemberitahuan persetujuan — tautan target="_blank" agar isian checkout tetap utuh.
+          Seluruh pemberitahuan disembunyikan saat halaman legal nonaktif: meminta pembeli
+          menyetujui dokumen yang tak bisa ia baca justru lebih buruk daripada tak menyebutnya. */}
+      {LEGAL_PAGES_ENABLED && (
+        <p className="mx-auto max-w-6xl px-4 pt-2 text-[11px] leading-snug text-zinc-500">
+          Dengan melanjutkan pembayaran, Anda menyetujui{' '}
+          <Link
+            href={TERMS_PATH}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-brand-primary underline decoration-brand-light underline-offset-2"
+          >
+            Syarat &amp; Ketentuan
+          </Link>{' '}
+          dan{' '}
+          <Link
+            href={PRIVACY_POLICY_PATH}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-brand-primary underline decoration-brand-light underline-offset-2"
+          >
+            Kebijakan Privasi
+          </Link>{' '}
+          kami.
+        </p>
+      )}
 
       <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 pb-3 pt-2">
         <div className="min-w-0">

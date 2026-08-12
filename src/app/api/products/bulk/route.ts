@@ -44,8 +44,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Aksi massal tidak dikenal.' }, { status: 400 })
   }
 
-  // ids wajib array string non-kosong. Produk contoh di UI (id 'PRD-00x') tidak pernah dikirim
-  // ke sini — UI menonaktifkan checkbox-nya karena tak ada di database.
+  // ids wajib array string non-kosong. Id yang tak ada di database tidak menghasilkan error di
+  // sini — query `.in()` hanya mengenai baris yang cocok, jadi jumlah terpengaruh bisa < ids.length.
   const rawIds = body.ids
   if (!Array.isArray(rawIds) || rawIds.some((id) => typeof id !== 'string')) {
     return NextResponse.json({ error: 'Daftar produk tidak valid.' }, { status: 400 })

@@ -3,7 +3,7 @@
 // Server Component, responsive (stack di mobile → multi-kolom di desktop).
 
 import Link from 'next/link'
-import { PRIVACY_POLICY_PATH, TERMS_PATH } from '@/lib/data/legal'
+import { LEGAL_PAGES_ENABLED, PRIVACY_POLICY_PATH, TERMS_PATH } from '@/lib/data/legal'
 
 // Daftar pencapaian (placeholder teks; TODO: ganti dengan gambar badge asli)
 const ACHIEVEMENTS = ['Brand Choice Awards', 'TikTok Most Wanted Brand', '#1 Pupuk Organik Cair Shopee']
@@ -132,32 +132,40 @@ export default function Footer() {
               ))}
             </ul>
 
-            {/* Dokumen legal — dipisah dari sitemap agar mudah ditemukan */}
-            <h3 className="mt-6 text-sm font-bold uppercase tracking-wide text-white/80">Legal</h3>
-            <ul className="mt-3 space-y-3">
-              {LEGAL_LINKS.map((link) => (
-                <li key={link.href}>
-                  <Link href={link.href} className="font-medium transition hover:text-white/80">
-                    {link.label}
-                  </Link>
-                </li>
-              ))}
-            </ul>
+            {/* Dokumen legal — dipisah dari sitemap agar mudah ditemukan.
+                Seluruh section disembunyikan saat LEGAL_PAGES_ENABLED = false: menyisakan judul
+                "Legal" tanpa isi hanya memancing pertanyaan. */}
+            {LEGAL_PAGES_ENABLED && (
+              <>
+                <h3 className="mt-6 text-sm font-bold uppercase tracking-wide text-white/80">Legal</h3>
+                <ul className="mt-3 space-y-3">
+                  {LEGAL_LINKS.map((link) => (
+                    <li key={link.href}>
+                      <Link href={link.href} className="font-medium transition hover:text-white/80">
+                        {link.label}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
           </nav>
         </div>
 
-        {/* === Copyright + tautan legal ringkas === */}
+        {/* === Copyright + tautan legal ringkas (tautan ikut nonaktif bersama halamannya) === */}
         <div className="mt-10 flex flex-col items-center gap-2 text-sm text-white/80">
           <p>© {year} infarm. Hak Cipta Dilindungi.</p>
-          <p className="flex flex-wrap justify-center gap-x-2">
-            <Link href={PRIVACY_POLICY_PATH} className="underline underline-offset-2 transition hover:text-white">
-              Kebijakan Privasi
-            </Link>
-            <span aria-hidden>·</span>
-            <Link href={TERMS_PATH} className="underline underline-offset-2 transition hover:text-white">
-              Syarat &amp; Ketentuan
-            </Link>
-          </p>
+          {LEGAL_PAGES_ENABLED && (
+            <p className="flex flex-wrap justify-center gap-x-2">
+              <Link href={PRIVACY_POLICY_PATH} className="underline underline-offset-2 transition hover:text-white">
+                Kebijakan Privasi
+              </Link>
+              <span aria-hidden>·</span>
+              <Link href={TERMS_PATH} className="underline underline-offset-2 transition hover:text-white">
+                Syarat &amp; Ketentuan
+              </Link>
+            </p>
+          )}
         </div>
       </div>
     </footer>

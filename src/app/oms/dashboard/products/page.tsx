@@ -3,8 +3,9 @@
 // src/app/oms/dashboard/products/page.tsx
 // Halaman Manajemen Produk & Inventaris OMS — area internal Infarm.
 // Menampilkan ringkasan stok + tabel produk dengan filter, seleksi massal, dan aksi per produk.
-// Produk hasil input OMS (mock DB) bisa diedit/dihapus permanen via API;
-// produk contoh bawaan (dummy) hanya bisa diubah sementara di layar.
+// SUMBER DATA TUNGGAL: /api/products/list (Supabase). Tak ada lagi produk contoh hardcode —
+// setiap baris di tabel ini benar-benar ada di database, jadi semua aksi (edit, arsip, hapus,
+// aksi massal) selalu tersimpan.
 //
 // FILTER: state disimpan di URL query params (pola sama dengan halaman Pesanan) agar bisa
 // di-bookmark & di-share, tapi PENYARINGANNYA di client atas data yang sudah dimuat —
@@ -52,9 +53,8 @@ type Product = {
   description?: string // deskripsi produk (tampil di halaman detail ecommerce)
   image: string // foto utama (thumbnail tabel) = images[0]
   images?: string[] // galeri foto (maks 9)
-  persisted: boolean // true bila tersimpan di mock DB (bisa diedit/dihapus permanen)
   archived: boolean // true = disembunyikan dari ecommerce, tetap ada di OMS
-  createdAt?: string // ISO date dari DB; undefined untuk produk contoh → tersaring saat filter tanggal
+  createdAt?: string // ISO date dari DB; bila kosong, baris tersaring keluar saat filter tanggal aktif
 }
 
 // Bentuk data form pada modal edit
@@ -89,6 +89,18 @@ const STATUS_FILTERS = [
 ] as const
 type StatusFilter = (typeof STATUS_FILTERS)[number]['value']
 
+// Kelas bersama untuk SEMUA field di bilah filter (input teks, tanggal, dan select).
+// Satu konstanta supaya keenam field tak pernah berbeda warna/ukuran sendiri-sendiri.
+//
+// `text-gray-900` + `placeholder:text-gray-700` WAJIB eksplisit: tanpa itu field mewarisi warna
+// teks pemiliknya dan placeholder memakai default browser yang sangat terang, sehingga isi filter
+// nyaris tak terbaca di atas kartu putih. Pola sama dengan filter di halaman Pesanan.
+const FILTER_FIELD_CLASS =
+  'w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none transition placeholder:text-gray-700 focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100'
+
+// Label di atas tiap field filter.
+const FILTER_LABEL_CLASS = 'mb-1.5 block text-xs font-semibold text-gray-800'
+
 // Ringkasan varian per produk (dari /api/variants/summary) — untuk tampilan harga & stok agregat.
 type VariantSummary = { count: number; totalStock: number; minPrice: number; maxPrice: number }
 
@@ -100,14 +112,10 @@ const SALES_RANGES: { label: string; days: number | null }[] = [
   { label: 'Semua', days: null },
 ]
 
-// === Dummy Data Produk (contoh bawaan, tidak tersimpan di DB) ===
-const INITIAL_PRODUCTS: Product[] = [
-  { id: 'PRD-001', name: 'Benih Cabai Rawit Unggul', sku: 'BNH-CBR-01', categoryLabel: 'Benih Premium', slug: 'benih-premium', price: 18000, stock: 124, image: '/images/product-placeholder.png', minOrderQty: 1, persisted: false, archived: false },
-  { id: 'PRD-002', name: 'Media Tanam Premium 5L', sku: 'MDT-PRM-5L', categoryLabel: 'Media Tanam', slug: 'media-tanam', price: 32000, stock: 7, image: '/images/product-placeholder.png', minOrderQty: 1, persisted: false, archived: false },
-  { id: 'PRD-003', name: 'Pot Polybag 25cm (isi 10)', sku: 'POT-PLB-25', categoryLabel: 'Pot Polybag', slug: 'pot-polybag', price: 15000, stock: 0, image: '/images/product-placeholder.png', minOrderQty: 1, persisted: false, archived: false },
-  { id: 'PRD-004', name: 'Pupuk Organik Cair 1L', sku: 'PPK-ORG-1L', categoryLabel: 'Pupuk Nutrisi', slug: 'pupuk-nutrisi', price: 45000, stock: 58, image: '/images/product-placeholder.png', minOrderQty: 1, persisted: false, archived: false },
-  { id: 'PRD-005', name: 'Benih Selada Hidroponik', sku: 'BNH-SLD-02', categoryLabel: 'Benih Premium', slug: 'benih-premium', price: 22000, stock: 4, image: '/images/product-placeholder.png', minOrderQty: 1, persisted: false, archived: false },
-]
+// Catatan: dulu di sini ada INITIAL_PRODUCTS — 5 produk contoh (PRD-001…005) yang dirender
+// bersama produk asli. DIHAPUS karena barisnya tak ada di database: aksi massal, arsip, dan stok
+// atasnya tak bisa menyimpan apa pun, sehingga tabel menampilkan angka yang tak bisa dipercaya.
+// Tabel sekarang MURNI produk dari Supabase.
 
 // Memetakan produk mock DB → view model tabel
 function mapStored(p: StoredProduct): Product {
@@ -124,7 +132,6 @@ function mapStored(p: StoredProduct): Product {
     description: p.description,
     image: p.imageUrl,
     images: p.images,
-    persisted: true,
     archived: p.archived ?? false,
     createdAt: p.createdAt,
   }
@@ -169,7 +176,7 @@ function ProductsContent() {
   // Paginasi (client-side, atas hasil filter)
   const [page, setPage] = useState(1)
 
-  // Seleksi massal — berisi id produk TERSIMPAN saja (produk contoh tak bisa dipilih)
+  // Seleksi massal — berisi id produk yang dicentang di halaman aktif
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [bulkBusy, setBulkBusy] = useState(false)
   const [bulkConfirm, setBulkConfirm] = useState<'delete' | null>(null)
@@ -179,7 +186,7 @@ function ProductsContent() {
   const [rowMenu, setRowMenu] = useState<string | null>(null)
 
   // === State ===
-  const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS)
+  const [products, setProducts] = useState<Product[]>([])
 
   // Modal Edit
   const [editTarget, setEditTarget] = useState<Product | null>(null)
@@ -240,14 +247,14 @@ function ProductsContent() {
     return () => clearTimeout(t)
   }, [toast])
 
-  // Ambil produk hasil input OMS (mock DB) lalu tampilkan di depan daftar dummy
+  // Ambil produk dari database (satu-satunya sumber tabel ini)
   useEffect(() => {
     let active = true
     fetch('/api/products/list')
       .then((res) => res.json())
       .then((data: { products?: StoredProduct[] }) => {
-        if (!active || !data.products?.length) return
-        setProducts([...data.products.map(mapStored), ...INITIAL_PRODUCTS])
+        if (!active) return
+        setProducts((data.products ?? []).map(mapStored))
       })
       .catch(() => {})
     return () => {
@@ -361,8 +368,8 @@ function ProductsContent() {
       }
 
       if (fromDay || toDay) {
-        // Produk contoh tak punya createdAt → sengaja disaring keluar saat filter tanggal aktif,
-        // karena mengklaim tanggal apa pun untuknya akan menyesatkan.
+        // Baris tanpa createdAt (mis. kolom belum terisi di DB lama) disaring keluar saat filter
+        // tanggal aktif — mengklaim tanggal apa pun untuknya akan menyesatkan.
         if (!p.createdAt) return false
         const day = p.createdAt.slice(0, 10)
         if (fromDay && day < fromDay) return false
@@ -379,9 +386,8 @@ function ProductsContent() {
 
   // === Seleksi massal ===
 
-  // Hanya produk tersimpan yang boleh dipilih — produk contoh tak ada di database, jadi aksi
-  // massal atasnya tak bisa menyimpan apa pun.
-  const selectableOnPage = pageProducts.filter((p) => p.persisted)
+  // Seluruh baris berasal dari database, jadi semuanya bisa dipilih.
+  const selectableOnPage = pageProducts
   const allOnPageSelected =
     selectableOnPage.length > 0 && selectableOnPage.every((p) => selected.has(p.id))
   const selectedCount = selected.size
@@ -603,62 +609,36 @@ function ProductsContent() {
 
     setSaving(true)
     const price = Number(form.price) || 0
-    // Stok tidak ikut dikirim: nilainya hanya ditampilkan. Perubahan stok lewat Kelola Stok.
-    const stock = Number(form.stock) || 0
     const originalPrice = form.originalPrice === '' ? undefined : Number(form.originalPrice)
 
-    if (editTarget.persisted) {
-      // Produk mock DB → simpan permanen via API
-      try {
-        const res = await fetch('/api/products/update', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: editTarget.id,
-            name: form.name.trim(),
-            sku: form.sku.trim(),
-            category: form.slug,
-            price,
-            originalPrice,
-            // stock & stockPerWarehouse SENGAJA tidak dikirim: modal ini tak boleh mengubah stok
-            // (satu-satunya jalur = POST /api/warehouses/stock/set dari halaman Kelola Stok).
-            // Tanpa field itu, /api/products/update membiarkan stok apa adanya.
-            minOrderQty: Number(form.minOrderQty) || 1,
-            description: form.description.trim(),
-            imageUrl: form.images[0],
-            images: form.images,
-          }),
-        })
-        if (!res.ok) throw new Error()
-        const { product } = (await res.json()) as { product: StoredProduct }
-        const mapped = mapStored(product)
-        setProducts((prev) => prev.map((p) => (p.id === mapped.id ? mapped : p)))
-      } catch {
-        setEditError('Gagal menyimpan perubahan. Coba lagi.')
-        setSaving(false)
-        return
-      }
-    } else {
-      // Produk contoh → ubah sementara di layar saja
-      setProducts((prev) =>
-        prev.map((p) =>
-          p.id === editTarget.id
-            ? {
-                ...p,
-                name: form.name.trim(),
-                sku: form.sku.trim(),
-                slug: form.slug,
-                categoryLabel: getCategoryLabel(form.slug) ?? p.categoryLabel,
-                price,
-                originalPrice,
-                stock,
-                description: form.description.trim(),
-                image: form.images[0] ?? p.image,
-                images: form.images,
-              }
-            : p,
-        ),
-      )
+    try {
+      const res = await fetch('/api/products/update', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: editTarget.id,
+          name: form.name.trim(),
+          sku: form.sku.trim(),
+          category: form.slug,
+          price,
+          originalPrice,
+          // stock & stockPerWarehouse SENGAJA tidak dikirim: modal ini tak boleh mengubah stok
+          // (satu-satunya jalur = POST /api/warehouses/stock/set dari halaman Kelola Stok).
+          // Tanpa field itu, /api/products/update membiarkan stok apa adanya.
+          minOrderQty: Number(form.minOrderQty) || 1,
+          description: form.description.trim(),
+          imageUrl: form.images[0],
+          images: form.images,
+        }),
+      })
+      if (!res.ok) throw new Error()
+      const { product } = (await res.json()) as { product: StoredProduct }
+      const mapped = mapStored(product)
+      setProducts((prev) => prev.map((p) => (p.id === mapped.id ? mapped : p)))
+    } catch {
+      setEditError('Gagal menyimpan perubahan. Coba lagi.')
+      setSaving(false)
+      return
     }
 
     setSaving(false)
@@ -672,16 +652,14 @@ function ProductsContent() {
     if (!deleteTarget) return
     setDeleting(true)
 
-    if (deleteTarget.persisted) {
-      try {
-        await fetch('/api/products/delete', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: deleteTarget.id }),
-        })
-      } catch {
-        // Mode prototipe: tetap hapus dari layar walau API gagal
-      }
+    try {
+      await fetch('/api/products/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: deleteTarget.id }),
+      })
+    } catch {
+      // Mode prototipe: tetap hapus dari layar walau API gagal
     }
 
     setProducts((prev) => prev.filter((p) => p.id !== deleteTarget.id))
@@ -695,16 +673,14 @@ function ProductsContent() {
   async function toggleArchive(product: Product) {
     const next = !product.archived
 
-    if (product.persisted) {
-      try {
-        await fetch('/api/products/update', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: product.id, archived: next }),
-        })
-      } catch {
-        // Mode prototipe: tetap ubah status di layar walau API gagal
-      }
+    try {
+      await fetch('/api/products/update', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: product.id, archived: next }),
+      })
+    } catch {
+      // Mode prototipe: tetap ubah status di layar walau API gagal
     }
 
     setProducts((prev) =>
@@ -745,7 +721,7 @@ function ProductsContent() {
           <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
             {/* Pencarian nama / SKU */}
             <div className="lg:col-span-2">
-              <label htmlFor="pf-q" className="mb-1.5 block text-xs font-semibold text-gray-600">
+              <label htmlFor="pf-q" className={FILTER_LABEL_CLASS}>
                 Cari nama atau SKU
               </label>
               <input
@@ -754,20 +730,20 @@ function ProductsContent() {
                 value={searchInput}
                 onChange={(e) => handleSearchChange(e.target.value)}
                 placeholder="mis. Cocopeat atau INF-CC-001"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+                className={FILTER_FIELD_CLASS}
               />
             </div>
 
             {/* Kategori — opsi dari konstanta PRODUCT_CATEGORIES (satu sumber dengan storefront) */}
             <div>
-              <label htmlFor="pf-kategori" className="mb-1.5 block text-xs font-semibold text-gray-600">
+              <label htmlFor="pf-kategori" className={FILTER_LABEL_CLASS}>
                 Kategori
               </label>
               <select
                 id="pf-kategori"
                 value={kategori}
                 onChange={(e) => updateFilters({ kategori: e.target.value || null })}
-                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+                className={FILTER_FIELD_CLASS}
               >
                 <option value="">Semua kategori</option>
                 {PRODUCT_CATEGORIES.map((c) => (
@@ -780,14 +756,14 @@ function ProductsContent() {
 
             {/* Status stok */}
             <div>
-              <label htmlFor="pf-stok" className="mb-1.5 block text-xs font-semibold text-gray-600">
+              <label htmlFor="pf-stok" className={FILTER_LABEL_CLASS}>
                 Status stok
               </label>
               <select
                 id="pf-stok"
                 value={stok}
                 onChange={(e) => updateFilters({ stok: e.target.value || null })}
-                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+                className={FILTER_FIELD_CLASS}
               >
                 <option value="">Semua stok</option>
                 {STOCK_FILTERS.map((f) => (
@@ -801,14 +777,14 @@ function ProductsContent() {
 
             {/* Status produk */}
             <div>
-              <label htmlFor="pf-status" className="mb-1.5 block text-xs font-semibold text-gray-600">
+              <label htmlFor="pf-status" className={FILTER_LABEL_CLASS}>
                 Status produk
               </label>
               <select
                 id="pf-status"
                 value={status}
                 onChange={(e) => updateFilters({ status: e.target.value || null })}
-                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+                className={FILTER_FIELD_CLASS}
               >
                 <option value="">Semua status</option>
                 {STATUS_FILTERS.map((f) => (
@@ -821,7 +797,7 @@ function ProductsContent() {
 
             {/* Rentang tanggal dibuat — input date native (tanpa library) */}
             <div>
-              <label htmlFor="pf-dari" className="mb-1.5 block text-xs font-semibold text-gray-600">
+              <label htmlFor="pf-dari" className={FILTER_LABEL_CLASS}>
                 Dibuat dari
               </label>
               <input
@@ -830,11 +806,11 @@ function ProductsContent() {
                 value={dari}
                 max={sampai || undefined}
                 onChange={(e) => updateFilters({ dari: e.target.value || null })}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+                className={FILTER_FIELD_CLASS}
               />
             </div>
             <div>
-              <label htmlFor="pf-sampai" className="mb-1.5 block text-xs font-semibold text-gray-600">
+              <label htmlFor="pf-sampai" className={FILTER_LABEL_CLASS}>
                 Sampai
               </label>
               <input
@@ -843,14 +819,14 @@ function ProductsContent() {
                 value={sampai}
                 min={dari || undefined}
                 onChange={(e) => updateFilters({ sampai: e.target.value || null })}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+                className={FILTER_FIELD_CLASS}
               />
             </div>
           </div>
 
           {/* Pintasan rentang tanggal */}
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <span className="text-xs font-medium text-gray-500">Pintasan:</span>
+            <span className="text-xs font-medium text-gray-700">Pintasan:</span>
             {[
               { label: 'Hari ini', days: 0 },
               { label: '7 hari', days: 7 },
@@ -860,7 +836,7 @@ function ProductsContent() {
                 key={s.label}
                 type="button"
                 onClick={() => applyDateShortcut(s.days)}
-                className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-semibold text-gray-600 transition hover:bg-gray-50"
+                className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs font-semibold text-gray-800 transition hover:bg-gray-50"
               >
                 {s.label}
               </button>
@@ -868,7 +844,7 @@ function ProductsContent() {
             <button
               type="button"
               onClick={() => applyDateShortcut(0, true)}
-              className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-semibold text-gray-600 transition hover:bg-gray-50"
+              className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs font-semibold text-gray-800 transition hover:bg-gray-50"
             >
               Bulan ini
             </button>
@@ -1085,20 +1061,15 @@ function ProductsContent() {
                 )}
                 {pageProducts.map((product) => (
                   <tr key={product.id} className={`hover:bg-gray-50/70 ${product.archived ? 'bg-gray-50/60' : ''} ${selected.has(product.id) ? 'bg-emerald-50/40' : ''}`}>
-                    {/* Checkbox seleksi — produk contoh dinonaktifkan (tak ada di database) */}
+                    {/* Checkbox seleksi untuk aksi massal */}
                     <td className="px-3 py-4">
                       <input
                         type="checkbox"
                         checked={selected.has(product.id)}
                         onChange={() => toggleSelect(product.id)}
-                        disabled={!product.persisted}
                         aria-label={`Pilih ${product.name}`}
-                        title={
-                          product.persisted
-                            ? `Pilih ${product.name}`
-                            : 'Produk contoh — tidak tersimpan di database, tak bisa diaksi massal'
-                        }
-                        className="h-4 w-4 accent-emerald-700 disabled:opacity-40"
+                        title={`Pilih ${product.name}`}
+                        className="h-4 w-4 accent-emerald-700"
                       />
                     </td>
                     <td className="px-5 py-4">
@@ -1187,23 +1158,21 @@ function ProductsContent() {
                         >
                           <PencilIcon />
                         </button>
-                        {/* Kelola varian — hanya produk tersimpan (mock DB / Supabase), bukan produk contoh */}
-                        {product.persisted && (
-                          <button
-                            type="button"
-                            onClick={() => setVariantTarget(product)}
-                            aria-label={`Kelola varian ${product.name}`}
-                            title={`Kelola varian${summaries[product.id] ? ` (${summaries[product.id].count} varian)` : ''}`}
-                            className="relative inline-flex items-center rounded-lg border border-emerald-200 bg-white p-2 text-emerald-700 transition hover:bg-emerald-50"
-                          >
-                            <LayersIcon />
-                            {summaries[product.id] && (
-                              <span className="absolute -right-1 -top-1 rounded-full bg-emerald-700 px-1 text-[10px] font-bold leading-4 text-white">
-                                {summaries[product.id].count}
-                              </span>
-                            )}
-                          </button>
-                        )}
+                        {/* Kelola varian */}
+                        <button
+                          type="button"
+                          onClick={() => setVariantTarget(product)}
+                          aria-label={`Kelola varian ${product.name}`}
+                          title={`Kelola varian${summaries[product.id] ? ` (${summaries[product.id].count} varian)` : ''}`}
+                          className="relative inline-flex items-center rounded-lg border border-emerald-200 bg-white p-2 text-emerald-700 transition hover:bg-emerald-50"
+                        >
+                          <LayersIcon />
+                          {summaries[product.id] && (
+                            <span className="absolute -right-1 -top-1 rounded-full bg-emerald-700 px-1 text-[10px] font-bold leading-4 text-white">
+                              {summaries[product.id].count}
+                            </span>
+                          )}
+                        </button>
 
                         {/* Dropdown ⋮ — tutup lewat klik-luar (overlay transparan) */}
                         <div className="relative">
@@ -1333,7 +1302,7 @@ function ProductsContent() {
           <div className="relative z-10 max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
             <h3 className="text-lg font-bold text-gray-900">Edit Produk</h3>
             <p className="mt-1 text-sm text-gray-500">
-              {editTarget.persisted ? 'Perubahan disimpan permanen & tampil di ecommerce.' : 'Produk contoh — perubahan hanya sementara di layar.'}
+              Perubahan disimpan permanen &amp; tampil di ecommerce.
             </p>
 
             {/* Galeri foto (maks 9). Foto pertama = foto utama. */}
@@ -1436,14 +1405,12 @@ function ProductsContent() {
                       {form.stock === '' ? 0 : form.stock}
                     </p>
                   </div>
-                  {editTarget?.persisted && (
-                    <Link
-                      href={`/oms/dashboard/gudang/stok?search=${encodeURIComponent(form.sku.trim())}`}
-                      className="flex-none whitespace-nowrap text-xs font-semibold text-emerald-700 transition hover:text-emerald-800 hover:underline"
-                    >
-                      Kelola stok gudang →
-                    </Link>
-                  )}
+                  <Link
+                    href={`/oms/dashboard/gudang/stok?search=${encodeURIComponent(form.sku.trim())}`}
+                    className="flex-none whitespace-nowrap text-xs font-semibold text-emerald-700 transition hover:text-emerald-800 hover:underline"
+                  >
+                    Kelola stok gudang →
+                  </Link>
                 </div>
               </EditField>
               <EditField label="Minimal Pembelian (pcs)">
@@ -1530,7 +1497,7 @@ function ProductsContent() {
             <h3 className="mt-4 text-lg font-bold text-gray-900">Hapus Produk?</h3>
             <p className="mt-1 text-sm text-gray-500">
               Produk <span className="font-semibold text-gray-700">{deleteTarget.name}</span> akan dihapus
-              {deleteTarget.persisted ? ' permanen dan tidak lagi tampil di ecommerce.' : ' dari daftar (sementara).'}
+              permanen dan tidak lagi tampil di ecommerce.
             </p>
             <div className="mt-6 flex justify-end gap-3">
               <button type="button" onClick={() => setDeleteTarget(null)} className="rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-600 transition hover:bg-gray-50">

@@ -6,6 +6,7 @@
 
 import type { Metadata } from 'next'
 import Link from 'next/link'
+import { notFound } from 'next/navigation'
 import LegalPageShell, {
   LegalSection,
   LegalList,
@@ -15,6 +16,7 @@ import LegalPageShell, {
 import {
   LEGAL_CONTACT_EMAIL,
   LEGAL_CONTACT_PHONE,
+  LEGAL_PAGES_ENABLED,
   TERMS_PATH,
   THIRD_PARTY_LINKS,
 } from '@/lib/data/legal'
@@ -43,6 +45,10 @@ const TOC: LegalTocItem[] = [
 ]
 
 export default function PrivacyPolicyPage() {
+  // Halaman dinonaktifkan atas permintaan pemilik toko (dokumen belum diperlukan). Isi halaman di
+  // bawah SENGAJA dipertahankan — hidupkan kembali dengan mengubah LEGAL_PAGES_ENABLED jadi true.
+  if (!LEGAL_PAGES_ENABLED) notFound()
+
   return (
     <LegalPageShell
       title="Kebijakan Privasi"

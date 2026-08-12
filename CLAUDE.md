@@ -165,8 +165,9 @@ src/
 │   ├── track-order/page.tsx      # Lacak pesanan by NO. TELEPON (entry utama; honeypot + auto-recognize cookie)
 │   ├── cancel-order/page.tsx     # Batalkan pesanan by NO. TELEPON — 2 langkah (verifikasi ulang phone ke DB)
 │   ├── pesanan-saya/page.tsx     # Hub "Pesanan Saya": kartu lacak / batalkan / review (ikon profil header → sini)
-│   ├── privacy-policy/page.tsx   # Kebijakan Privasi (statis, LegalPageShell)
-│   ├── terms-and-conditions/page.tsx  # Syarat & Ketentuan (statis, LegalPageShell)
+│   ├── privacy-policy/page.tsx   # Kebijakan Privasi (statis, LegalPageShell) — NONAKTIF (404),
+│   │                             #   kode utuh; tuas LEGAL_PAGES_ENABLED di lib/data/legal.ts
+│   ├── terms-and-conditions/page.tsx  # Syarat & Ketentuan (idem — NONAKTIF, kode utuh)
 │   ├── dev/email-preview/        # Preview template email (route handler, isi placeholder data contoh)
 │   ├── oms/                      # OMS / back office
 │   │   ├── login/page.tsx
@@ -970,9 +971,14 @@ dan barisnya tak bisa ditutup selama diedit.
   filter) supaya jumlah terpilih selalu sama dengan yang terlihat. Bilah aksi sticky muncul saat ada
   yang dipilih: Arsipkan / Pulihkan / Ubah Kategori / Hapus + "Batalkan pilihan". Hapus massal wajib
   lewat dialog konfirmasi.
-  - **Produk contoh (`persisted: false`, `INITIAL_PRODUCTS`) checkbox-nya dinonaktifkan** — tak ada
-    di database, jadi aksi massal atasnya tak bisa menyimpan apa pun. Tooltip menjelaskan alasannya.
-  - Filter tanggal juga menyaring produk contoh keluar (tak punya `createdAt`).
+  - **Semua baris bisa dipilih.** Konstanta `INITIAL_PRODUCTS` (5 produk contoh `PRD-001…005`) dan
+    field `Product.persisted` **SUDAH DIHAPUS** — tabel ini kini MURNI produk dari Supabase
+    (`/api/products/list`). Dulu produk contoh dirender bersama produk asli tapi checkbox-nya
+    dinonaktifkan dan edit/arsip atasnya hanya berlaku di layar; angka stok & "terjual"-nya tak
+    pernah nyata, jadi tabelnya menampilkan data yang tak bisa dipercaya. **Jangan hidupkan lagi
+    baris contoh hardcode di halaman OMS** — kalau butuh data pengisi, seed ke database.
+  - Baris tanpa `createdAt` tetap tersaring keluar saat filter tanggal aktif (mengklaim tanggal apa
+    pun untuknya akan menyesatkan).
 - **Endpoint** `POST /api/products/bulk` (`requireAdmin`): `action` ∈ `archive|restore|delete|category`,
   `ids[]` (maks 200, di-dedupe). Satu query `.in('id', ids)` per aksi lewat `bulkSetArchived` /
   `bulkSetCategory` / `bulkDeleteProducts` di `mock-db/products.ts` — bukan loop per produk.
@@ -1105,7 +1111,23 @@ deskripsi 20–2000, harga 100–99.999.999, stok 0–999.999, `MAX_PRODUCT_IMAG
   - Konsekuensi: tombol baru muncul **setelah hidrasi** (tak ada di HTML server). Tanpa JS deskripsi
     tetap terpotong 5 baris.
 
-## Halaman Legal (Kebijakan Privasi & Syarat/Ketentuan)
+## Halaman Legal (Kebijakan Privasi & Syarat/Ketentuan) — SEDANG DINONAKTIFKAN
+
+> **Status (2026-08-12): kedua halaman TIDAK bisa diakses.** Keputusan pemilik toko — dokumennya
+> belum diperlukan sekarang. **KODENYA UTUH, JANGAN DIHAPUS**: `page.tsx` kedua rute,
+> `LegalPageShell`, dan seluruh konstanta `lib/data/legal.ts` tetap ada & tetap ikut type-check.
+>
+> Tuas tunggal: **`LEGAL_PAGES_ENABLED`** di `src/lib/data/legal.ts` (kini `false`).
+> - `false` → kedua rute memanggil `notFound()` (**HTTP 404**), section "Legal" + baris di bawah
+>   copyright di footer disembunyikan, dan teks persetujuan di `CheckoutBottomBar` tak dirender.
+> - Menghidupkan kembali: ubah satu nilai itu jadi `true`. Tak ada file yang perlu dibuat ulang.
+> - Sebelum dinyalakan lagi, ganti dulu `LEGAL_CONTACT_EMAIL`/`LEGAL_CONTACT_PHONE` (masih
+>   placeholder) dan perbarui `LEGAL_EFFECTIVE_DATE`.
+>
+> Catatan: `main` di `/checkout` masih `pb-32` (ruang untuk teks persetujuan). Aman — hanya sedikit
+> ruang ekstra saat teksnya disembunyikan, dan tak perlu diubah dua kali saat halaman dinyalakan lagi.
+
+Uraian di bawah menjelaskan halamannya saat AKTIF:
 
 - Rute: `/privacy-policy` & `/terms-and-conditions` (Server Component, konten statis, di LUAR route
   group `(store)` → punya header hijau sendiri seperti `/pesanan-saya`).
@@ -1115,9 +1137,10 @@ deskripsi 20–2000, harga 100–99.999.999, stok 0–999.999, `MAX_PRODUCT_IMAG
   (lebih besar dari tinggi header karena bab punya padding atas). Anak PERTAMA kartu adalah `<nav>`
   daftar isi, jadi jangan pasang `first:pt-0` di section. Plus `LegalList`, `LegalExternalLink`
   (selalu `target="_blank" rel="noopener noreferrer"`).
-- Konstanta bersama: **`src/lib/data/legal.ts`** — `LEGAL_CONTACT_EMAIL`/`LEGAL_CONTACT_PHONE`
-  (**PLACEHOLDER**, ganti sebelum go-live), `LEGAL_EFFECTIVE_DATE` (perbarui manual tiap revisi
-  material), `PRIVACY_POLICY_PATH`/`TERMS_PATH` (dipakai footer + bilah checkout), `THIRD_PARTY_LINKS`.
+- Konstanta bersama: **`src/lib/data/legal.ts`** — `LEGAL_PAGES_ENABLED` (tuas aktif/nonaktif),
+  `LEGAL_CONTACT_EMAIL`/`LEGAL_CONTACT_PHONE` (**PLACEHOLDER**, ganti sebelum go-live),
+  `LEGAL_EFFECTIVE_DATE` (perbarui manual tiap revisi material), `PRIVACY_POLICY_PATH`/`TERMS_PATH`
+  (dipakai footer + bilah checkout), `THIRD_PARTY_LINKS`.
 - **Isi dokumen HARUS cermin implementasi nyata.** Saat alur data berubah, perbarui halamannya:
   field checkout (kini TANPA email — identitas = no_telepon), cookie/localStorage yang dipakai,
   pihak ketiga (Xendit, Mengantar, Google Analytics, Supabase), aturan pembatalan (hanya status
@@ -1212,8 +1235,9 @@ mengambang. Jangan menambah lapis baru tanpa memperbarui tabel ini.
 - [x] Search alamat + **cek ongkir** Mengantar di checkout (client; ongkir masuk ke total)
 - [x] Validasi form checkout (nama/telepon/email/alamat/kurir) + gating tombol "Bayar Sekarang"
 - [x] Template email konfirmasi pesanan (`src/emails/`, preview di `/dev/email-preview`)
-- [x] Halaman legal: Kebijakan Privasi & Syarat/Ketentuan (`LegalPageShell`, tautan di footer +
-      teks persetujuan di bilah checkout). Kontak masih PLACEHOLDER di `src/lib/data/legal.ts`
+- [~] Halaman legal: Kebijakan Privasi & Syarat/Ketentuan — kode LENGKAP (`LegalPageShell`, tautan
+      footer, teks persetujuan checkout) tapi **DINONAKTIFKAN** (`LEGAL_PAGES_ENABLED = false` →
+      rute balas 404, semua tautan disembunyikan). Kontak masih PLACEHOLDER di `src/lib/data/legal.ts`
 - [ ] Integrasi Xendit (pembayaran) — masih UI/mock
 - [ ] Mengantar: booking kurir & tracking resi otomatis — masih roadmap
 
@@ -1228,7 +1252,7 @@ mengambang. Jangan menambah lapis baru tanpa memperbarui tabel ini.
 - [x] Filter produk di URL params (cari nama/SKU debounce, kategori, status stok, status produk,
       rentang tanggal + pintasan) dengan chip per filter & reset semua
 - [x] Aksi massal produk (`POST /api/products/bulk`, admin-only): arsipkan/pulihkan/ubah kategori/
-      hapus + konfirmasi hapus; produk contoh dikecualikan dari seleksi
+      hapus + konfirmasi hapus. Tabel murni produk Supabase (produk contoh hardcode sudah dihapus)
 - [x] Manajemen order (`/oms/dashboard/orders`) — filter tanggal (range + shortcut)/kurir/status
       pembayaran/**status pesanan**/**gudang**, sort Total & Tanggal, kombinasi filter tersimpan di
       URL query params, Reset Filter, ekspor CSV (SEMUA penyaringan server-side via

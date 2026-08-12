@@ -15,6 +15,20 @@ export const LEGAL_EFFECTIVE_DATE = '7 Agustus 2026'
 export const PRIVACY_POLICY_PATH = '/privacy-policy'
 export const TERMS_PATH = '/terms-and-conditions'
 
+// === Tuas aktif/nonaktif halaman legal ===
+//
+// false = halaman Kebijakan Privasi & Syarat/Ketentuan TIDAK bisa diakses (balas 404) dan seluruh
+// tautan ke keduanya disembunyikan. Diminta pemilik toko: dokumennya belum diperlukan sekarang.
+//
+// KODENYA SENGAJA DIPERTAHANKAN UTUH — `src/app/{privacy-policy,terms-and-conditions}/page.tsx`,
+// `components/legal/LegalPageShell.tsx`, dan seluruh konstanta di file ini tetap ada dan tetap
+// ikut type-check. Menghidupkannya kembali cukup mengubah nilai di bawah menjadi `true`; tak ada
+// file yang perlu dibuat ulang.
+//
+// Sebelum menyalakan lagi, periksa dua hal yang masih PLACEHOLDER: LEGAL_CONTACT_EMAIL &
+// LEGAL_CONTACT_PHONE di atas, serta LEGAL_EFFECTIVE_DATE.
+export const LEGAL_PAGES_ENABLED = false
+
 // Tautan kebijakan pihak ketiga yang diproses datanya (wajib dicantumkan di kebijakan privasi)
 export const THIRD_PARTY_LINKS = {
   xenditPrivacy: 'https://www.xendit.co/en/privacy-policy/',
