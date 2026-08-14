@@ -1,11 +1,18 @@
 // src/app/checkout/success/page.tsx
-// Halaman "Pembayaran Sukses" (Order Confirmed) untuk ecommerce.
+// Halaman "Pesanan Berhasil" (order confirmed) untuk ecommerce.
 // Membaca order asli dari mock database via ?order=INV-xxxx; fallback ke contoh bila dibuka langsung.
-// Warna mengikuti palet brand di CLAUDE.md (brand.primary/light/surface).
+//
+// TATA LETAK: satu kolom di mobile, DUA KOLOM di desktop (lg+) — kiri status pesanan + aksi,
+// kanan rincian item + total. Di bawah lg keduanya menumpuk dengan urutan yang sama.
+//
+// WARNA: seluruh elemen hijau memakai SATU warna dasar `brand-primary` (header, lingkaran ikon,
+// kartu estimasi, tombol utama). Sebelumnya tiga blok hijau memakai shade berbeda
+// (`brand-header/90` + `brand-light/60` + `brand-primary`) sehingga terlihat seperti tiga sistem
+// yang tak berhubungan. Jangan kembalikan opacity/shade khusus per blok di sini.
 
 import Link from 'next/link'
 import Image from 'next/image'
-import { X, Leaf, Clock, MapPin, Star, Ban } from 'lucide-react'
+import { X, Leaf, Clock, MapPin, Star, Ban, ShoppingBag } from 'lucide-react'
 import { getOrderByOrderId } from '@/lib/mock-db/orders'
 import { generateCancelToken } from '@/lib/order-token'
 import { formatRupiah } from '@/lib/format'
@@ -66,150 +73,202 @@ export default async function CheckoutSuccessPage({
   const cancelToken = generateCancelToken(data.orderId)
 
   return (
-    <div className="flex min-h-screen justify-center bg-brand-surface">
-      {/* Container: full-width di mobile (max-w-md), dibatasi & terpusat di desktop (xl → 2xl) */}
-      <div className="mx-auto flex w-full max-w-md flex-col px-5 pb-8 md:max-w-xl lg:max-w-2xl">
-        {/* === Header: tutup + judul (warna & tinggi disamakan dengan header beranda: bg-brand-primary, teks putih, h-14) === */}
-        {/* -mx-5 px-5 agar latar hijau membentang penuh seperti header beranda */}
-        <header className="-mx-5 flex h-14 items-center gap-3 rounded-b-[2rem] bg-brand-header/90 px-5 text-white shadow-sm backdrop-blur-md md:px-8">
-          <Link
-            href="/"
-            aria-label="Tutup"
-            className="flex h-9 w-9 items-center justify-center rounded-full text-zinc-700 transition hover:bg-zinc-100"
-          >
-            <X className="h-5 w-5" />
-          </Link>
-          <h1 className="text-lg font-bold text-zinc-900">Order Confirmed</h1>
-        </header>
+    <div className="min-h-screen bg-brand-surface">
+      {/* === Header — MELEBAR PENUH, bukan ikut lebar konten ===
+          Di desktop konten dibatasi max-w, tapi bilah hijaunya tetap membentang seperti header
+          halaman lain (AppBar/CartHeader). Teks & ikon PUTIH: sebelumnya `text-zinc-900` di atas
+          hijau solid — kontrasnya nyaris tak terbaca. */}
+      <header className="flex h-14 items-center gap-3 rounded-b-[2rem] bg-brand-primary px-5 text-white shadow-sm md:px-8">
+        <Link
+          href="/"
+          aria-label="Tutup"
+          className="flex h-9 w-9 items-center justify-center rounded-full text-white transition hover:bg-white/15"
+        >
+          <X className="h-5 w-5" />
+        </Link>
+        <h1 className="text-lg font-bold text-white">Pesanan Berhasil</h1>
+      </header>
 
-        {/* === Ilustrasi sukses === */}
-        <div className="relative mt-2 flex justify-center">
-          {/* Lingkaran besar brand-light + ikon daun */}
-          <div className="flex h-32 w-32 items-center justify-center rounded-full bg-brand-light/60">
-            <div className="flex h-20 w-20 items-center justify-center rounded-full bg-brand-primary text-white shadow-lg">
-              <Leaf className="h-9 w-9" />
+      {/* pb-28 (mobile): ruang aman agar konten paling bawah tak tertutup tombol WhatsApp
+          mengambang (fixed, kanan bawah, ±76px tinggi area). Halaman ini tak punya bilah aksi
+          bawah sehingga --sticky-bar-h = 0 dan tombol WA duduk di posisi dasarnya.
+          lg:pb-8 — di desktop ruang aman itu TIDAK diperlukan untuk kolom kiri: tombol berada di
+          x ±405–970 sementara tombol WA di x ±1900, jadi keduanya tak pernah bertabrakan. Sisa
+          32px hanya jarak bernapas, sehingga tombol benar-benar turun ke dasar layar. */}
+      <main className="mx-auto w-full max-w-md px-5 pb-28 pt-6 md:max-w-xl lg:max-w-4xl lg:px-8 lg:pb-8">
+        {/* TIGA blok anak dengan URUTAN BERBEDA per breakpoint — karena itu blok tombol berdiri
+            sendiri, bukan bersarang di dalam blok status:
+              - mobile (flex kolom, urutan DOM): status → rincian pesanan → tombol.
+                Rincian barang yang dibeli harus menempel di bawah estimasi; menyelipkan tombol di
+                antaranya memutus alur "apa yang terjadi → apa yang saya beli → apa yang bisa saya
+                lakukan".
+              - desktop (grid 2 kolom × 2 baris): status kiri-atas, rincian di kanan membentang dua
+                baris, tombol kiri-bawah.
+            Baris grid `[1fr_auto]`: baris 1 menyerap seluruh sisa ruang dan blok status
+            di-`self-center` di dalamnya (ruang kosong terbagi rata atas-bawah, bukan menumpuk jadi
+            satu lubang), baris 2 setinggi isinya sehingga tombol berhenti tepat di dasar.
+            lg:min-h-[calc(100vh-7rem)] = tinggi viewport − header (3.5rem) − pt-6 (1.5rem) −
+            lg:pb-8 (2rem). Angka 7rem HARUS ikut berubah bila salah satu dari ketiganya diubah,
+            kalau tidak blok tombol berhenti sebelum / melewati dasar layar. */}
+        <div className="flex flex-col gap-6 lg:grid lg:min-h-[calc(100vh-7rem)] lg:grid-cols-2 lg:grid-rows-[1fr_auto] lg:gap-6">
+          {/* ================= BLOK 1: status pesanan (desktop: kiri-atas) ================= */}
+          <section className="lg:col-start-1 lg:row-start-1 lg:self-center">
+            {/* === Ilustrasi sukses ===
+                Proporsinya dikecilkan (dulu lingkaran 128px berisi lingkaran 80px): sebagai
+                penanda status ia tak perlu mendominasi, cukup memimpin judul di bawahnya.
+                Cincin memakai warna dasar yang sama dengan transparansi, bukan hijau kedua.
+                Rata tengah di SEMUA lebar layar — termasuk desktop. */}
+            <div className="flex justify-center">
+              <span className="flex h-16 w-16 items-center justify-center rounded-full bg-brand-primary text-white shadow-md ring-8 ring-brand-primary/10">
+                <Leaf className="h-7 w-7" />
+              </span>
             </div>
-          </div>
-        </div>
 
-        {/* === Pesan utama === */}
-        <div className="mt-6 text-center">
-          <h2 className="text-2xl font-bold text-zinc-900">
-            Yeay! Pesananmu Sedang Disiapkan
-          </h2>
-          <p className="mx-auto mt-2 max-w-xs text-sm text-zinc-500">
-            Terima kasih telah berbelanja!
-          </p>
-        </div>
-
-        {/* === Kartu detail pesanan === */}
-        <div className="mt-6 w-full rounded-2xl bg-white p-5 shadow-sm md:shadow-md md:rounded-2xl">
-          {/* Baris atas: Order ID + tanggal/status */}
-          <div className="flex items-start justify-between">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-zinc-400">
-                Order ID
+            {/* === Pesan utama (rata tengah di semua lebar layar) === */}
+            <div className="mt-4 text-center">
+              <h2 className="text-2xl font-bold text-zinc-900">Yeay! Pesananmu Sedang Disiapkan</h2>
+              <p className="mx-auto mt-2 max-w-xs text-sm text-zinc-500">
+                Terima kasih telah berbelanja!
               </p>
-              <p className="mt-0.5 text-sm font-bold text-zinc-900">{invoiceLabel}</p>
             </div>
-            <div className="text-right">
-              <p className="text-xs text-zinc-400">{formatShortDate(data.date)}</p>
-              <p className="mt-0.5 text-sm font-semibold text-brand-primary">Berhasil</p>
-            </div>
-          </div>
 
-          {/* Daftar item — item promo (produk gratis) dipisahkan secara visual & harga "Gratis" */}
-          <div className="mt-4 space-y-3 border-t border-dashed border-zinc-200 pt-4">
-            {data.items.map((item) => (
-              <div key={`${item.productId}-${item.isPromoItem ? 'promo' : 'buy'}`} className="flex items-center gap-3">
-                <div
-                  className={`relative h-11 w-11 flex-none overflow-hidden rounded-lg border bg-zinc-50 ${
-                    item.isPromoItem ? 'border-brand-light' : 'border-zinc-100'
-                  }`}
-                >
-                  <Image
-                    src={item.imageUrl || '/images/product-placeholder.png'}
-                    alt={item.name}
-                    fill
-                    unoptimized
-                    sizes="44px"
-                    className="object-cover"
-                  />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold text-zinc-900">
-                    {item.isPromoItem ? `🎁 ${item.name}` : item.name}
-                  </p>
-                  {/* Nama varian terpilih (produk bervarian) */}
-                  {item.variantName && (
-                    <p className="truncate text-xs font-medium text-brand-primary">Varian: {item.variantName}</p>
-                  )}
-                  <p className="text-xs text-zinc-400">
-                    {item.isPromoItem ? 'Bonus Promo' : `${item.quantity}× item`}
-                  </p>
-                </div>
-                {/* Harga: item promo tertulis "Gratis" (bukan Rp0 polos) */}
-                {item.isPromoItem && (
-                  <span className="shrink-0 text-sm font-bold text-brand-primary">Gratis</span>
-                )}
+            {/* === Kartu estimasi pengiriman (informasi, bukan aksi) === */}
+            <div className="mt-6 rounded-2xl bg-brand-primary p-5 text-white">
+              <div className="flex items-center gap-2">
+                <Clock className="h-4 w-4" />
+                <p className="text-sm font-semibold">Estimasi Tiba: {estimasiTiba(data.date)}</p>
               </div>
-            ))}
-          </div>
+              <p className="mt-1 text-sm text-white/80">
+                Pesananmu akan segera dikirimkan oleh kurir kami.
+              </p>
+            </div>
+          </section>
 
-          {/* Total */}
-          <div className="mt-4 flex items-center justify-between border-t border-dashed border-zinc-200 pt-4">
-            <span className="text-sm text-zinc-500">Total Terbayar</span>
-            <span className="text-xl font-bold text-zinc-900">
-              {formatRupiah(data.totalAmount)}
-            </span>
-          </div>
-        </div>
+          {/* ================= BLOK 2: rincian item & total =================
+              Di mobile blok ini datang PERSIS setelah estimasi (sebelum tombol). Di desktop pindah
+              ke kolom kanan dan membentang dua baris supaya sejajar dengan tinggi kolom kiri. */}
+          <section className="lg:col-start-2 lg:row-span-2 lg:row-start-1">
+            <div className="w-full rounded-2xl bg-white p-5 shadow-sm md:shadow-md">
+              {/* Baris atas: Order ID + tanggal/status */}
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-zinc-400">
+                    Nomor Pesanan
+                  </p>
+                  <p className="mt-0.5 text-sm font-bold text-zinc-900">{invoiceLabel}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-zinc-400">{formatShortDate(data.date)}</p>
+                  <p className="mt-0.5 text-sm font-semibold text-brand-primary">Berhasil</p>
+                </div>
+              </div>
 
-        {/* === Kartu estimasi & aksi (brand-primary) === */}
-        <div className="mt-4 rounded-2xl bg-brand-primary p-5 text-white">
-          <div className="flex items-center gap-2">
-            <Clock className="h-4 w-4" />
-            <p className="text-sm font-semibold">Estimasi Tiba: {estimasiTiba(data.date)}</p>
-          </div>
-          <p className="mt-1 text-sm text-white/80">
-            Pesananmu akan segera dikirimkan oleh kurir kami.
-          </p>
+              {/* Daftar item — item promo (produk gratis) dipisahkan secara visual & harga "Gratis" */}
+              <div className="mt-4 space-y-3 border-t border-dashed border-zinc-200 pt-4">
+                {data.items.map((item) => (
+                  <div
+                    key={`${item.productId}-${item.isPromoItem ? 'promo' : 'buy'}`}
+                    className="flex items-center gap-3"
+                  >
+                    <div
+                      className={`relative h-11 w-11 flex-none overflow-hidden rounded-lg border bg-zinc-50 ${
+                        item.isPromoItem ? 'border-brand-light' : 'border-zinc-100'
+                      }`}
+                    >
+                      <Image
+                        src={item.imageUrl || '/images/product-placeholder.png'}
+                        alt={item.name}
+                        fill
+                        unoptimized
+                        sizes="44px"
+                        className="object-cover"
+                      />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      {/* line-clamp-2, bukan truncate: nama produk katalog ini panjang dan satu
+                          baris terpotong di tengah kata. JANGAN tambahkan `block` — line-clamp
+                          butuh `display: -webkit-box` dan `block` menimpanya. */}
+                      <p
+                        className="line-clamp-2 text-sm font-semibold leading-snug text-zinc-900"
+                        title={item.name}
+                      >
+                        {item.isPromoItem ? `🎁 ${item.name}` : item.name}
+                      </p>
+                      {/* Nama varian terpilih (produk bervarian) */}
+                      {item.variantName && (
+                        <p className="truncate text-xs font-medium text-brand-primary">
+                          Varian: {item.variantName}
+                        </p>
+                      )}
+                      <p className="text-xs text-zinc-400">
+                        {item.isPromoItem ? 'Bonus Promo' : `${item.quantity}× item`}
+                      </p>
+                    </div>
+                    {/* Harga: item promo tertulis "Gratis" (bukan Rp0 polos) */}
+                    {item.isPromoItem && (
+                      <span className="shrink-0 text-sm font-bold text-brand-primary">Gratis</span>
+                    )}
+                  </div>
+                ))}
+              </div>
 
-          {/* Tombol aksi */}
-          <div className="mt-5 space-y-3">
+              {/* Total — angka terpenting di halaman ini, jadi ukurannya dinaikkan jauh di atas
+                  label lain dan diberi warna harga (brand-primary, sesuai aturan palet). */}
+              <div className="mt-4 flex items-end justify-between border-t border-dashed border-zinc-200 pt-4">
+                <span className="pb-1 text-sm font-medium text-zinc-500">Total Terbayar</span>
+                <span className="text-2xl font-bold leading-none text-brand-primary sm:text-3xl">
+                  {formatRupiah(data.totalAmount)}
+                </span>
+              </div>
+            </div>
+          </section>
+
+          {/* ================= BLOK 3: aksi — HIERARKI BERTINGKAT =================
+              Sebelumnya keempat tombol tampil identik (outline putih di dalam kartu hijau) sehingga
+              tak ada yang menonjol. Sekarang: melacak pesanan = aksi paling relevan setelah bayar
+              → tombol utama solid; ulasan & belanja lagi = sekunder; membatalkan pesanan =
+              destruktif, sengaja paling kecil supaya tak tertekan tanpa sengaja (rose mengikuti
+              pengecualian aksi destruktif di CLAUDE.md).
+              Mobile: blok TERAKHIR, setelah rincian pesanan. Desktop: kiri-bawah (baris 2 grid,
+              yang tingginya pas isi) sehingga berhenti tepat di dasar layar. */}
+          <div className="space-y-3 lg:col-start-1 lg:row-start-2">
             <Link
               href="/track-order"
-              className="flex items-center justify-center gap-2 rounded-xl border border-white/40 bg-white/5 py-3 text-sm font-semibold text-white transition hover:bg-white/15"
+              className="flex items-center justify-center gap-2 rounded-xl bg-brand-primary py-3 font-heading text-sm font-bold text-white shadow-sm transition hover:brightness-90 active:scale-[0.99]"
             >
               <MapPin className="h-4 w-4" />
               Lacak Pesanan
             </Link>
+
             {/* Halaman ulasan kini berbasis no_telepon (verified) — cukup arahkan ke /review;
                 nomor telepon auto-fill dari cookie checkout untuk menampilkan produk yang bisa diulas. */}
             <Link
               href="/review"
-              className="flex items-center justify-center gap-2 rounded-xl border border-white/40 bg-white/5 py-3 text-sm font-semibold text-white transition hover:bg-white/15"
+              className="flex items-center justify-center gap-2 rounded-xl border border-brand-primary bg-white py-3 text-sm font-semibold text-brand-primary transition hover:bg-brand-surface active:scale-[0.99]"
             >
               <Star className="h-4 w-4" />
               Beri Ulasan Produk
             </Link>
+
+            <Link
+              href="/"
+              className="flex items-center justify-center gap-2 rounded-xl border border-zinc-300 bg-white py-3 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50 active:scale-[0.99]"
+            >
+              <ShoppingBag className="h-4 w-4" />
+              Kembali Belanja
+            </Link>
+
             {/* Pembatalan pesanan (Guest) — tautan dibawa dengan token keamanan */}
             <Link
               href={`/order-cancellation?id=${encodeURIComponent(data.orderId)}&token=${cancelToken}`}
-              className="flex items-center justify-center gap-2 rounded-xl border border-white/40 bg-white/5 py-3 text-sm font-semibold text-white transition hover:bg-white/15"
+              className="flex items-center justify-center gap-1.5 py-2 text-xs font-medium text-rose-600 transition hover:text-rose-700 hover:underline"
             >
-              <Ban className="h-4 w-4" />
+              <Ban className="h-3.5 w-3.5" />
               Batalkan Pesanan
-            </Link>
-            <Link
-              href="/"
-              className="flex items-center justify-center rounded-xl bg-white py-3 text-sm font-bold text-brand-primary transition hover:brightness-95"
-            >
-              Kembali Belanja
             </Link>
           </div>
         </div>
-      </div>
+      </main>
     </div>
   )
 }

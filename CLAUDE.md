@@ -157,7 +157,7 @@ src/
 │   ├── keranjang/page.tsx        # Halaman keranjang (data dari cookie)
 │   ├── checkout/
 │   │   ├── page.tsx              # Guest checkout
-│   │   └── success/page.tsx      # Order Confirmed (+ tombol batalkan pesanan)
+│   │   └── success/page.tsx      # Pesanan Berhasil (2 kolom di lg+, + tombol batalkan pesanan)
 │   ├── order-cancellation/page.tsx  # Pembatalan pesanan Guest (token-protected, dari link email/sukses)
 │   ├── review/page.tsx           # Beri Review by NO. TELEPON (pembeli terverifikasi; ganti flow invoice lama)
 │   │                             #   (ReviewForm.tsx/ReviewProductCard.tsx = flow invoice lama, kini dead code)
@@ -1525,7 +1525,10 @@ mengambang. Jangan menambah lapis baru tanpa memperbarui tabel ini.
 - [x] Katalog & "Produk Terlaris" pure produk OMS (infinite scroll); "N terjual" di detail produk
 - [x] Detail produk: galeri foto multi (maks 9) + harga coret
 - [x] Promo & paket combo REAL di keranjang (dari Supabase via `/api/{promotions,combos}/active`)
-- [x] Halaman guest checkout (`/checkout` + `/checkout/success`)
+- [x] Halaman guest checkout (`/checkout` + `/checkout/success`) — halaman sukses: satu kolom di
+      mobile, DUA kolom di lg+ (kiri status+aksi, kanan rincian item+total), satu warna hijau
+      (`brand-primary`) untuk semua blok, CTA bertingkat (Lacak = utama solid), `pb-28` agar tak
+      tertutup tombol WhatsApp mengambang
 - [x] Hub "Pesanan Saya" (`/pesanan-saya`) — kartu lacak/batalkan/review; ikon akun header (dropdown
       di semua ukuran layar) + badge angka pesanan aktif dari cookie
 - [x] Beri Review Produk by no_telepon (`/review`) — pembeli terverifikasi (riwayat beli) + badge "Pembeli Terverifikasi"
