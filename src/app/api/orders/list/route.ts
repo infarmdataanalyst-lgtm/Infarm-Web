@@ -65,10 +65,20 @@ export async function GET(request: NextRequest) {
   const rawStatus = searchParams.get('status')
   const status = VALID_STATUSES.find((s) => s === rawStatus)
 
-  // Gudang pemenuh: id gudang, atau 'none' untuk pesanan lama yang warehouse_id-nya NULL.
-  const rawGudang = (searchParams.get('gudang') ?? '').trim()
-  const gudang =
-    rawGudang === WAREHOUSE_FILTER_NONE || UUID_REGEX.test(rawGudang) ? rawGudang : undefined
+  // Gudang pemenuh — MULTI-SELECT, dikirim sebagai daftar berkoma (`gudang=id1,id2,none`),
+  // pola sama dengan `?category=a,b` di katalog storefront. Isi valid: UUID gudang atau 'none'
+  // (pesanan lama yang warehouse_id-nya NULL).
+  //
+  // Nilai tak valid DIBUANG per-item, bukan menggagalkan request: URL/bookmark lama harus tetap
+  // menampilkan data (aturan yang sama sudah dipakai untuk filter gudang versi single-select).
+  // Setelah penyaringan tak ada yang tersisa → undefined = tanpa filter gudang.
+  const rawGudang = (searchParams.get('gudang') ?? '')
+    .split(',')
+    .map((v) => v.trim())
+    .filter((v) => v === WAREHOUSE_FILTER_NONE || UUID_REGEX.test(v))
+  // Dedupe: id yang sama dua kali di URL tak boleh membengkakkan klausa IN.
+  const gudangList = Array.from(new Set(rawGudang))
+  const gudang = gudangList.length > 0 ? gudangList : undefined
 
   // Validasi: jika kedua tanggal ada, pastikan dari <= sampai
   if (dari && sampai && dari > sampai) {

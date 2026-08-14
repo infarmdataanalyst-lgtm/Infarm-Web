@@ -40,7 +40,9 @@ export type OrderFilterOptions = {
   kurir?: string
   pembayaran?: OrderPaymentStatus
   status?: OrderFulfillmentStatus // status alur pesanan (tab di halaman OMS)
-  gudang?: string // id gudang, atau WAREHOUSE_FILTER_NONE untuk warehouse_id NULL
+  // Gudang pemenuh — BANYAK nilai (filter multi-select di UI). Isi = id gudang dan/atau
+  // WAREHOUSE_FILTER_NONE untuk warehouse_id NULL. Array kosong/undefined = tanpa filter gudang.
+  gudang?: string[]
   sortBy?: 'total' | 'tanggal'
   order?: 'asc' | 'desc'
 }
@@ -298,13 +300,24 @@ export async function readOrdersFiltered(opts: OrderFilterOptions = {}): Promise
     query = query.eq('order_status', STATUS_TO_DB[opts.status])
   }
 
-  // Filter gudang pemenuh. 'none' = pesanan lama yang belum punya gudang (warehouse_id NULL);
-  // memakai .is() bukan .eq() karena NULL tak pernah cocok dengan perbandingan biasa di SQL.
-  if (opts.gudang) {
-    query =
-      opts.gudang === WAREHOUSE_FILTER_NONE
-        ? query.is('warehouse_id', null)
-        : query.eq('warehouse_id', opts.gudang)
+  // Filter gudang pemenuh — BISA BEBERAPA sekaligus.
+  // 'none' = pesanan lama yang belum punya gudang (warehouse_id NULL). NULL tak pernah cocok
+  // dengan perbandingan biasa di SQL, jadi butuh `is.null`, bukan `eq`/`in`.
+  //
+  // Saat 'none' dipilih BERSAMA id gudang, keduanya WAJIB digabung dalam SATU .or(): merangkai
+  // .in(...).is(...) akan menghasilkan AND ("warehouse_id ada di daftar DAN sekaligus NULL") yang
+  // mustahil benar, sehingga tabel tampil kosong tanpa error apa pun.
+  if (opts.gudang && opts.gudang.length > 0) {
+    const ids = opts.gudang.filter((v) => v !== WAREHOUSE_FILTER_NONE)
+    const includeNull = opts.gudang.includes(WAREHOUSE_FILTER_NONE)
+
+    if (includeNull && ids.length > 0) {
+      query = query.or(`warehouse_id.in.(${ids.join(',')}),warehouse_id.is.null`)
+    } else if (includeNull) {
+      query = query.is('warehouse_id', null)
+    } else {
+      query = query.in('warehouse_id', ids)
+    }
   }
 
   // Sorting

@@ -10,6 +10,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { Download, ChevronLeft, ChevronRight, Inbox, Eye } from 'lucide-react'
 import OmsHeader from '@/components/oms/OmsHeader'
 import OrderStatusModal from '@/components/oms/OrderStatusModal'
+import WarehouseMultiFilter from '@/components/oms/WarehouseMultiFilter'
 import type {
   Order,
   OrderFulfillmentStatus,
@@ -79,7 +80,10 @@ function OrdersContent() {
   const dari = searchParams.get('dari') || ''
   const sampai = searchParams.get('sampai') || ''
   const kurir = searchParams.get('kurir') || ''
+  // Gudang = MULTI-SELECT. Di URL disimpan sebagai daftar berkoma (`gudang=id1,id2`), pola sama
+  // dengan `?category=a,b` di katalog. Array kosong = "Semua gudang" (tanpa filter).
   const gudang = searchParams.get('gudang') || ''
+  const gudangList = gudang ? gudang.split(',').filter(Boolean) : []
   const pembayaran = (searchParams.get('pembayaran') as OrderPaymentStatus | null) || null
   const sortBy = (searchParams.get('sortBy') as 'total' | 'tanggal' | null) || null
   const order = (searchParams.get('order') as 'asc' | 'desc' | null) || null
@@ -367,23 +371,18 @@ function OrdersContent() {
               </select>
             </div>
 
-            {/* Filter Gudang — bisa dikombinasikan dengan filter lain (semua disaring di server) */}
+            {/* Filter Gudang — MULTI-SELECT, bisa dikombinasikan dengan filter lain
+                (semua disaring di server). Bukan <select> native: elemen itu tak bisa memuat
+                checkbox dan highlight opsinya digambar OS (biru), tak bisa diwarnai lewat CSS. */}
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-2">Gudang</label>
-              <select
-                value={gudang}
-                onChange={(e) => updateFilters({ gudang: e.target.value || null })}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
-              >
-                <option value="">Semua gudang</option>
-                {warehouses.map((w) => (
-                  <option key={w.id} value={w.id}>
-                    {w.nama}
-                  </option>
-                ))}
-                {/* Pesanan sebelum fitur multi-gudang tetap bisa ditemukan & diaudit */}
-                <option value={WAREHOUSE_NONE}>{WAREHOUSE_UNSET_LABEL}</option>
-              </select>
+              <WarehouseMultiFilter
+                warehouses={warehouses}
+                value={gudangList}
+                onChange={(next) => updateFilters({ gudang: next.length > 0 ? next.join(',') : null })}
+                noneValue={WAREHOUSE_NONE}
+                noneLabel={WAREHOUSE_UNSET_LABEL}
+              />
             </div>
           </div>
 
