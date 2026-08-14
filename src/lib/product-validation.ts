@@ -22,6 +22,11 @@ export const MIN_ORDER_QTY_MAX = 999
 export const LOW_PRICE_THRESHOLD = 5_000
 // Target nilai minimal satu baris produk saat menyarankan minimum pembelian (≈ batas Xendit).
 export const SUGGESTED_LINE_TOTAL = 10_000
+// Ambang "stok menipis": di bawah angka ini produk diberi peringatan. SATU sumber untuk kartu
+// ringkasan + filter stok di halaman Produk dan widget "Stok Rendah" di Dashboard — kalau dua
+// halaman memakai angka berbeda, jumlah peringatannya tidak akan cocok dan admin kehilangan
+// kepercayaan pada keduanya.
+export const LOW_STOCK_THRESHOLD = 10
 export const MAX_PRODUCT_IMAGES = 9 // sesuai slider detail produk & constraint DB
 export const MAX_IMAGE_BYTES = 2 * 1024 * 1024 // 2MB per file
 export const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp']

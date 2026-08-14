@@ -22,7 +22,17 @@
       "Bash(sed -i '166s|const warehouseId = isMultiWarehouse\\(\\) ? options?.warehouseId : undefined|const warehouseId = \\(await isMultiWarehouse\\(\\)\\) ? options?.warehouseId : undefined|' src/lib/warehouse.ts)",
       "Bash(sed -i '188s|const warehouseId = isMultiWarehouse\\(\\) ? options?.warehouseId : undefined|const warehouseId = \\(await isMultiWarehouse\\(\\)\\) ? options?.warehouseId : undefined|' src/lib/warehouse.ts)",
       "Bash(sed -i \"24s|import { type ShippingCourier } from '@/lib/mengantar'|import { type WarehouseShippingOption } from '@/lib/mengantar'|\" src/app/checkout/page.tsx)",
-      "Bash(sed -i \"74s|useState<ShippingCourier \\\\| null>\\(null\\)|useState<WarehouseShippingOption \\\\| null>\\(null\\)|\" src/app/checkout/page.tsx)"
+      "Bash(sed -i \"74s|useState<ShippingCourier \\\\| null>\\(null\\)|useState<WarehouseShippingOption \\\\| null>\\(null\\)|\" src/app/checkout/page.tsx)",
+      "Bash(npx next *)",
+      "Bash(cp \"C:/Users/fiqih/AppData/Local/Temp/claude/c--Users-fiqih-OneDrive-Dokumen-Infarm-Web-Infarm-Web/e8aa62ab-4a73-4ade-890a-9766b1bd32e8/scratchpad/check-data.mjs\" ./.tmp-check-data.mjs)",
+      "Bash(node ./.tmp-check-data.mjs)",
+      "Bash(rm -f ./.tmp-check-data.mjs)",
+      "Bash(npx eslint *)",
+      "Bash(grep -n \"per BARIS \\(\\\\`<li>\\\\`\\)\\\\|kartu gabungan, \\\\`relative\\\\`\" CLAUDE.md)",
+      "PowerShell($conn = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue; if \\($conn\\) { $conn | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue } }; Start-Sleep -Seconds 2; if \\(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue\\) { \"masih hidup\" } else { \"dev server dimatikan\" })",
+      "PowerShell($conn = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue; if \\($conn\\) { $conn | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue } }; Start-Sleep -Seconds 3; if \\(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue\\) { \"masih hidup\" } else { \"dev server dimatikan\" })",
+      "Bash(grep -E \"Compiled|error|Error|Failed|oms/dashboard$\")",
+      "PowerShell(Get-Process node -ErrorAction SilentlyContinue | Select-Object Id, StartTime, @{n='Cmd';e={\\(Get-CimInstance Win32_Process -Filter \"ProcessId=$\\($_.Id\\)\"\\).CommandLine}} | Format-Table -AutoSize -Wrap)"
     ]
   }
 }

@@ -17,6 +17,7 @@
 import { createAdminClient } from '@/lib/supabase/server'
 import { readWarehouses } from '@/lib/mock-db/warehouses'
 import { recordOrderStockChanges } from '@/lib/stock-audit'
+import type { RevenueOrderRow } from '@/lib/dashboard-revenue'
 import type {
   Order,
   OrderItem,
@@ -376,6 +377,72 @@ export async function readOrders(): Promise<Order[]> {
 
   const warehouseNames = await resolveWarehouseNames(rows)
   return rows.map((r) => rowToOrder(r, itemsByOrder.get(r.id) ?? [], warehouseNames))
+}
+
+// Membaca N pesanan terbaru untuk widget "Pesanan Terbaru" di Dashboard OMS.
+//
+// Item pesanan TIDAK diambil (widget hanya menampilkan invoice/nama/total/status pembayaran),
+// jadi `items` selalu array kosong. readOrders() menarik SELURUH tabel beserta seluruh
+// order_items-nya — memakai itu hanya untuk mengambil 5 baris teratas akan makin mahal seiring
+// pesanan bertambah.
+export async function getRecentOrders(limit = 5): Promise<Order[]> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('orders')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(limit)
+
+  if (error) {
+    console.error('Gagal membaca pesanan terbaru dari Supabase:', error.message)
+    return []
+  }
+  return ((data as OrderRow[]) ?? []).map((r) => rowToOrder(r, []))
+}
+
+// Membaca kolom minimum yang dibutuhkan Dashboard OMS untuk menghitung pendapatan pada satu
+// rentang waktu. Sengaja tidak mengambil order_items maupun nama gudang: dashboard hanya
+// menjumlahkan jumlah_total per status, dan menarik item ratusan pesanan hanya untuk dijumlahkan
+// adalah pemborosan.
+//
+// `from` INKLUSIF, `to` EKSKLUSIF (memakai .lt, bukan .lte) — mengikuti batas periode di
+// dashboard-period.ts, supaya pesanan tepat tengah malam tidak terhitung di dua periode
+// berdampingan sekaligus (yang akan membuat delta pertumbuhan salah).
+//
+// Agregasi dilakukan di aplikasi (lihat dashboard-revenue.ts), bukan SQL, karena jumlah pesanan
+// masih kecil dan logika kategorinya perlu identik dengan yang dipakai UI. Ambang pindah ke
+// agregasi SQL/RPC: sekitar 10.000 pesanan per periode.
+export async function readOrdersForRevenue(
+  from: string,
+  to: string,
+): Promise<RevenueOrderRow[]> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('orders')
+    .select('jumlah_total, status_pembayaran, order_status, created_at')
+    .gte('created_at', from)
+    .lt('created_at', to)
+
+  if (error) {
+    console.error('Gagal membaca pendapatan dari Supabase:', error.message)
+    return []
+  }
+
+  type RevenueRow = Pick<
+    OrderRow,
+    'jumlah_total' | 'status_pembayaran' | 'order_status' | 'created_at'
+  >
+  return ((data as RevenueRow[]) ?? []).map((row) => {
+    const status = DB_TO_STATUS[row.order_status]
+    return {
+      totalAmount: row.jumlah_total,
+      paymentStatus: DB_TO_PAYMENT[row.status_pembayaran] ?? 'Menunggu',
+      // order_status NULL pada baris warisan → status dibiarkan undefined (bukan ditebak),
+      // sehingga kategorinya ditentukan oleh status pembayaran saja.
+      ...(status ? { status } : {}),
+      date: row.created_at,
+    }
+  })
 }
 
 // Membaca satu pesanan berdasarkan nomor invoice. null bila tidak ditemukan.

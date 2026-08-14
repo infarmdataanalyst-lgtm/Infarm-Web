@@ -32,6 +32,7 @@ import {
   isLowPrice,
   suggestMinOrderQty,
   LOW_PRICE_THRESHOLD,
+  LOW_STOCK_THRESHOLD,
   ACCEPTED_IMAGE_ACCEPT,
   NAME_MAX,
   DESC_MAX,
@@ -70,7 +71,8 @@ type EditForm = {
   images: string[] // galeri foto (maks 9); images[0] = foto utama
 }
 
-const LOW_STOCK_THRESHOLD = 10 // di bawah angka ini dianggap stok menipis
+// LOW_STOCK_THRESHOLD di-import dari product-validation.ts — dipakai bersama widget
+// "Stok Rendah" di Dashboard supaya jumlah peringatan di kedua halaman selalu cocok.
 const MAX_IMAGES = 9 // maksimal foto per produk (sesuai slider detail produk)
 const PAGE_SIZE = 10 // baris per halaman (sama dengan halaman Pesanan)
 
