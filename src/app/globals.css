@@ -73,3 +73,27 @@ body {
 .animate-cart-bump {
   animation: cart-bump 0.45s ease;
 }
+
+/* Sorotan singkat pada angka jumlah & harga di mini cart saat nilainya berubah.
+   Dipicu TANPA state React: elemennya diberi `key` = nilai barunya, sehingga React me-mount
+   ulang elemen itu dan animasi CSS otomatis diputar dari awal. Tanpa trik ini butuh
+   setState + timer per baris, dan lint `react-hooks/set-state-in-effect` melarang polanya. */
+@keyframes value-flash {
+  0% {
+    background-color: rgb(150 210 150 / 0.55); /* brand-light, transparan */
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+.animate-value-flash {
+  animation: value-flash 0.6s ease-out;
+  border-radius: 0.25rem;
+}
+
+/* Hormati preferensi sistem: pengguna yang meminta gerak minimal tak perlu kedipan warna. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-value-flash {
+    animation: none;
+  }
+}

@@ -1308,15 +1308,43 @@ deskripsi 20–2000, harga 100–99.999.999, stok 0–999.999, `MAX_PRODUCT_IMAG
   `useSearchParams` yang memaksa halaman jadi dinamis, sementara beranda & katalog sengaja ISR.
 - **`CartIconLink` + `MiniCart`** (`components/ui/`, client) = ikon keranjang + badge jumlah item.
   **Mobile (<640px)**: `<Link>` ke `/keranjang` (tak berubah). **Desktop (≥640px)**: tombol yang
-  membuka **mini cart** `absolute right-0 top-full w-80` — daftar item (thumbnail/nama/qty/harga,
-  `max-h-72 overflow-y-auto`), subtotal, tombol "Lihat Keranjang" & "Checkout"; kosong → ajakan
-  "Mulai Belanja". Tutup via klik-luar (`pointerdown`), `Escape`, atau klik aksi.
+  membuka **mini cart** `absolute right-0 top-full w-96` — daftar item, subtotal, tombol
+  "Lihat Keranjang" & "Checkout"; kosong → ajakan "Mulai Belanja". Tutup via klik-luar
+  (`pointerdown`), `Escape`, atau klik aksi.
   - Pemilihan varian pakai **`useMediaQuery`** (`src/hooks/use-media-query.ts`, `useSyncExternalStore`),
     BUKAN kelas `sm:hidden` — `id="cart-anchor"` harus unik & punya ukuran nyata karena dipakai
     animasi fly-to-cart (`StickyBuyBar`); elemen `display:none` memberi rect 0×0 → animasi ngawur.
+    Efek sampingnya menguntungkan: di mobile `MiniCart` **tidak pernah di-mount**, jadi kontrol
+    jumlah di bawah tak butuh penjagaan breakpoint tambahan — pemisahannya struktural.
   - Detail produk di-resolve `GET /api/products/by-ids` **hanya saat panel dibuka**; foto pakai
     `Image ... unoptimized` (URL Supabase Storage belum di `remotePatterns`), pola sama `CartItemRow`.
   - Tombol Checkout WAJIB `setCheckoutItems(cart)` sebelum `router.push('/checkout')`.
+  - **Kontrol jumlah per baris (desktop)** — tata letak `[− n +] [foto 44px] [nama + harga + 🗑]`.
+    Panel `w-96` (384px), BUKAN `w-80`: dengan stepper di kiri, 320px hanya menyisakan ±168px
+    untuk nama dan nama produk katalog ini panjang. Nama pakai **`line-clamp-2`**; **jangan
+    tambahkan `block`** di elemen itu — `line-clamp` butuh `display: -webkit-box` dan `block`
+    menimpanya sehingga barisnya memanjang jadi ~156px.
+    - **"−" berhenti di `minOrderQty` (disabled), TIDAK menghapus item**; penghapusan lewat ikon
+      tong sampah tersendiri. Disamakan dengan `CartItemRow` di `/keranjang` — aturan tombol yang
+      sama tak boleh berbeda di dua tempat.
+    - **"+" dibatasi `StoredProduct.stock`** (sudah ikut terbawa dari `by-ids`), dengan keterangan
+      "Stok tersisa N" supaya alasan tombol mati terbaca. Batas ini **PEMANDU, bukan penegakan**:
+      datanya bisa basi ≤30 dtk (endpoint cached) dan untuk produk bervarian angkanya stok
+      level-produk. Penegakan sebenarnya di `orders/create` (RPC atomik → `INSUFFICIENT_STOCK`).
+      Produk yang tak ter-resolve (mis. dummy non-OMS) `stock` undefined → "+" TIDAK dibatasi.
+    - **Tanpa input ketik manual** (beda dari `CartItemRow`): di 384px kolom angka yang bisa
+      difokus hanya menambah jalur kesalahan; pengetikan bebas tetap ada di `/keranjang`.
+    - **Tanpa spinner/loading state** — perubahan jumlah TIDAK async. Stok & `minOrderQty` sudah
+      di memori sejak panel dibuka, jadi validasinya perbandingan angka, nol request per klik.
+      Jangan tambahkan indikator loading di sini; tak ada yang ditunggu.
+    - **Sinkron ke `/keranjang` GRATIS**: keduanya membaca store `useSyncExternalStore` yang sama
+      di atas cookie `infarm_cart`, jadi `updateQuantity()`/`removeFromCart()` langsung terlihat
+      di kedua tempat. Tak ada salinan state kedua yang perlu didamaikan.
+    - **Animasi sorotan tanpa state React**: elemen angka/harga diberi `key` = nilainya, sehingga
+      React me-mount ulang elemen itu saat nilainya berubah dan keyframe `.animate-value-flash`
+      (`globals.css`) otomatis diputar dari awal. Pola ini dipilih karena alternatifnya
+      setState + timer per baris, yang dilarang lint `react-hooks/set-state-in-effect`.
+      Dihormati `prefers-reduced-motion: reduce`.
 - **`ProfileIconLink`** (`components/ui/`, client) = ikon akun + badge angka pesanan aktif (cookie
   `infarm_active_orders`, tanpa query DB). Klik/tap ikon → dropdown `absolute right-0 top-full`
   berisi **3 aksi**: Lacak / Batalkan / Beri Review (+ baris kepala "N pesanan aktif"); tutup via
@@ -1491,7 +1519,9 @@ mengambang. Jangan menambah lapis baru tanpa memperbarui tabel ini.
       (bawah deskripsi), deskripsi dilipat 5 baris + "Lihat Selengkapnya"
 - [x] Floating WhatsApp CS di semua halaman ecommerce (`FloatingWhatsApp`, kanan bawah; link CS placeholder `/404`)
 - [x] Halaman keranjang (`/keranjang`) — data dari cookie; desktop 2 kolom (produk kiri, "Dilihat Sebelumnya" kanan), mobile 1 kolom
-- [x] Mini cart dropdown di header (desktop ≥640px) — `MiniCart`; mobile tetap navigate ke `/keranjang`
+- [x] Mini cart dropdown di header (desktop ≥640px) — `MiniCart` + kontrol ubah jumlah per baris
+      (− n +, batas bawah `minOrderQty`, batas atas stok, hapus per baris, sorotan saat nilai
+      berubah); mobile tetap navigate ke `/keranjang` (panelnya tak di-mount sama sekali)
 - [x] Katalog & "Produk Terlaris" pure produk OMS (infinite scroll); "N terjual" di detail produk
 - [x] Detail produk: galeri foto multi (maks 9) + harga coret
 - [x] Promo & paket combo REAL di keranjang (dari Supabase via `/api/{promotions,combos}/active`)
