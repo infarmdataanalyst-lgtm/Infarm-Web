@@ -147,7 +147,7 @@ export default function ReviewsPage() {
 
   return (
     <>
-      <OmsHeader title="Ulasan" notificationCount={3} />
+      <OmsHeader title="Ulasan" />
 
       <main className="p-6 md:p-8">
         {/* ===================== LANTAI 0: Header & Filter Produk ===================== */}

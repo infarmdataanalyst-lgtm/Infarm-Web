@@ -949,6 +949,81 @@ dan barisnya tak bisa ditutup selama diedit.
   pembuatan pesanan (error ditelan + `console.error`). Tabel belum di-migrate → kode `PGRST205`
   dianggap "belum ada" dan halaman riwayat tampil kosong.
 
+## Header OMS: Notifikasi & Pengaturan — sudah terpasang
+
+`OmsHeader` (client, dipakai SEMUA halaman OMS) kini tiga bagian kanannya nyata, bukan tombol mati:
+ikon gear → `/oms/dashboard/pengaturan`, lonceng → `NotificationBell`, dan **nama + peran admin
+diambil dari `GET /api/oms/me`**. Teks hardcode "Admin Utama / Manager Operasional" sudah dihapus —
+dua jabatan itu tak pernah ada di sistem peran (`admin_users.role` hanya `admin` | `staff`).
+Prop `notificationCount={3}` yang di-hardcode di 10 halaman juga dihapus (lencana palsu).
+
+### Notifikasi DIHITUNG real-time, BUKAN tabel persisten
+
+**Tidak ada tabel `notifications`.** `src/lib/mock-db/notifications.ts` menghitung dari keadaan
+terkini setiap kali diminta. Alasannya (keputusan pemilik toko 2026-08-14):
+
+| | Tabel persisten | Computed (dipilih) |
+|---|---|---|
+| Produsen data | insert di **tiap** titik tulis (RPC checkout, `stock/set`, 3 jalur cancel, form produk) — fan-out sama seperti `stock-audit.ts`, satu titik lupa = notifikasi bohong | nol titik tulis |
+| Data lama | kosong sampai ada event baru | 19 pesanan lama langsung tampil |
+| Basi | "Sprayer habis" tetap muncul setelah restock | mustahil basi |
+
+Konsekuensi yang **diterima sadar**: "sudah dibaca" tak bisa per-notifikasi. Yang disimpan hanya
+SATU timestamp per admin: `store_settings` baris `notif_last_seen:<adminId>`. Kunci sengaja
+**per admin** — kalau satu kunci dipakai bersama, admin A membuka panel dan lencana admin B ikut hilang.
+
+- **Dua kategori**: `pesanan_baru` (orders ber-`order_status` ∈ `PENDING|PROCESSING`) dan
+  `stok_habis` (produk non-arsip ber-stok efektif 0).
+  - `order_status` NULL (18 baris warisan) **tidak ikut** — `.in()` memang tak pernah cocok dengan
+    NULL, dan baris itu tak punya status yang bisa dipercaya.
+  - Waktu "stok habis" diambil dari **`stock_mutations` ber-`stok_after = 0`** (terbaru per produk).
+    Tabel `products` tak punya `updated_at`, jadi tanpa ini notifikasi stok tak bisa diurutkan
+    bersama pesanan. Tabel riwayat hilang/belum di-migrate → notifikasi tetap tampil, hanya tanpa waktu.
+  - `unread` = `lastSeen === null ? true : createdAt > lastSeen`. Notifikasi tanpa waktu dihitung
+    belum dibaca **hanya sebelum panel pernah dibuka** — kalau selamanya, lencana merahnya tak akan
+    pernah bisa hilang dan admin berhenti mempercayainya.
+  - `SOURCE_LIMIT = 200` per sumber: pagar memori, bukan paginasi. Naikkan bila backlog rutin melewatinya.
+- **Endpoint**: `GET /api/notifications?limit=&offset=` dan `POST /api/notifications/mark-read`,
+  keduanya `requireAdmin()` (peran apa pun — staff perlu melihat). Isinya memuat nama pembeli &
+  nilai pesanan, jadi tak boleh publik. Waktu `mark-read` diambil dari **server**, bukan body:
+  jam browser yang salah/masa depan akan mematikan lencana selamanya.
+- **`NotificationBell`**: lencana (`9+` bila >9), panel `absolute right-0 top-full` (10 teratas,
+  ikon per kategori, waktu relatif, klik → navigasi + tutup), "Lihat Semua (N)" muncul hanya bila
+  `total > 10`. Membuka panel = `mark-read` (lencana dinolkan optimistis; penanda `unread` per baris
+  SENGAJA dibiarkan agar admin masih bisa melihat mana yang baru pada bukaan itu).
+- **⚠️ POLLING 60 detik + refetch saat tab kembali fokus — Supabase Realtime TIDAK BISA DIPAKAI.**
+  `orders`/`products` RLS-aktif tanpa policy publik, dan browser admin hanya memegang anon key
+  (auth OMS = cookie HMAC sendiri, bukan Supabase Auth) → langganan `postgres_changes` menerima
+  **nol baris**. Membuatnya jalan menuntut service_role di browser = dilarang mutlak.
+  **Jangan coba pasang Realtime di sini tanpa lebih dulu memindahkan auth OMS ke Supabase Auth.**
+- **Halaman `/oms/dashboard/notifikasi`** (client, paginasi 20/halaman). **Wajib di bawah
+  `/oms/dashboard`**: guard di `proxy.ts` memakai matcher `/oms/dashboard/:path*`, jadi `/notifikasi`
+  di root akan terbuka untuk siapa pun tanpa login. Tak ada entri sidebar — dijangkau dari
+  "Lihat Semua" di panel lonceng.
+
+### Halaman Pengaturan (`/oms/dashboard/pengaturan`) — tiga tab
+
+Tiga section lewat tab horizontal, semuanya baris di **`store_settings`** (tak ada tabel baru,
+tak ada migration): **Profil Toko** (`store_name`, `store_description`) · **Threshold Stok**
+(`low_stock_threshold`) · **Minimum Belanja** (`min_order_amount`, yang sudah ada sebelumnya).
+
+- **Peran**: halaman terbuka untuk sesi OMS apa pun, tapi **tombol Simpan hanya untuk `admin`**.
+  Penyembunyian tombol BUKAN penjagaan — tiap endpoint tulis memanggil **`requireAdminRole(pesan)`**
+  (baru di `oms-guard.ts`; `requireStockEditor()` kini tipis di atasnya) dan membalas `403`
+  `FORBIDDEN_ROLE` untuk `staff`.
+- **Alamat gudang di tab Profil Toko READ-ONLY**, hanya menampilkan gudang default + `origin id`
+  + tautan ke `/oms/dashboard/gudang`. Sumber kebenarannya tabel `warehouses`. Menyalinnya ke
+  `store_settings` = dua sumber kebenaran, kesalahan yang sama seperti env `WAREHOUSE_MODE` yang
+  sudah dibuang. **Jangan jadikan field yang bisa diedit di sini.**
+- **`LOW_STOCK_THRESHOLD` SUDAH DIGANTI `DEFAULT_LOW_STOCK_THRESHOLD`** (`product-validation.ts`).
+  Konstanta itu kini hanya **nilai cadangan**; angka sebenarnya dibaca `getLowStockThreshold()`
+  (server) atau `GET /api/settings/low-stock-threshold` (client, `requireAdmin`).
+  Pemakainya: Dashboard (widget Stok Rendah, `await` di `Promise.all`), halaman Produk (state hasil
+  fetch, nilai awal = konstanta bawaan), dan notifikasi stok. **Kalau menambah tempat baru yang
+  membandingkan stok, ambil dari sini — jangan hardcode 10 lagi.**
+  Minimal 1 (stok 0 selalu "habis"), maksimal `MAX_LOW_STOCK_THRESHOLD` (1.000) — ambang setinggi
+  stok maksimum akan menandai seluruh katalog "menipis" dan peringatannya kehilangan arti.
+
 ## Dashboard OMS (`/oms/dashboard`) — Revenue Dashboard
 
 Server Component (`dynamic = 'force-dynamic'`). **Tidak ada lagi data dummy di halaman ini** —
@@ -1099,11 +1174,12 @@ berlaku untuk tempat lain**. `REVENUE_COLORS`: `#35577E` (lunas) · `#8FB4DE` (p
   sama juga menyuplai "N terjual" di storefront → butuh keputusan tersendiri.
 - **Pesanan Terbaru** — `getRecentOrders(5)`, **sengaja di luar filter periode** (widget pemantau
   pesanan masuk; akan selalu kosong bila admin melihat periode lampau). `items` tidak diambil.
-- **Stok Rendah** — produk aktif ber-stok efektif `< LOW_STOCK_THRESHOLD`, terkecil dulu, maks 5.
-  Bar diukur relatif terhadap ambang itu, bukan kapasitas maksimum (produk tak punya kolom
+- **Stok Rendah** — produk aktif ber-stok efektif di bawah **ambang setelan admin**, terkecil dulu,
+  maks 5. Bar diukur relatif terhadap ambang itu, bukan kapasitas maksimum (produk tak punya kolom
   kapasitas; mengarang pembagi membuat bar berbohong). Tautan → Kelola Stok Gudang.
-- **`LOW_STOCK_THRESHOLD` (10) kini di `src/lib/product-validation.ts`** dan di-import halaman
-  Produk maupun Dashboard — satu sumber supaya jumlah peringatan di kedua halaman selalu cocok.
+- **Ambang stok menipis diambil `await getLowStockThreshold()`** (ikut `Promise.all` di halaman),
+  bukan konstanta kode. Diatur di `/oms/dashboard/pengaturan` → tab Threshold Stok; angka yang sama
+  dipakai halaman Produk & notifikasi stok supaya jumlah peringatannya selalu cocok.
 - **Kartu "Produk Aktif" & "Rata-rata Rating" SUDAH DIHAPUS** (2026-08-13). Keduanya tak
   terpengaruh filter periode dan angkanya tersedia dengan konteks jauh lebih lengkap di halaman
   **Produk** (jumlah + status + stok) dan halaman **Ulasan** (rating per produk + isi ulasannya);
@@ -1134,7 +1210,9 @@ berlaku untuk tempat lain**. `REVENUE_COLORS`: `#35577E` (lunas) · `#8FB4DE` (p
     constraint, jadi tak ada ejaan bebas yang perlu di-`ilike`).
   - Tanggal pakai `<input type="date">` native + pintasan (hari ini/7/30 hari/bulan ini) — **tanpa
     library date-picker**.
-  - Ambang "Stok Menipis" = `LOW_STOCK_THRESHOLD` (10), satu angka dengan kartu ringkasan di atas tabel.
+  - Ambang "Stok Menipis" = setelan admin (`GET /api/settings/low-stock-threshold`, state di
+    komponen dengan nilai awal `DEFAULT_LOW_STOCK_THRESHOLD`), satu angka dengan kartu ringkasan
+    di atas tabel dan widget Stok Rendah di Dashboard.
   - **Kartu ringkasan (Total Produk / Stok Menipis / Stok Habis) = PINTASAN filter status stok.**
     Dirender sebagai `<button>` ber-`aria-pressed`, memanggil `toggleStockFilter()` yang menulis
     param `stok` lewat `updateFilters` — **sumber state yang sama persis dengan dropdown "Status
@@ -1436,6 +1514,17 @@ mengambang. Jangan menambah lapis baru tanpa memperbarui tabel ini.
 ### OMS (Back Office)
 - [x] Login OMS (`/oms/login`) — verifikasi ke tabel `admin_users` (scrypt) + cookie sesi httpOnly
       bertanda tangan HMAC + rate limit (`proxy.ts` verifikasi tanda tangan)
+- [x] Notifikasi header OMS (`NotificationBell`) — pesanan menunggu diproses + produk stok habis,
+      DIHITUNG real-time (tanpa tabel `notifications`), unread lewat `notif_last_seen:<adminId>` di
+      `store_settings`, polling 60 dtk + refetch saat tab fokus (Realtime tak mungkin: RLS + anon key),
+      panel 10 teratas + halaman `/oms/dashboard/notifikasi` berpaginasi
+- [x] Halaman Pengaturan bertab (`/oms/dashboard/pengaturan`) — Profil Toko / Threshold Stok /
+      Minimum Belanja, semua di `store_settings` (tanpa tabel & migration baru). Tulis = peran
+      `admin` (`requireAdminRole`), `staff` hanya melihat. Alamat gudang read-only (sumbernya
+      tabel `warehouses`). Ikon gear di header mengarah ke sini
+- [x] Ambang "stok menipis" bisa diatur admin — dipakai serentak Dashboard, halaman Produk, dan
+      notifikasi stok (`DEFAULT_LOW_STOCK_THRESHOLD` kini hanya nilai cadangan)
+- [x] Header OMS menampilkan nama & peran admin ASLI (`GET /api/oms/me`), bukan teks hardcode
 - [x] Dashboard OMS (`/oms/dashboard`) — Revenue Dashboard: pendapatan dipecah per status
       pembayaran (Lunas/Pending/Dibatalkan) + tooltip definisi, toggle periode di URL params
       (Hari ini/7/30 hari/Bulan ini/Tahun ini/Custom) dengan granularity chart otomatis

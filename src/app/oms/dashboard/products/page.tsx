@@ -32,7 +32,7 @@ import {
   isLowPrice,
   suggestMinOrderQty,
   LOW_PRICE_THRESHOLD,
-  LOW_STOCK_THRESHOLD,
+  DEFAULT_LOW_STOCK_THRESHOLD,
   ACCEPTED_IMAGE_ACCEPT,
   NAME_MAX,
   DESC_MAX,
@@ -71,12 +71,14 @@ type EditForm = {
   images: string[] // galeri foto (maks 9); images[0] = foto utama
 }
 
-// LOW_STOCK_THRESHOLD di-import dari product-validation.ts — dipakai bersama widget
-// "Stok Rendah" di Dashboard supaya jumlah peringatan di kedua halaman selalu cocok.
+// Ambang "stok menipis" diatur admin di /oms/dashboard/pengaturan (store_settings) dan diambil
+// lewat GET /api/settings/low-stock-threshold. DEFAULT_LOW_STOCK_THRESHOLD hanya nilai awal
+// sebelum hasil fetch tiba — angka final dipakai bersama widget "Stok Rendah" di Dashboard supaya
+// jumlah peringatan di kedua halaman selalu cocok.
 const MAX_IMAGES = 9 // maksimal foto per produk (sesuai slider detail produk)
 const PAGE_SIZE = 10 // baris per halaman (sama dengan halaman Pesanan)
 
-// Opsi filter status stok. Ambang batas mengikuti LOW_STOCK_THRESHOLD agar konsisten dengan
+// Opsi filter status stok. Ambang batasnya mengikuti setelan admin agar konsisten dengan
 // kartu ringkasan "Stok Menipis" di atas tabel.
 const STOCK_FILTERS = [
   { value: 'habis', label: 'Stok Habis' },
@@ -152,7 +154,7 @@ function formatRupiah(value: number): string {
 // build Next.js gagal. Pola sama dengan halaman Pesanan.
 export default function ProductsPage() {
   return (
-    <Suspense fallback={<OmsHeader title="Produk" notificationCount={3} />}>
+    <Suspense fallback={<OmsHeader title="Produk" />}>
       <ProductsContent />
     </Suspense>
   )
@@ -214,6 +216,26 @@ function ProductsContent() {
       .catch(() => {})
   }, [])
   useEffect(() => loadSummaries(), [loadSummaries])
+
+  // Ambang "stok menipis" dari setelan admin (store_settings). Nilai awal = konstanta bawaan
+  // supaya tabel tetap punya angka yang masuk akal pada render pertama, sebelum fetch selesai.
+  const [lowStockThreshold, setLowStockThreshold] = useState(DEFAULT_LOW_STOCK_THRESHOLD)
+  useEffect(() => {
+    let active = true
+    fetch('/api/settings/low-stock-threshold', { cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { lowStockThreshold?: number } | null) => {
+        if (active && typeof data?.lowStockThreshold === 'number') {
+          setLowStockThreshold(data.lowStockThreshold)
+        }
+      })
+      .catch(() => {
+        // Gagal memuat setelan → tetap pakai nilai bawaan; peringatan stok tak boleh ikut mati.
+      })
+    return () => {
+      active = false
+    }
+  }, [])
 
   // Data terjual per produk (peta productId → unit terjual) + rentang waktu terpilih
   const [soldCounts, setSoldCounts] = useState<Record<string, number>>({})
@@ -356,10 +378,10 @@ function ProductsContent() {
     (p: Product, value: StockFilter) => {
       const s = stockOf(p)
       if (value === 'habis') return s === 0
-      if (value === 'menipis') return s > 0 && s < LOW_STOCK_THRESHOLD
-      return s >= LOW_STOCK_THRESHOLD // 'tersedia'
+      if (value === 'menipis') return s > 0 && s < lowStockThreshold
+      return s >= lowStockThreshold // 'tersedia'
     },
-    [stockOf],
+    [stockOf, lowStockThreshold],
   )
 
   // Hasil SEMUA filter KECUALI status stok.
@@ -735,7 +757,7 @@ function ProductsContent() {
 
   return (
     <>
-      <OmsHeader title="Produk" notificationCount={3} />
+      <OmsHeader title="Produk" />
       <div className="p-6 md:p-8">
         {/* === Header Halaman === */}
         <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -844,7 +866,7 @@ function ProductsContent() {
                 {STOCK_FILTERS.map((f) => (
                   <option key={f.value} value={f.value}>
                     {f.label}
-                    {f.value === 'menipis' ? ` (< ${LOW_STOCK_THRESHOLD})` : ''}
+                    {f.value === 'menipis' ? ` (< ${lowStockThreshold})` : ''}
                   </option>
                 ))}
               </select>
@@ -1199,7 +1221,10 @@ function ProductsContent() {
                           sempit; labelnya lewat title. */}
                       <div className="flex items-center gap-1.5">
                         {/* Produk bervarian → total stok semua varian */}
-                        <StockBadge stock={summaries[product.id]?.totalStock ?? product.stock} />
+                        <StockBadge
+                          stock={summaries[product.id]?.totalStock ?? product.stock}
+                          threshold={lowStockThreshold}
+                        />
                         {product.stock === 0 && !product.archived && (
                           <button
                             type="button"
@@ -1656,11 +1681,11 @@ function SummaryCard({
 }
 
 // Badge sisa stok dengan indikator warna: hijau (aman), kuning (menipis), merah (habis)
-function StockBadge({ stock }: { stock: number }) {
+function StockBadge({ stock, threshold }: { stock: number; threshold: number }) {
   if (stock === 0) {
     return <span className="inline-flex rounded-full bg-red-50 px-2.5 py-1 text-xs font-bold text-red-600">Habis (0)</span>
   }
-  if (stock < LOW_STOCK_THRESHOLD) {
+  if (stock < threshold) {
     return <span className="inline-flex rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-600">{stock} pcs</span>
   }
   return <span className="inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">{stock} pcs</span>

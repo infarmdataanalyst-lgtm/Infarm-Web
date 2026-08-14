@@ -176,7 +176,7 @@ export default function ComboForm({
 
   return (
     <>
-      <OmsHeader title="Paket & Combo" notificationCount={3} />
+      <OmsHeader title="Paket & Combo" />
 
       {/* pb-28 memberi ruang agar konten tidak tertutup footer sticky */}
       <main className="p-6 pb-28 md:p-8 md:pb-28">

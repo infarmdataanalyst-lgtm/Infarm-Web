@@ -123,7 +123,7 @@ export default function PaketComboPage() {
 
   return (
     <>
-      <OmsHeader title="Paket & Combo" notificationCount={3} />
+      <OmsHeader title="Paket & Combo" />
       <div className="p-6 md:p-8">
         {/* === Header Halaman === */}
         <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">

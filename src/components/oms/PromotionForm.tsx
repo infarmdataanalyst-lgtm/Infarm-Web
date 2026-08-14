@@ -274,7 +274,7 @@ export default function PromotionForm({
 
   return (
     <>
-      <OmsHeader title="Promosi" notificationCount={3} />
+      <OmsHeader title="Promosi" />
 
       {/* pb-28 memberi ruang agar konten tidak tertutup footer sticky */}
       <main className="p-6 pb-28 md:p-8 md:pb-28">

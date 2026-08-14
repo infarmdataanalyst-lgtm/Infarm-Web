@@ -41,14 +41,14 @@ export async function requireAdmin(): Promise<NextResponse | null> {
   )
 }
 
-// Guard khusus PENULISAN STOK. Selain sesi valid, akun wajib berperan 'admin'.
-// Peran 'staff' boleh melihat stok tapi tidak menulisnya → 403 (bukan 401: ia sudah login,
-// yang kurang adalah wewenang).
+// Guard untuk aksi yang menuntut peran 'admin' (bukan sekadar sesi valid).
+// Peran 'staff' boleh MELIHAT tapi tidak mengubah → 403 (bukan 401: ia sudah login, yang kurang
+// adalah wewenang). Pesan penolakan bisa disesuaikan agar admin tahu aksi mana yang ditolak.
 //
 // Pola pakai:
-//   const denied = await requireStockEditor()
+//   const denied = await requireAdminRole('Akun Anda tidak berwenang mengubah pengaturan.')
 //   if (denied) return denied
-export async function requireStockEditor(): Promise<NextResponse | null> {
+export async function requireAdminRole(forbiddenMessage: string): Promise<NextResponse | null> {
   const identity = await getAdminIdentity()
   if (!identity) {
     return NextResponse.json(
@@ -57,13 +57,12 @@ export async function requireStockEditor(): Promise<NextResponse | null> {
     )
   }
   if (identity.role !== 'admin') {
-    return NextResponse.json(
-      {
-        error: 'Akun Anda tidak berwenang mengubah stok. Hubungi admin utama.',
-        code: 'FORBIDDEN_ROLE',
-      },
-      { status: 403 },
-    )
+    return NextResponse.json({ error: forbiddenMessage, code: 'FORBIDDEN_ROLE' }, { status: 403 })
   }
   return null
+}
+
+// Guard khusus PENULISAN STOK — requireAdminRole dengan pesan spesifik stok.
+export async function requireStockEditor(): Promise<NextResponse | null> {
+  return requireAdminRole('Akun Anda tidak berwenang mengubah stok. Hubungi admin utama.')
 }

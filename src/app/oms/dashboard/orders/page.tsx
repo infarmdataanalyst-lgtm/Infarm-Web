@@ -53,7 +53,7 @@ const WAREHOUSE_UNSET_LABEL = 'Belum ditentukan'
 // Wrapper: useSearchParams (di OrdersContent) wajib dibungkus <Suspense> agar build Next.js tidak error.
 export default function OrdersPage() {
   return (
-    <Suspense fallback={<OmsHeader title="Pesanan" notificationCount={3} />}>
+    <Suspense fallback={<OmsHeader title="Pesanan" />}>
       <OrdersContent />
     </Suspense>
   )
@@ -261,7 +261,7 @@ function OrdersContent() {
 
   return (
     <>
-      <OmsHeader title="Pesanan" notificationCount={3} />
+      <OmsHeader title="Pesanan" />
 
       <main className="p-6 md:p-8">
         {/* === Header Section === */}

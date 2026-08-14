@@ -51,7 +51,7 @@ import {
   REVENUE_COLORS,
   summarizeRevenue,
 } from '@/lib/dashboard-revenue'
-import { LOW_STOCK_THRESHOLD } from '@/lib/product-validation'
+import { getLowStockThreshold } from '@/lib/mock-db/settings'
 import { formatRupiah } from '@/lib/format'
 import type { OrderPaymentStatus, BestSellingProduct } from '@/types/order'
 import type { StoredProduct } from '@/types/product'
@@ -110,7 +110,8 @@ export default async function DashboardPage({
 
   // Satu putaran fetch paralel. readOrdersForRevenue dipanggil dua kali (periode aktif &
   // pembanding) karena delta pertumbuhan harus dihitung dari rentang yang sama panjangnya.
-  const [currentRows, previousRows, bestSellers, recentOrders, products] = await Promise.all([
+  const [currentRows, previousRows, bestSellers, recentOrders, products, lowStockThreshold] =
+    await Promise.all([
     readOrdersForRevenue(period.fromIso, period.toIso),
     readOrdersForRevenue(comparison.fromIso, comparison.toIso),
     // getBestSellingProducts memakai .lte pada batas atas → pakai varian inklusif.
@@ -122,6 +123,8 @@ export default async function DashboardPage({
     getRecentOrders(WIDGET_ROWS),
     // Masih dibutuhkan widget "Stok Rendah" (bukan lagi untuk kartu Produk Aktif yang sudah dihapus).
     readProducts(),
+    // Ambang "stok menipis" kini diatur admin di /oms/dashboard/pengaturan, bukan konstanta kode.
+    getLowStockThreshold(),
   ])
 
   const totals = summarizeRevenue(currentRows)
@@ -133,7 +136,7 @@ export default async function DashboardPage({
 
   const activeProducts = products.filter((p) => !p.archived)
   const lowStockProducts = activeProducts
-    .filter((p) => p.stock < LOW_STOCK_THRESHOLD)
+    .filter((p) => p.stock < lowStockThreshold)
     .sort((a, b) => a.stock - b.stock)
     .slice(0, WIDGET_ROWS)
 
@@ -196,7 +199,7 @@ export default async function DashboardPage({
 
   return (
     <>
-      <OmsHeader title="Dashboard" notificationCount={3} />
+      <OmsHeader title="Dashboard" />
 
       <main className="p-6 md:p-8">
         {/* === Header Section === */}
@@ -375,7 +378,7 @@ export default async function DashboardPage({
               <div>
                 <h3 className="text-lg font-bold text-gray-900">Stok Rendah</h3>
                 <p className="mt-0.5 text-xs text-gray-400">
-                  Stok efektif &lt; {LOW_STOCK_THRESHOLD}, semua gudang
+                  Stok efektif &lt; {lowStockThreshold}, semua gudang
                 </p>
               </div>
               {lowStockProducts.length > 0 && (
@@ -388,10 +391,12 @@ export default async function DashboardPage({
               {lowStockProducts.length === 0 ? (
                 <p className="flex flex-col items-center gap-2 py-6 text-center text-sm text-gray-400">
                   <PackageSearch className="h-6 w-6 text-gray-300" />
-                  Semua produk aktif stoknya masih di atas {LOW_STOCK_THRESHOLD}.
+                  Semua produk aktif stoknya masih di atas {lowStockThreshold}.
                 </p>
               ) : (
-                lowStockProducts.map((item) => <LowStockRow key={item.id} item={item} />)
+                lowStockProducts.map((item) => (
+                  <LowStockRow key={item.id} item={item} threshold={lowStockThreshold} />
+                ))
               )}
               <Link
                 href="/oms/dashboard/gudang/stok"
@@ -553,11 +558,11 @@ function BestSellerRow({ product, rank }: { product: BestSellingProduct; rank: n
   )
 }
 
-// Baris stok rendah. Bar diukur relatif terhadap LOW_STOCK_THRESHOLD (ambang peringatan), bukan
+// Baris stok rendah. Bar diukur relatif terhadap ambang peringatan (setelan admin), bukan
 // terhadap kapasitas maksimum — produk tidak punya kolom kapasitas, dan mengarang angka pembagi
 // akan membuat bar-nya berbohong.
-function LowStockRow({ item }: { item: StoredProduct }) {
-  const ratio = Math.min(item.stock / LOW_STOCK_THRESHOLD, 1)
+function LowStockRow({ item, threshold }: { item: StoredProduct; threshold: number }) {
+  const ratio = Math.min(item.stock / threshold, 1)
   const isOut = item.stock === 0
   const barColor = isOut ? 'bg-rose-500' : ratio < 0.4 ? 'bg-amber-400' : 'bg-brand-primary'
   const textColor = isOut ? 'text-rose-600' : ratio < 0.4 ? 'text-amber-600' : 'text-brand-primary'

@@ -285,7 +285,7 @@ export default function UploadProductPage() {
 
   return (
     <>
-      <OmsHeader title="Produk" notificationCount={3} />
+      <OmsHeader title="Produk" />
 
       {/* pb-28 memberi ruang agar konten tidak tertutup footer sticky */}
       <main className="p-6 pb-28 md:p-8 md:pb-28">
