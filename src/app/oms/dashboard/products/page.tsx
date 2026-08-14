@@ -349,7 +349,26 @@ function ProductsContent() {
     [summaries],
   )
 
-  const filtered = useMemo(() => {
+  // Apakah satu produk cocok dengan sebuah status stok. Dipakai bersama oleh filter tabel DAN
+  // hitungan kartu ringkasan, supaya angka di kartu tak mungkin berbeda dari jumlah baris yang
+  // muncul saat kartu itu diklik.
+  const matchesStock = useCallback(
+    (p: Product, value: StockFilter) => {
+      const s = stockOf(p)
+      if (value === 'habis') return s === 0
+      if (value === 'menipis') return s > 0 && s < LOW_STOCK_THRESHOLD
+      return s >= LOW_STOCK_THRESHOLD // 'tersedia'
+    },
+    [stockOf],
+  )
+
+  // Hasil SEMUA filter KECUALI status stok.
+  //
+  // Dipisah karena kartu ringkasan menghitung di atas basis ini: angka "Stok Menipis" harus
+  // menggambarkan berapa hasil yang akan muncul bila kartunya diklik — yaitu dalam cakupan
+  // kategori/tanggal/pencarian yang sedang aktif, tapi TANPA ikut menyaring status stok
+  // (kalau ikut, mengklik satu kartu akan membuat angka kartu lain jadi 0).
+  const filteredExceptStock = useMemo(() => {
     const keyword = q.trim().toLowerCase()
     // Tanggal dibandingkan sebagai teks 'YYYY-MM-DD' (ISO), bukan objek Date — createdAt dari
     // Supabase sudah ISO sehingga perbandingan leksikografisnya setara perbandingan waktu.
@@ -362,13 +381,6 @@ function ProductsContent() {
       if (status === 'aktif' && p.archived) return false
       if (status === 'arsip' && !p.archived) return false
 
-      if (stok) {
-        const s = stockOf(p)
-        if (stok === 'habis' && s !== 0) return false
-        if (stok === 'menipis' && !(s > 0 && s < LOW_STOCK_THRESHOLD)) return false
-        if (stok === 'tersedia' && s < LOW_STOCK_THRESHOLD) return false
-      }
-
       if (fromDay || toDay) {
         // Baris tanpa createdAt (mis. kolom belum terisi di DB lama) disaring keluar saat filter
         // tanggal aktif — mengklaim tanggal apa pun untuknya akan menyesatkan.
@@ -380,7 +392,13 @@ function ProductsContent() {
 
       return true
     })
-  }, [products, q, kategori, status, stok, dari, sampai, stockOf])
+  }, [products, q, kategori, status, dari, sampai])
+
+  // Hasil akhir tabel = basis di atas + filter status stok. AND antar semua jenis filter.
+  const filtered = useMemo(
+    () => (stok ? filteredExceptStock.filter((p) => matchesStock(p, stok)) : filteredExceptStock),
+    [filteredExceptStock, stok, matchesStock],
+  )
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
   const currentPage = Math.min(page, totalPages)
@@ -466,13 +484,38 @@ function ProductsContent() {
     }
   }
 
-  // === Ringkasan stok ===
+  // === Ringkasan stok (sekaligus pintasan filter) ===
+  //
+  // Dihitung dari `filteredExceptStock`, BUKAN dari seluruh `products`: angka kartu harus sama
+  // dengan jumlah baris yang muncul saat kartu itu diklik, termasuk ketika filter kategori/
+  // tanggal/pencarian sedang aktif.
+  //
+  // Memakai `matchesStock` (yang membaca stok efektif lewat `stockOf`), BUKAN `p.stock` mentah.
+  // Sebelumnya kartu memakai `p.stock` sementara tabel memakai `stockOf` — untuk produk bervarian
+  // keduanya berbeda, sehingga angka kartu tak cocok dengan hasil filternya.
   const summary = useMemo(() => {
-    const total = products.length
-    const lowStock = products.filter((p) => p.stock > 0 && p.stock < LOW_STOCK_THRESHOLD).length
-    const outOfStock = products.filter((p) => p.stock === 0).length
-    return { total, lowStock, outOfStock }
-  }, [products])
+    let lowStock = 0
+    let outOfStock = 0
+    for (const p of filteredExceptStock) {
+      if (matchesStock(p, 'habis')) outOfStock++
+      else if (matchesStock(p, 'menipis')) lowStock++
+    }
+    return { total: filteredExceptStock.length, lowStock, outOfStock }
+  }, [filteredExceptStock, matchesStock])
+
+  // Klik kartu ringkasan = pintasan filter status stok.
+  //
+  // SATU sumber state dengan dropdown "Status Stok": keduanya menulis param `stok` lewat
+  // `updateFilters`, yang menyalin seluruh param lain lebih dulu — jadi kategori/tanggal/
+  // pencarian yang sedang aktif tak pernah ikut terhapus, dan tak ada state kedua yang perlu
+  // disinkronkan (mustahil desinkron).
+  //
+  // Toggle: mengklik kartu yang SEDANG aktif melepas filternya. Untuk kartu "Total Produk"
+  // (nilai '') kedua cabang sama-sama menghasilkan "tanpa filter", jadi mengkliknya berulang
+  // aman — ia memang mewakili keadaan tak-terfilter.
+  function toggleStockFilter(value: StockFilter | '') {
+    updateFilters({ stok: stok === value ? null : value || null })
+  }
 
   // === Aksi Edit ===
 
@@ -711,11 +754,41 @@ function ProductsContent() {
           </Link>
         </header>
 
-        {/* === Ringkasan Stok === */}
+        {/* === Ringkasan Stok (klik = pintasan filter status stok) ===
+            "Total Produk" aktif saat TIDAK ada filter stok. Memilih "Tersedia" dari dropdown
+            sengaja membuat ketiganya netral — memang tak ada kartu yang mewakili keadaan itu,
+            dan dropdown tetap menampilkannya dengan benar. */}
         <section className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <SummaryCard label="Total Produk" value={`${summary.total} Item`} valueClass="text-gray-900" accentClass="bg-emerald-50 text-emerald-700" icon={<BoxIcon />} />
-          <SummaryCard label="Stok Menipis" value={`${summary.lowStock} Produk`} valueClass="text-amber-500" accentClass="bg-amber-50 text-amber-500" icon={<AlertIcon />} />
-          <SummaryCard label="Stok Habis" value={`${summary.outOfStock} Produk`} valueClass="text-red-600" accentClass="bg-red-50 text-red-600" icon={<EmptyIcon />} />
+          <SummaryCard
+            label="Total Produk"
+            value={`${summary.total} Item`}
+            valueClass="text-gray-900"
+            accentClass="bg-emerald-50 text-emerald-700"
+            activeClass="border-emerald-500 bg-emerald-50/60 shadow-md"
+            icon={<BoxIcon />}
+            active={stok === ''}
+            onClick={() => toggleStockFilter('')}
+          />
+          <SummaryCard
+            label="Stok Menipis"
+            value={`${summary.lowStock} Produk`}
+            valueClass="text-amber-500"
+            accentClass="bg-amber-50 text-amber-500"
+            activeClass="border-amber-400 bg-amber-50/60 shadow-md"
+            icon={<AlertIcon />}
+            active={stok === 'menipis'}
+            onClick={() => toggleStockFilter('menipis')}
+          />
+          <SummaryCard
+            label="Stok Habis"
+            value={`${summary.outOfStock} Produk`}
+            valueClass="text-red-600"
+            accentClass="bg-red-50 text-red-600"
+            activeClass="border-red-500 bg-red-50/60 shadow-md"
+            icon={<EmptyIcon />}
+            active={stok === 'habis'}
+            onClick={() => toggleStockFilter('habis')}
+          />
         </section>
 
         {/* === Bilah Filter === */}
@@ -1535,27 +1608,50 @@ function EditField({ label, children }: { label: string; children: React.ReactNo
   )
 }
 
+// Kartu ringkasan stok — sekaligus PINTASAN filter (klik = terapkan/lepas filter status stok).
+//
+// Dirender sebagai <button>, bukan <div onClick>: supaya bisa difokus & ditekan lewat keyboard
+// dan pembaca layar mengumumkannya sebagai kontrol. `aria-pressed` menyampaikan status aktifnya.
+//
+// Border SELALU 2px (`border-2`), yang berubah hanya WARNANYA saat aktif. Kalau ketebalannya
+// yang diubah (1px → 2px), seluruh isi kartu bergeser 1px tiap kali filter di-toggle.
 function SummaryCard({
   label,
   value,
   valueClass,
   accentClass,
+  activeClass,
   icon,
+  active,
+  onClick,
 }: {
   label: string
   value: string
   valueClass: string
   accentClass: string
+  // Kelas border + latar saat kartu jadi filter aktif (warna mengikuti tema kartu).
+  activeClass: string
   icon: React.ReactNode
+  active: boolean
+  onClick: () => void
 }) {
   return (
-    <div className="flex items-center gap-4 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`flex w-full cursor-pointer items-center gap-4 rounded-xl border-2 p-5 text-left shadow-sm transition-all duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2 ${
+        active
+          ? activeClass
+          : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-md'
+      }`}
+    >
       <div className={`flex h-11 w-11 flex-none items-center justify-center rounded-lg ${accentClass}`}>{icon}</div>
-      <div>
+      <div className="min-w-0">
         <p className="text-sm text-gray-500">{label}</p>
         <p className={`text-xl font-bold ${valueClass}`}>{value}</p>
       </div>
-    </div>
+    </button>
   )
 }
 

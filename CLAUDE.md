@@ -1135,6 +1135,26 @@ berlaku untuk tempat lain**. `REVENUE_COLORS`: `#35577E` (lunas) · `#8FB4DE` (p
   - Tanggal pakai `<input type="date">` native + pintasan (hari ini/7/30 hari/bulan ini) — **tanpa
     library date-picker**.
   - Ambang "Stok Menipis" = `LOW_STOCK_THRESHOLD` (10), satu angka dengan kartu ringkasan di atas tabel.
+  - **Kartu ringkasan (Total Produk / Stok Menipis / Stok Habis) = PINTASAN filter status stok.**
+    Dirender sebagai `<button>` ber-`aria-pressed`, memanggil `toggleStockFilter()` yang menulis
+    param `stok` lewat `updateFilters` — **sumber state yang sama persis dengan dropdown "Status
+    Stok"**, jadi keduanya tak mungkin desinkron dan filter lain (kategori/tanggal/pencarian)
+    otomatis terjaga karena `updateFilters` menyalin seluruh param lain lebih dulu.
+    - Klik kartu yang sedang aktif = **toggle off** (kembali ke "Semua stok"). "Total Produk"
+      aktif saat `stok === ''`; mengkliknya berulang aman karena kedua cabang sama-sama
+      menghasilkan keadaan tak-terfilter.
+    - Memilih **"Tersedia"** dari dropdown sengaja membuat ketiga kartu netral — memang tak ada
+      kartu yang mewakili keadaan itu.
+    - Border **selalu `border-2`**, yang berubah hanya warnanya saat aktif. Kalau ketebalannya
+      yang diubah (1px→2px), isi kartu bergeser 1px tiap kali filter di-toggle.
+  - **Angka kartu dihitung dari `filteredExceptStock`** (semua filter KECUALI status stok), bukan
+    dari seluruh `products` — supaya angka di kartu selalu sama dengan jumlah baris yang muncul
+    saat kartu itu diklik, termasuk ketika filter kategori/tanggal sedang aktif. Kalau filter stok
+    ikut dihitung, mengklik satu kartu akan membuat angka kartu lain jadi 0.
+  - Perbandingan stok dipusatkan di `matchesStock()` yang membaca **stok efektif** (`stockOf`,
+    varian dijumlahkan). Sebelumnya kartu memakai `p.stock` mentah sementara tabel memakai
+    `stockOf` — untuk produk bervarian keduanya berbeda, jadi angka kartu tak cocok dengan hasil
+    filternya.
   - Chip per filter aktif (bisa dihapus satu-satu) + "Reset semua filter".
   - **Debounce pencarian ada di EVENT HANDLER, bukan `useEffect`** — menulis URL memicu setState
     (page & seleksi di-reset) dan lint `react-hooks/set-state-in-effect` melarangnya di dalam efek.
