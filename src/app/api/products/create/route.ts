@@ -16,6 +16,7 @@ import {
   validateOriginalPrice,
   validateStock,
   validateMinOrderQty,
+  validateBerat,
   validateDescription,
   validateImages,
   MAX_PRODUCT_IMAGES,
@@ -61,6 +62,11 @@ function validatePayload(body: unknown): { input: CreateProductInput } | { error
   const minQtyErr = validateMinOrderQty(minOrderQty)
   if (minQtyErr) return { error: minQtyErr }
 
+  // Berat (gram): WAJIB untuk produk baru — tak ada alasan produk baru lahir tanpa berat, dan
+  // membiarkannya kosong berarti buyer dikutip ongkir dari berat cadangan, bukan berat sebenarnya.
+  const beratErr = validateBerat(typeof b.berat === 'number' ? b.berat : '')
+  if (beratErr) return { error: beratErr }
+
   if (typeof b.description !== 'string') return { error: 'Deskripsi wajib diisi.' }
   const descErr = validateDescription(b.description)
   if (descErr) return { error: descErr }
@@ -82,6 +88,7 @@ function validatePayload(body: unknown): { input: CreateProductInput } | { error
       originalPrice,
       stock: b.stock as number,
       minOrderQty,
+      berat: b.berat as number,
       description: (b.description as string).trim(),
       imageUrl: typeof b.imageUrl === 'string' ? b.imageUrl : undefined,
       images: b.images as string[],

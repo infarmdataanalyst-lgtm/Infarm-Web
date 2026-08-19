@@ -79,6 +79,40 @@ handler internal** — search karena CORS, ongkir agar bisa di-rate-limit.
   ongkir ditambahkan ke total. Tombol "Bayar Sekarang" baru aktif setelah kurir dipilih.
 - **Roadmap (belum ada)**: booking kurir + tracking resi otomatis (via webhook pembayaran).
 
+### Berat Kirim — SATU PINTU di `src/lib/shipping-weight.ts`
+
+**Berat produk disimpan GRAM (integer) di `products.berat`, tapi Mengantar meminta KILOGRAM.**
+Konversi hanya boleh terjadi lewat `src/lib/shipping-weight.ts` — jangan pernah membagi 1000
+sendiri di komponen atau route. Salah satuan bukan galat kecil: mengirim gram apa adanya membuat
+ongkir **1000× lebih mahal** (terbukti: `weight=1` → JNE Rp30.000, `weight=1000` → Rp30.000.000).
+
+- **Rumus**: `totalBerat = SUM(berat_produk × quantity)` gram → `shippingWeightKg()` → kg, minimum
+  1 kg, dibulatkan 2 desimal (agar kunci cache `shippingOptionsKey` stabil, bukan `3.3299999…`).
+- **Produk hadiah promo IKUT ditimbang** — barangnya tetap dikirim fisik. Mengabaikannya membuat
+  ongkir yang dikutip lebih murah dari tarif kurir sebenarnya.
+- **`berat` NULL/tak valid → `DEFAULT_WEIGHT_GRAM` (1000 g/pcs)**, yaitu perilaku persis sebelum
+  fitur ini ada. Angka ini **bukan** penanda "belum diisi" — untuk itu pakai `isWeightUnset()`,
+  jangan membandingkan `berat === 1000` (produk yang beratnya memang 1 kg akan salah dibadge).
+- **JANGAN membulatkan kg sendiri.** Mengantar sudah menerapkan aturan kurir Indonesia
+  ">0,3 kg dibulatkan ke atas" di sisi server: kg ditagih = `ceil(kg − 0,3)`, minimum 1
+  (terverifikasi: 1,3 → 1 kg; 1,31 → 2 kg; 2,3 → 2 kg; 2,31 → 3 kg). Membulatkan ganda hanya
+  membebani buyer satu kilogram ekstra yang tak pernah ditagih kurir.
+- **Reaktivitas**: `shippingWeight` di `/checkout` adalah `useMemo` atas item cookie
+  (`useSyncExternalStore`) → berubah otomatis saat isi keranjang/quantity berubah, dan
+  `ShippingOptions` memakainya sebagai dependency efek fetch → ongkir ikut di-refresh sendiri.
+  **Jangan tambah pemicu manual.**
+- **Server TIDAK memercayai berat dari client.** `POST /api/orders/create` menghitung ulang
+  (`serverWeight`) dari `products.berat` di DB. Kalau berat dipercaya dari payload, pembeli bisa
+  mengirim berat kecil untuk ongkir murah sementara kurir menagih tarif berat sebenarnya —
+  selisihnya ditanggung toko. Field `weight` di payload masih diterima demi klien lama tapi
+  **diabaikan**.
+- **Saat booking kurir dikerjakan nanti**: hitung berat dari `order_items` di DB memakai modul yang
+  sama, JANGAN dari nilai apa pun yang dikirim client saat checkout.
+- **Catatan pra-ada**: kunci cache ongkir di client memakai `shippingItems` **tanpa** item hadiah
+  promo, sedangkan server memakai `requirements` **dengan** item hadiah. Bila ada promo hadiah aktif,
+  lookup cache fallback pemilihan gudang tak akan cocok dan turun ke `resolveWarehouseForOrder`
+  (aman, tapi kurang optimal). Bukan akibat fitur berat — sudah begitu sebelumnya.
+
 ## Validasi Form Checkout (client-side)
 
 Section Alamat Pengiriman divalidasi di client sebelum request order dikirim. Logika terpusat di

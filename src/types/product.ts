@@ -39,6 +39,11 @@ export type StoredProduct = Product & {
   archived?: boolean // true = tetap tersimpan di OMS tapi disembunyikan dari ecommerce
   createdAt: string // ISO date, untuk urutan terbaru
   minOrderQty: number // minimum pembelian per baris keranjang (pcs). 1 = tanpa batasan
+  // Berat satuan dalam GRAM (integer, konvensi sama dengan harga). undefined = admin BELUM
+  // mengisi → pemakai wajib memakai DEFAULT_WEIGHT_GRAM sebagai cadangan (lihat lib/shipping-weight.ts).
+  // Sengaja opsional, BUKAN diisi angka default di sini: hanya dengan begitu OMS bisa membedakan
+  // "belum diisi" dari "beratnya memang sebesar itu".
+  berat?: number
 }
 
 // Payload dari form upload produk OMS (sebelum disimpan).
@@ -54,6 +59,7 @@ export type CreateProductInput = {
   imageUrl?: string // foto utama; bila kosong diambil dari images[0]
   images?: string[] // galeri foto (maks 9), data URL base64 atau URL
   minOrderQty?: number // minimum pembelian (pcs); kosong = 1 (tanpa batasan)
+  berat?: number // berat satuan (GRAM); wajib diisi form OMS, kosong hanya untuk data lama
 }
 
 // Apakah produk sedang diskon (harga asli > harga jual) → dasar tampil harga coret.

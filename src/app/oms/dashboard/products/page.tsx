@@ -26,6 +26,7 @@ import {
   validatePrice,
   validateOriginalPrice,
   validateMinOrderQty,
+  validateBerat,
   validateDescription,
   validateImages,
   validateImageFile,
@@ -37,6 +38,7 @@ import {
   NAME_MAX,
   DESC_MAX,
 } from '@/lib/product-validation'
+import { WEIGHT_GRAM_MIN, formatWeight, isWeightUnset } from '@/lib/shipping-weight'
 import type { ProductCategory, StoredProduct } from '@/types/product'
 
 // === Tipe Data ===
@@ -51,6 +53,7 @@ type Product = {
   originalPrice?: number // harga asli (dicoret bila > price)
   stock: number
   minOrderQty: number // minimum pembelian per baris keranjang (1 = bebas)
+  berat?: number // berat satuan (GRAM); undefined = belum diisi admin → badge peringatan
   description?: string // deskripsi produk (tampil di halaman detail ecommerce)
   image: string // foto utama (thumbnail tabel) = images[0]
   images?: string[] // galeri foto (maks 9)
@@ -67,6 +70,7 @@ type EditForm = {
   originalPrice: number | '' // harga asli (opsional)
   stock: number | ''
   minOrderQty: number | '' // minimum pembelian (pcs)
+  berat: number | '' // berat satuan (gram) — dasar perhitungan ongkir
   description: string // deskripsi produk
   images: string[] // galeri foto (maks 9); images[0] = foto utama
 }
@@ -133,6 +137,7 @@ function mapStored(p: StoredProduct): Product {
     originalPrice: p.originalPrice,
     stock: p.stock,
     minOrderQty: p.minOrderQty ?? 1,
+    berat: p.berat,
     description: p.description,
     image: p.imageUrl,
     images: p.images,
@@ -384,6 +389,14 @@ function ProductsContent() {
     [stockOf, lowStockThreshold],
   )
 
+  // Jumlah produk (aktif, bukan yang diarsipkan) yang beratnya belum diisi → dasar banner
+  // pengingat. Produk diarsipkan dikecualikan: ia tak bisa dibeli, jadi beratnya tak memengaruhi
+  // ongkir siapa pun dan hanya akan membuat angka pengingat terlihat lebih besar dari kenyataan.
+  const missingWeightCount = useMemo(
+    () => products.filter((p) => !p.archived && isWeightUnset(p.berat)).length,
+    [products],
+  )
+
   // Hasil SEMUA filter KECUALI status stok.
   //
   // Dipisah karena kartu ringkasan menghitung di atas basis ini: angka "Stok Menipis" harus
@@ -562,6 +575,9 @@ function ProductsContent() {
         product.originalPrice && product.originalPrice > product.price ? product.originalPrice : '',
       stock: product.stock,
       minOrderQty: product.minOrderQty ?? 1,
+      // Berat kosong → input kosong (bukan diisi 1000): admin harus SADAR mengisinya, bukan
+      // menyetujui angka cadangan tanpa melihatnya.
+      berat: product.berat ?? '',
       description: product.description ?? '',
       images: gallery,
     })
@@ -585,6 +601,7 @@ function ProductsContent() {
       price: validatePrice(form.price),
       originalPrice: validateOriginalPrice(form.originalPrice, form.price),
       minOrderQty: validateMinOrderQty(form.minOrderQty),
+      berat: validateBerat(form.berat),
       description: validateDescription(form.description),
       images: validateImages(form.images.length),
     }
@@ -600,6 +617,7 @@ function ProductsContent() {
     !editErrors.price &&
     !editErrors.originalPrice &&
     !editErrors.minOrderQty &&
+    !editErrors.berat &&
     !editErrors.description &&
     !editErrors.images
 
@@ -693,6 +711,7 @@ function ProductsContent() {
           // (satu-satunya jalur = POST /api/warehouses/stock/set dari halaman Kelola Stok).
           // Tanpa field itu, /api/products/update membiarkan stok apa adanya.
           minOrderQty: Number(form.minOrderQty) || 1,
+          berat: Number(form.berat),
           description: form.description.trim(),
           imageUrl: form.images[0],
           images: form.images,
@@ -1087,6 +1106,26 @@ function ProductsContent() {
           </div>
         )}
 
+        {/* === Pengingat berat belum diisi ===
+             Dihitung dari SELURUH produk (bukan hasil filter/halaman): admin perlu tahu total
+             pekerjaan yang tersisa, bukan hanya yang kebetulan tampil di halaman ini. */}
+        {missingWeightCount > 0 && (
+          <div className="mt-4 flex items-start gap-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3">
+            <ScaleIcon />
+            <div className="text-xs leading-relaxed text-orange-800">
+              <p className="font-semibold">
+                {missingWeightCount} produk belum mengisi berat
+              </p>
+              <p className="mt-0.5">
+                Ongkir produk tersebut sementara dihitung memakai berat cadangan{' '}
+                <strong>1 kg per pcs</strong>, jadi tarif yang dilihat pembeli bisa jauh dari tarif
+                kurir sebenarnya. Buka <strong>Edit</strong> pada baris ber-badge{' '}
+                <span className="font-semibold">Belum diisi</span> dan isi berat aslinya.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* === Tabel Produk === */}
         <section className="mt-4 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
           {/* Info jumlah hasil filter */}
@@ -1216,6 +1255,10 @@ function ProductsContent() {
                         <span className="block truncate">{formatRupiah(product.price)}</span>
                       )}
                     </td>
+                    {/* Berat TIDAK dikolomkan di sini: angka per baris tak membantu pekerjaan harian
+                        admin (berat hanya relevan saat mengedit produk & saat ongkir dihitung).
+                        Pengingat produk yang beratnya belum diisi tetap ada sebagai banner di atas
+                        tabel — lihat missingWeightCount. */}
                     <td className="px-3 py-4">
                       {/* Arsip cepat untuk produk stok habis kini jadi ikon saja agar kolom tetap
                           sempit; labelnya lewat title. */}
@@ -1519,6 +1562,17 @@ function ProductsContent() {
                   ? <p className="mt-1 text-xs font-medium text-red-600">{editErrors.minOrderQty}</p>
                   : <p className="mt-1 text-xs text-gray-400">1 = pembeli boleh beli satuan.</p>}
               </EditField>
+              {/* Berat — dasar perhitungan ongkir. Produk lama masih kosong sampai admin mengisinya. */}
+              <EditField label="Berat (gram)">
+                <input type="text" inputMode="numeric" value={form.berat} onChange={(e) => { const d = e.target.value.replace(/\D/g, ''); setForm({ ...form, berat: d === '' ? '' : Number(d) }) }} placeholder="Contoh: 500" className={modalInput(!!editErrors.berat)} aria-invalid={!!editErrors.berat} />
+                {editErrors.berat
+                  ? <p className="mt-1 text-xs font-medium text-red-600">{editErrors.berat}</p>
+                  : <p className="mt-1 text-xs text-gray-400">
+                      {typeof form.berat === 'number' && form.berat >= WEIGHT_GRAM_MIN
+                        ? `Ongkir dihitung dari ${formatWeight(form.berat)} per pcs.`
+                        : 'Berat 1 pcs. Dipakai menghitung ongkir.'}
+                    </p>}
+              </EditField>
             </div>
 
             {/* Peringatan harga kecil — non-blocking, sama dengan form tambah produk */}
@@ -1726,6 +1780,19 @@ function LockIcon() {
     <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <rect x="3" y="11" width="18" height="11" rx="2" />
       <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+  )
+}
+
+// Ikon timbangan — penanda banner pengingat berat produk.
+function ScaleIcon() {
+  return (
+    <svg className="mt-0.5 h-4 w-4 flex-none text-orange-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 3v18" />
+      <path d="M7 21h10" />
+      <path d="M5 7h14" />
+      <path d="M5 7 2 13h6L5 7Z" />
+      <path d="m19 7-3 6h6l-3-6Z" />
     </svg>
   )
 }

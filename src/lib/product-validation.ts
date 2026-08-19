@@ -4,6 +4,7 @@
 // TIDAK di file ini karena butuh akses server.
 
 import type { ProductCategory } from '@/types/product'
+import { WEIGHT_GRAM_MAX, WEIGHT_GRAM_MIN } from '@/lib/shipping-weight'
 
 // === Batasan ===
 export const SKU_REGEX = /^[A-Z0-9-]+$/
@@ -122,6 +123,18 @@ export function validateMinOrderQty(qty: number | ''): string | undefined {
   return undefined
 }
 
+// Berat satuan (GRAM): wajib, bilangan bulat positif dalam rentang CHECK products_berat_check.
+// Wajib karena berat adalah dasar ongkir — produk tanpa berat membuat buyer dikutip tarif cadangan
+// yang bisa jauh dari tarif riil, dan selisihnya ditanggung toko.
+export function validateBerat(berat: number | ''): string | undefined {
+  if (berat === '' || Number.isNaN(Number(berat))) return 'Berat wajib diisi'
+  const n = Number(berat)
+  if (!Number.isInteger(n)) return 'Berat harus bilangan bulat (gram)'
+  if (n < WEIGHT_GRAM_MIN) return 'Berat minimal 1 gram'
+  if (n > WEIGHT_GRAM_MAX) return 'Berat maksimal 1.000.000 gram (1 ton)'
+  return undefined
+}
+
 // Saran jumlah minimum agar satu baris produk mencapai ±SUGGESTED_LINE_TOTAL.
 // HANYA saran (ditampilkan sebagai hint) — keputusan akhir tetap di admin.
 // Mengembalikan null bila harga tak valid atau produk sudah cukup mahal.
@@ -146,6 +159,7 @@ export type ProductFieldKey =
   | 'originalPrice'
   | 'stock'
   | 'minOrderQty'
+  | 'berat'
   | 'description'
   | 'images'
 
@@ -159,6 +173,7 @@ export type ProductFormValues = {
   originalPrice?: number | ''
   stock: number | ''
   minOrderQty: number | ''
+  berat: number | ''
   description: string
   imageCount: number
 }
@@ -172,6 +187,7 @@ export const PRODUCT_FIELD_ORDER: ProductFieldKey[] = [
   'originalPrice',
   'stock',
   'minOrderQty',
+  'berat',
   'description',
   'images',
 ]
@@ -193,6 +209,8 @@ export function validateProductForm(values: ProductFormValues): ProductFieldErro
   if (stock) errors.stock = stock
   const minOrderQty = validateMinOrderQty(values.minOrderQty)
   if (minOrderQty) errors.minOrderQty = minOrderQty
+  const berat = validateBerat(values.berat)
+  if (berat) errors.berat = berat
   const description = validateDescription(values.description)
   if (description) errors.description = description
   const images = validateImages(values.imageCount)

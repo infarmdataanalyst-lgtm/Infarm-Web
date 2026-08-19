@@ -9,7 +9,7 @@ import { parseStockPerWarehouse, writeStockPerWarehouse } from '@/lib/warehouse'
 import { readStockRows } from '@/lib/mock-db/warehouses'
 import { recordAdminStockChanges } from '@/lib/stock-audit'
 import { PRODUCT_CATEGORIES } from '@/lib/data/categories'
-import { validateMinOrderQty } from '@/lib/product-validation'
+import { validateBerat, validateMinOrderQty } from '@/lib/product-validation'
 import type { StoredProduct } from '@/types/product'
 
 export const runtime = 'nodejs'
@@ -55,6 +55,13 @@ export async function PATCH(request: Request) {
     const minQtyErr = validateMinOrderQty(body.minOrderQty)
     if (minQtyErr) return NextResponse.json({ error: minQtyErr }, { status: 422 })
     patch.minOrderQty = body.minOrderQty
+  }
+  // Berat (gram): divalidasi ulang di server. Hanya diproses bila dikirim — PATCH bersifat parsial,
+  // dan aksi lain (mis. arsipkan produk) tak boleh dipaksa mengirim berat.
+  if (body.berat !== undefined) {
+    const beratErr = validateBerat(typeof body.berat === 'number' ? body.berat : '')
+    if (beratErr) return NextResponse.json({ error: beratErr }, { status: 422 })
+    patch.berat = body.berat as number
   }
   if (typeof body.description === 'string') patch.description = body.description
   if (typeof body.archived === 'boolean') patch.archived = body.archived

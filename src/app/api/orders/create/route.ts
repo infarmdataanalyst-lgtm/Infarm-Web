@@ -16,6 +16,7 @@ import { getMinOrderAmount } from '@/lib/mock-db/settings'
 import { getEffectiveStock, resolveWarehouseForOrder, type StockRequirement } from '@/lib/warehouse'
 import { getWarehouseById } from '@/lib/mock-db/warehouses'
 import { getCachedShippingOptions, shippingOptionsKey } from '@/lib/warehouse-shipping'
+import { shippingWeightKg } from '@/lib/shipping-weight'
 import type { Warehouse } from '@/types/warehouse'
 import { formatRupiah } from '@/lib/format'
 import { isPromotionExpired } from '@/types/promotion'
@@ -115,8 +116,10 @@ export async function POST(request: Request) {
   // === K-3: harga OTORITATIF dari server (jangan percaya harga/total dari client) ===
   // Ambil ulang harga tiap produk dari DB (promo_price), hitung subtotal & total di server.
   // Harga & totalAmount yang dikirim client diabaikan → cegah manipulasi (mis. bayar Rp1).
-  // warehouseId & weight datang dari hasil perbandingan ongkir di checkout — keduanya
-  // diverifikasi ulang di server (lihat pickVerifiedWarehouse), tidak dipercaya mentah.
+  // warehouseId datang dari hasil perbandingan ongkir di checkout dan diverifikasi ulang di
+  // server (lihat pickVerifiedWarehouse), tidak dipercaya mentah.
+  // Field `weight` masih diterima demi kompatibilitas klien lama, tapi SENGAJA DIABAIKAN — berat
+  // kirim dihitung ulang dari berat produk di DB (lihat serverWeight di bawah).
   const extra = body as CreateOrderInput & {
     shippingCost?: unknown
     discount?: unknown
@@ -261,6 +264,19 @@ export async function POST(request: Request) {
     quantity: it.quantity,
   }))
 
+  // === Berat kirim: DIHITUNG ULANG DI SERVER ===
+  // Berat satuan diambil dari produk di DB (byId berasal dari readProducts(), bukan cache), bukan
+  // dari nilai `weight` yang dikirim client. Kalau client dipercaya, pembeli bisa mengirim berat
+  // kecil untuk mendapat ongkir murah sementara kurir menagih tarif berat sebenarnya — selisihnya
+  // ditanggung toko. Item hadiah promo ikut ditimbang karena barangnya tetap dikirim fisik.
+  //
+  // Konsekuensi yang disengaja: bila client sebelumnya memakai berat lain, kunci cache perbandingan
+  // ongkir tak akan cocok sehingga jalur fallback di bawah tidak menemukan apa pun dan turun ke
+  // resolveWarehouseForOrder. Gagal ke jalur yang aman, bukan menerima berat palsu.
+  const serverWeight = shippingWeightKg(
+    pricedItems.map((it) => ({ quantity: it.quantity, berat: byId.get(it.productId)?.berat })),
+  )
+
   const requestedWarehouseId =
     typeof extra.warehouseId === 'string' && extra.warehouseId ? extra.warehouseId : undefined
 
@@ -269,9 +285,8 @@ export async function POST(request: Request) {
   if (!warehouse) {
     // Gudang pilihan buyer tak lolos verifikasi → coba opsi termurah berikutnya dari cache
     // perbandingan ongkir (kunci: tujuan + berat + isi keranjang).
-    const weight = typeof extra.weight === 'number' && extra.weight > 0 ? extra.weight : 1
     const cached = getCachedShippingOptions(
-      shippingOptionsKey(body.address.destinationId, weight, requirements),
+      shippingOptionsKey(body.address.destinationId, serverWeight, requirements),
     )
     if (cached) {
       // Urutan cache sudah termurah → termahal; ambil gudang pertama yang lolos verifikasi.

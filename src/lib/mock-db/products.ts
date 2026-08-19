@@ -16,6 +16,7 @@ import {
   returnStockToWarehouse,
   writeEffectiveStock,
 } from '@/lib/warehouse'
+import { WEIGHT_GRAM_MAX, WEIGHT_GRAM_MIN } from '@/lib/shipping-weight'
 import type {
   StoredProduct,
   CreateProductInput,
@@ -86,6 +87,7 @@ type ProductRow = {
   archived: boolean
   created_at: string
   min_order_qty: number | null // null bila kolom belum di-migrate (produk lama)
+  berat: number | null // berat satuan (GRAM); null = belum diisi admin ATAU kolom belum di-migrate
 }
 
 // Mengubah baris DB (snake_case) menjadi StoredProduct (camelCase) yang dipakai aplikasi.
@@ -114,7 +116,21 @@ function rowToStored(row: ProductRow): StoredProduct {
     createdAt: row.created_at,
     // Fallback 1 = tanpa batasan, aman bila kolom belum di-migrate atau berisi nilai tak valid
     minOrderQty: row.min_order_qty && row.min_order_qty >= 1 ? row.min_order_qty : 1,
+    // Berat DIBIARKAN undefined bila null/tak valid — JANGAN diisi angka cadangan di sini.
+    // Cadangan hanya berlaku saat menghitung ongkir (lib/shipping-weight.ts); OMS butuh tahu
+    // bedanya "belum diisi" (badge peringatan) dan "sudah diisi".
+    ...(typeof row.berat === 'number' && row.berat >= 1 ? { berat: row.berat } : {}),
   }
+}
+
+// Berat (gram) siap-tulis: bilangan bulat dalam rentang CHECK products_berat_check, atau null
+// bila tak dikirim/tak valid. Mengembalikan null (bukan melempar) supaya produk tetap tersimpan
+// dengan status "berat belum diisi" — form OMS yang menegakkan kewajiban isinya.
+function clampBeratGram(berat: number | undefined): number | null {
+  if (typeof berat !== 'number' || !Number.isFinite(berat)) return null
+  const g = Math.floor(berat)
+  if (g < WEIGHT_GRAM_MIN) return null
+  return Math.min(g, WEIGHT_GRAM_MAX)
 }
 
 // Membersihkan & membatasi galeri foto: buang non-string/kosong, maksimal 9.
@@ -214,17 +230,21 @@ export async function saveProduct(input: CreateProductInput): Promise<StoredProd
     description: input.description ?? null,
     // Minimum pembelian; clamp ≥ 1 agar tak pernah melanggar CHECK di DB
     min_order_qty: Math.max(1, Math.floor(input.minOrderQty ?? 1)),
+    // Berat (gram): clamp ke rentang CHECK products_berat_check. null bila tak dikirim —
+    // produk tersimpan sebagai "berat belum diisi", bukan gagal insert.
+    berat: clampBeratGram(input.berat),
   }
 
   let { data, error } = await supabase.from('products').insert(row).select('*').single()
 
-  // Jaring pengaman: bila kolom images / min_order_qty belum di-migrate, simpan ulang tanpa
-  // kolom tersebut agar upload tetap jalan (foto utama tetap tersimpan di image_url).
+  // Jaring pengaman: bila kolom images / min_order_qty / berat belum di-migrate, simpan ulang
+  // tanpa kolom tersebut agar upload tetap jalan (foto utama tetap tersimpan di image_url).
   // PGRST204 = kolom tak dikenal PostgREST; 42703 = kolom tak ada di Postgres.
   if (error?.code === 'PGRST204' || error?.code === '42703') {
     const rowFallback = { ...row }
     delete rowFallback.images
     delete rowFallback.min_order_qty
+    delete rowFallback.berat
     ;({ data, error } = await supabase.from('products').insert(rowFallback).select('*').single())
   }
 
@@ -265,6 +285,9 @@ export async function updateProduct(
   if (patch.minOrderQty !== undefined) {
     dbPatch.min_order_qty = Math.max(1, Math.floor(patch.minOrderQty))
   }
+  // Berat (gram). Nilai tak valid → null = kembali ke status "belum diisi", bukan menyimpan
+  // angka yang melanggar CHECK dan menggagalkan seluruh update.
+  if (patch.berat !== undefined) dbPatch.berat = clampBeratGram(patch.berat)
   // Galeri: upload data-URL → URL Storage, simpan array + sinkronkan foto utama ke foto pertama
   if (patch.images !== undefined) {
     const gallery = await uploadGallery(sanitizeGallery(patch.images))
@@ -293,11 +316,12 @@ export async function updateProduct(
     .select('*')
     .maybeSingle()
 
-  // Fallback bila kolom images / min_order_qty belum di-migrate: ulangi update tanpa kolom itu
+  // Fallback bila kolom images / min_order_qty / berat belum di-migrate: ulangi tanpa kolom itu
   if (error?.code === 'PGRST204' || error?.code === '42703') {
     const patchFallback = { ...dbPatch }
     delete patchFallback.images
     delete patchFallback.min_order_qty
+    delete patchFallback.berat
     ;({ data, error } = await supabase
       .from('products')
       .update(patchFallback)

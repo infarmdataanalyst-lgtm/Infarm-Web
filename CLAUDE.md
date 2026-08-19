@@ -251,11 +251,12 @@ src/
 │   ├── guest-phone.ts            # Cookie client no_telepon (infarm_phone) untuk auto-recognize lacak/batalkan
 │   ├── recently-viewed.ts        # Riwayat "pernah dilihat" (guest, localStorage, maks 10)
 │   ├── promo-cart.ts             # Helper murni: progres/hadiah promo + relevansi & alokasi harga combo (keranjang)
-│   ├── product-validation.ts     # Validasi form produk (SKU, nama, kategori, harga jual/asli, stok, deskripsi, foto)
+│   ├── product-validation.ts     # Validasi form produk (SKU, nama, kategori, harga jual/asli, stok, berat, deskripsi, foto)
 │   ├── warehouse.ts              # SATU pintu pergudangan: mode (DB), resolve gudang (fallback),
 │   │                             #   stok efektif, origin id (server-only; TANPA jarak/Haversine)
 │   ├── warehouse-shipping.ts     # Perbandingan ongkir riil antar gudang (paralel + cache 10 mnt)
 │   ├── mengantar-estimate.ts     # Pemetaan respons estimasi Mengantar (dipakai client & server)
+│   ├── shipping-weight.ts        # SATU pintu berat kirim: gram (DB) -> kilogram (Mengantar), murni
 │   ├── stock-audit.ts            # SATU pintu pencatatan riwayat stok → stock_mutations (server-only)
 │   ├── warehouse-validation.ts   # Validasi form gudang (nama, origin id 24 hex, lat/long berpasangan)
 │   ├── dashboard-period.ts       # Periode & granularity Dashboard OMS (murni, zona WIB)
@@ -498,6 +499,11 @@ header `Retry-After`. Map disapu berkala tiap 500 penulisan agar tak bocor memor
 ---
 
 ## Alur Pesanan, Promo & Ongkir → `docs/checkout-flow.md`
+
+**Berat produk disimpan GRAM di `products.berat`, tapi Mengantar meminta KILOGRAM** — konversi HANYA
+lewat `src/lib/shipping-weight.ts` (salah satuan = ongkir 1000× lebih mahal). Jangan membulatkan kg
+sendiri (Mengantar sudah menerapkan aturan `ceil(kg − 0,3)`), dan jangan memakai nilai `weight` dari
+client sebagai dasar tagihan — server menghitung ulang dari berat di DB.
 
 **Halaman `/checkout` membaca cookie `infarm_checkout`, BUKAN `infarm_cart`** — setiap aksi menuju
 checkout (tombol Checkout di keranjang maupun "Beli Langsung") WAJIB memanggil `setCheckoutItems(...)`

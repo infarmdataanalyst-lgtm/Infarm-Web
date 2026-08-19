@@ -324,7 +324,36 @@ deskripsi 20–2000, harga 100–99.999.999, stok 0–999.999, `MAX_PRODUCT_IMAG
 - **SKU**: format wajib huruf besar/angka/strip + **cek duplikat** server (`/api/products/check-sku`,
   dukung `excludeId` saat edit).
 - Foto: min 1, maks 9, tiap file ≤ 2MB & tipe diterima (`validateImageFile`).
+- **Berat (gram)** — `validateBerat`, **wajib**, bilangan bulat 1…1.000.000 (cermin CHECK
+  `products_berat_check`). Field ada di form upload **dan** modal edit; input hanya menerima digit.
+  Ini **dasar perhitungan ongkir**, bukan info katalog — lihat
+  [docs/checkout-flow.md](checkout-flow.md) → "Berat Kirim".
 - Error tampil per-field + auto-scroll ke field invalid pertama (`PRODUCT_FIELD_ORDER`).
+
+## Berat Produk (kolom `products.berat`, GRAM)
+
+Migration `20260819120000_add_products_berat.sql`. **NULL-able tanpa DEFAULT — disengaja.**
+
+- **NULL = admin belum mengisi** (tak ambigu) → di atas tabel Produk muncul banner
+  *"N produk belum mengisi berat"* (dihitung dari seluruh produk **aktif**, bukan hasil
+  filter/halaman — admin perlu tahu total pekerjaan tersisa; produk diarsipkan dikecualikan karena
+  tak bisa dibeli).
+- **Berat SENGAJA tidak dikolomkan di tabel Produk.** Pernah ada kolom "Berat" + badge per baris,
+  lalu dihapus: angka per baris tak membantu pekerjaan harian admin (berat hanya relevan saat
+  mengedit produk dan saat ongkir dihitung) sementara ia memakan lebar tabel yang sudah padat.
+  Pengingatnya cukup satu banner. Jangan menambahkan kolomnya kembali tanpa konfirmasi.
+- Kalau kolomnya dibuat `NOT NULL DEFAULT <angka>`, produk yang beratnya **memang** sebesar angka itu
+  akan dibadge "belum diisi" selamanya. Karena itu jangan menambahkan DEFAULT.
+- `rowToStored` memetakan NULL → `berat` **undefined**, JANGAN diisi angka cadangan di lapisan data.
+  Cadangan hanya berlaku saat menghitung ongkir (`lib/shipping-weight.ts`); OMS wajib bisa
+  membedakan "belum diisi" dari "sudah diisi". Cek pakai `isWeightUnset()`.
+- Modal edit menampilkan input **kosong** untuk produk lama, bukan prefill 1000 — admin harus sadar
+  mengisi berat sebenarnya, bukan menyetujui angka cadangan tanpa melihatnya.
+- Fallback `PGRST204`/`42703` di `saveProduct`/`updateProduct` juga membuang kolom `berat`, jadi OMS
+  tetap bisa menyimpan produk sebelum migration di-apply (berat-nya saja yang tak tersimpan).
+- **Varian belum punya berat sendiri** — `product_variants` tak punya kolom berat, jadi semua varian
+  memakai berat produk induk. Perlu keputusan bila ada varian yang berat fisiknya jauh berbeda
+  (mis. "50 Biji" vs "500 Biji").
 
 
 ---

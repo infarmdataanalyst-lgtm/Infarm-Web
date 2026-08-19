@@ -17,6 +17,7 @@ import WarehouseStockFields, {
 } from '@/components/oms/WarehouseStockFields'
 import { PRODUCT_CATEGORIES } from '@/lib/data/categories'
 import { formatRupiah } from '@/lib/format'
+import { WEIGHT_GRAM_MIN, formatWeight } from '@/lib/shipping-weight'
 import type { ProductCategory } from '@/types/product'
 import {
   validateProductForm,
@@ -56,6 +57,9 @@ export default function UploadProductPage() {
   const [stockByWarehouse, setStockByWarehouse] = useState<StockByWarehouse>({})
   const [warehouseMode, setWarehouseMode] = useState<'single' | 'multi'>('single')
   const [minOrderQty, setMinOrderQty] = useState<number | ''>(1) // 1 = tanpa batasan
+  // Berat satuan dalam GRAM. Kosong di awal (bukan angka contoh) supaya admin tak diam-diam
+  // menyimpan berat asal yang langsung dipakai menghitung ongkir.
+  const [berat, setBerat] = useState<number | ''>('')
   const [description, setDescription] = useState('')
 
   // === State gambar produk ===
@@ -88,10 +92,11 @@ export default function UploadProductPage() {
         originalPrice,
         stock: effectiveStock,
         minOrderQty,
+        berat,
         description,
         imageCount: images.length,
       }),
-    [sku, name, category, price, originalPrice, effectiveStock, minOrderQty, description, images.length],
+    [sku, name, category, price, originalPrice, effectiveStock, minOrderQty, berat, description, images.length],
   )
 
   // Saran minimum pembelian (hanya untuk produk berharga kecil). null → tak ada saran.
@@ -200,6 +205,12 @@ export default function UploadProductPage() {
   // Catatan: penyaringan angka untuk input stok kini ditangani WarehouseStockFields
   // (satu tempat untuk mode single maupun per gudang).
 
+  // Berat hanya menerima digit (gram, bilangan bulat) — sama seperti harga & stok.
+  function handleBeratChange(raw: string) {
+    const digits = raw.replace(/\D/g, '')
+    setBerat(digits === '' ? '' : Number(digits))
+  }
+
   function handleMinOrderQtyChange(raw: string) {
     const digits = raw.replace(/\D/g, '')
     setMinOrderQty(digits === '' ? '' : Number(digits))
@@ -217,6 +228,7 @@ export default function UploadProductPage() {
       originalPrice: true,
       stock: true,
       minOrderQty: true,
+      berat: true,
       description: true,
       images: true,
     })
@@ -230,6 +242,7 @@ export default function UploadProductPage() {
       originalPrice,
       stock: effectiveStock,
       minOrderQty,
+      berat,
       description,
       imageCount: images.length,
     })
@@ -264,6 +277,7 @@ export default function UploadProductPage() {
                 }))
               : undefined,
           minOrderQty: Number(minOrderQty) || 1,
+          berat: Number(berat),
           description: description.trim(),
           imageUrl: images[0]?.src,
           images: images.map((img) => img.src),
@@ -482,6 +496,29 @@ export default function UploadProductPage() {
                       : 'Isi 1 bila pembeli boleh membeli satuan.'}
                   </p>
                   <FieldError message={shownError('minOrderQty')} />
+                </div>
+
+                {/* Berat satuan — DASAR PERHITUNGAN ONGKIR, bukan sekadar info katalog.
+                    Disimpan gram, dikonversi ke kilogram saat cek ongkir (lib/shipping-weight.ts). */}
+                <div id="pf-berat">
+                  <Field label="Berat (gram)">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={berat}
+                      onChange={(e) => handleBeratChange(e.target.value)}
+                      onBlur={() => markTouched('berat')}
+                      placeholder="Contoh: 500"
+                      className={inputClass(!!shownError('berat'))}
+                      aria-invalid={!!shownError('berat')}
+                    />
+                  </Field>
+                  <p className="mt-1 text-xs text-gray-400">
+                    {typeof berat === 'number' && berat >= WEIGHT_GRAM_MIN
+                      ? `Dipakai menghitung ongkir: ${formatWeight(berat)} per pcs.`
+                      : 'Berat 1 pcs dalam gram. Dipakai menghitung ongkir — isi seakurat mungkin.'}
+                  </p>
+                  <FieldError message={shownError('berat')} />
                 </div>
               </div>
 

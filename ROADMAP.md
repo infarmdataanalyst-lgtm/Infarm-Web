@@ -63,13 +63,17 @@ Turunan yang menunggu Xendit:
 
 ## Booking & Tracking Kurir (Mengantar)
 
-Search alamat + cek ongkir **sudah jalan**. Yang belum:
+Search alamat + cek ongkir **sudah jalan**, dan ongkir kini memakai **berat riil produk**
+(`products.berat` gram -> kg lewat `src/lib/shipping-weight.ts`). Yang belum:
 
 | Pekerjaan | Detail |
 |---|---|
 | Booking kurir otomatis (via webhook pembayaran) | [docs/checkout-flow.md](docs/checkout-flow.md) → Mengantar (Logistik) |
 | Tracking resi otomatis + pengisian `no_tracking` | [docs/checkout-flow.md](docs/checkout-flow.md) → Alur Post-Payment |
 | `MENGANTAR_API_KEY` belum dipakai (cek ongkir tak butuh key) | `CLAUDE.md` → Environment Variables |
+| **Berat saat booking kurir wajib dihitung ulang dari `order_items` di DB** (belum ada call site — booking belum dibuat) | [docs/checkout-flow.md](docs/checkout-flow.md) → Berat Kirim |
+| **Berat per varian** — `product_variants` belum punya kolom berat, semua varian memakai berat produk induk | [docs/oms-dashboard.md](docs/oms-dashboard.md) → Berat Produk |
+| Isi berat 11 produk lama (masih badge "Belum diisi" → ongkir memakai cadangan 1 kg/pcs) | OMS → Produk → Edit |
 
 ---
 
@@ -177,6 +181,7 @@ Dipindah dari `CLAUDE.md` → "Domain: Ecommerce & OMS". Daftar ini campuran `[x
 - [x] Halaman pembatalan pesanan Guest (`/order-cancellation` token) + by no_telepon 2 langkah (`/cancel-order`)
 - [x] Rate-limit endpoint publik rawan bot (lacak/batalkan/review by no_telepon, proxy Mengantar alamat+ongkir, create order, submit ulasan) — in-memory, ambang batas terpusat di `src/lib/rate-limit.ts`; belum terpusat lintas-instance (kandidat migrasi Supabase/Redis)
 - [x] Search alamat + **cek ongkir** Mengantar di checkout (client; ongkir masuk ke total)
+- [x] **Berat produk** (`products.berat`, gram) sebagai dasar ongkir — form OMS + kolom tabel + badge "Belum diisi", total berat keranjang, hitung ulang server-side di `orders/create`
 - [x] Validasi form checkout (nama/telepon/email/alamat/kurir) + gating tombol "Bayar Sekarang"
 - [x] Template email konfirmasi pesanan (`src/emails/`, preview di `/dev/email-preview`)
 - [~] Halaman legal: Kebijakan Privasi & Syarat/Ketentuan — kode LENGKAP (`LegalPageShell`, tautan

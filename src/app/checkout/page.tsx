@@ -21,6 +21,7 @@ import PaymentModal from '@/components/checkout/PaymentModal'
 import PhoneConfirmModal from '@/components/checkout/PhoneConfirmModal'
 import { validateAddress } from '@/lib/checkout-validation'
 import { formatRupiah } from '@/lib/format'
+import { shippingWeightKg, type WeighableItem } from '@/lib/shipping-weight'
 import { type WarehouseShippingOption } from '@/lib/mengantar'
 import { dummyProducts } from '@/lib/data/dummy-products'
 import {
@@ -37,8 +38,9 @@ import {
   type CheckoutItem,
 } from '@/lib/data/dummy-checkout'
 
-// Asumsi berat: data produk belum punya field berat → pakai 1 kg per item (minimal 1 kg).
-const WEIGHT_PER_ITEM_KG = 1
+// Produk untuk kebutuhan halaman ini: Product + berat (gram) dari OMS. Produk dummy tak punya
+// berat → undefined, dan lib/shipping-weight memakai berat cadangan untuk item seperti itu.
+type CheckoutProduct = Product & { berat?: number }
 
 export default function CheckoutPage() {
   const router = useRouter()
@@ -91,13 +93,13 @@ export default function CheckoutPage() {
 
   // === Produk OMS (mock DB) diambil via API agar item dari OMS ikut ter-resolve, bukan hanya dummy ===
   // TODO: ganti dengan query Supabase setelah OMS selesai
-  const [omsProducts, setOmsProducts] = useState<Product[]>([])
+  const [omsProducts, setOmsProducts] = useState<CheckoutProduct[]>([])
   useEffect(() => {
     let active = true
     fetch('/api/products/list')
       .then((res) => res.json())
       .then((data) => {
-        if (active && Array.isArray(data.products)) setOmsProducts(data.products as Product[])
+        if (active && Array.isArray(data.products)) setOmsProducts(data.products as CheckoutProduct[])
       })
       .catch(() => {
         // Mode prototipe: bila gagal, fallback ke produk dummy saja
@@ -109,7 +111,7 @@ export default function CheckoutPage() {
 
   // Lookup produk gabungan (OMS + dummy). Produk OMS menimpa dummy bila id sama.
   const productById = useMemo(() => {
-    const map = new Map<string, Product>()
+    const map = new Map<string, CheckoutProduct>()
     for (const product of dummyProducts) map.set(product.id, product)
     for (const product of omsProducts) map.set(product.id, product)
     return map
@@ -175,16 +177,24 @@ export default function CheckoutPage() {
     [orderItems, freeCheckoutItems],
   )
 
-  // Total berat (kg) untuk cek ongkir — minimal 1 kg. Sertakan produk gratis promo (dikirim fisik).
-  const shippingWeight = useMemo(
-    () =>
-      Math.max(
-        1,
-        (orderItems.reduce((sum, item) => sum + item.quantity, 0) + freeCheckoutItems.length) *
-          WEIGHT_PER_ITEM_KG,
-      ),
-    [orderItems, freeCheckoutItems],
-  )
+  // Total berat kirim (kg) = SUM(berat produk × quantity), dikonversi dari gram di satu tempat
+  // (lib/shipping-weight.ts). Dihitung ulang otomatis tiap isi keranjang berubah karena
+  // orderItems bersumber dari cookie lewat useSyncExternalStore — dan ShippingOptions memakai
+  // nilai ini sebagai dependency efek fetch-nya, jadi ongkir ikut di-refresh tanpa aksi tambahan.
+  //
+  // Produk hadiah promo IKUT ditimbang: barangnya tetap dikirim fisik, jadi mengabaikannya membuat
+  // ongkir yang dikutip lebih murah daripada tarif kurir sebenarnya.
+  //
+  // Selama daftar produk OMS masih dalam perjalanan (fetch by-ids), berat item belum diketahui →
+  // memakai berat cadangan. Nilainya dihitung ulang begitu produk tiba; buyer tak bisa menekan
+  // bayar sebelum memilih kurir, jadi angka sementara ini tak pernah menjadi ongkir final.
+  const shippingWeight = useMemo(() => {
+    const weighable: WeighableItem[] = [...orderItems, ...freeCheckoutItems].map((item) => ({
+      quantity: item.quantity,
+      berat: productById.get(item.id)?.berat,
+    }))
+    return shippingWeightKg(weighable)
+  }, [orderItems, freeCheckoutItems, productById])
 
   // Kebutuhan stok yang dikirim ke perbandingan ongkir: hanya produk yang dibeli (produk hadiah
   // promo TIDAK diikutkan — ketersediaannya dievaluasi server saat membuat order, dan menyertakannya
