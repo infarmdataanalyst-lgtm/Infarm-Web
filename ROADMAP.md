@@ -38,12 +38,21 @@ Dipindah APA ADANYA dari `CLAUDE.md` (heading aslinya dipertahankan):
 - Verifikasi webhook signature sebelum memproses event apapun
 - **Jangan expose** Xendit secret key di frontend
 
+**Status per 2026-08-18 — sisi PENERIMA callback SUDAH ADA:**
+`POST /api/webhooks/xendit` + `src/lib/xendit/webhook.ts` sudah terpasang & teruji
+(token `x-callback-token` waktu-konstan, idempoten, PAID → Lunas/Diproses,
+EXPIRED/FAILED → Gagal/Dibatalkan + stok dikembalikan + dicatat ke `stock_mutations`,
+kurang bayar ditolak). Yang masih kosong: **pembuatan invoice** — belum ada kode yang
+memanggil Xendit API, jadi belum ada callback nyata yang akan masuk. Saat membuat invoice
+nanti, `external_id` WAJIB diisi `orders.nomor_invoice` karena webhook mencocokkan lewat
+kolom itu, dan `id` invoice Xendit disimpan ke `orders.id_transaksi`.
+
 Turunan yang menunggu Xendit:
 
 | Pekerjaan | Detail |
 |---|---|
 | Langkah 10–12 alur checkout (buat invoice → URL Xendit → redirect) masih mock | [docs/checkout-flow.md](docs/checkout-flow.md) → Alur Checkout & Pembayaran |
-| Seluruh alur post-payment (webhook → update order → booking kurir → resi → hapus cookie → email) | [docs/checkout-flow.md](docs/checkout-flow.md) → Alur Post-Payment (Webhook) |
+| ~~webhook → update status order + stok~~ **SUDAH ADA** (`/api/webhooks/xendit`). Sisa alur post-payment yang belum: booking kurir, isi no. resi, hapus cookie keranjang, kirim email | [docs/checkout-flow.md](docs/checkout-flow.md) → Alur Post-Payment (Webhook) |
 | Alokasi/rilis stok penuh saat pembayaran gagal/expired | [docs/warehouse.md](docs/warehouse.md) |
 | Email konfirmasi pesanan: template & preview sudah ada, **pengiriman otomatis belum**, dan sejak field email dihapus dari checkout **tak ada alamat tujuan** | [docs/checkout-flow.md](docs/checkout-flow.md) → Email Konfirmasi Pesanan |
 | Snapshot promo/combo (`infarm_checkout_promo`) belum di-wire ke tabel `orders` | [docs/checkout-flow.md](docs/checkout-flow.md) → Paket & Combo |

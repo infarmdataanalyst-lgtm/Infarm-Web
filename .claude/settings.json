@@ -38,7 +38,8 @@
       "PowerShell(Stop-Process -Force)",
       "Bash(node minicart-shot.mjs)",
       "Bash(sed -n '1542,1635p' CLAUDE.md)",
-      "Read(//c/Users/fiqih/AppData/Local/Temp/claude/c--Users-fiqih-OneDrive-Dokumen-Infarm-Web-Infarm-Web/e8aa62ab-4a73-4ade-890a-9766b1bd32e8/scratchpad/**)"
+      "Read(//c/Users/fiqih/AppData/Local/Temp/claude/c--Users-fiqih-OneDrive-Dokumen-Infarm-Web-Infarm-Web/e8aa62ab-4a73-4ade-890a-9766b1bd32e8/scratchpad/**)",
+      "Bash(curl -s -o /dev/null -w \"dev server: %{http_code}\\\\n\" http://localhost:3000/oms/login)"
     ]
   }
 }

@@ -692,6 +692,42 @@ export async function updateOrderStatus(
   return getOrderByOrderId(orderId)
 }
 
+// Memperbarui status PEMBAYARAN sebuah pesanan (dipakai webhook Xendit).
+// Berbeda dari updateOrderStatus() yang mengurus status ALUR (fulfillment) — keduanya kolom
+// terpisah di DB (`status_pembayaran` vs `order_status`) dan bisa bergerak tidak bersamaan.
+//
+// `orderStatus` opsional: webhook pembayaran memang ikut menggerakkan alur (lunas → Diproses,
+// kedaluwarsa → Dibatalkan), tapi pemanggil lain boleh mengubah status bayar saja.
+// `transactionId` hanya ditulis bila disertakan — jangan menimpa id transaksi yang sudah ada
+// dengan nilai kosong.
+//
+// Mengembalikan order terbaru, atau null bila nomor invoice tak ditemukan.
+export async function updatePaymentStatus(
+  orderId: string,
+  paymentStatus: OrderPaymentStatus,
+  opts?: { orderStatus?: OrderFulfillmentStatus; transactionId?: string },
+): Promise<Order | null> {
+  const supabase = createAdminClient()
+  const patch: Record<string, string> = { status_pembayaran: PAYMENT_TO_DB[paymentStatus] }
+  if (opts?.orderStatus) patch.order_status = STATUS_TO_DB[opts.orderStatus]
+  if (opts?.transactionId) patch.id_transaksi = opts.transactionId
+
+  const { data, error } = await supabase
+    .from('orders')
+    .update(patch)
+    .eq('nomor_invoice', orderId)
+    .select('id')
+    .maybeSingle()
+
+  if (error) {
+    console.error('Gagal memperbarui status pembayaran di Supabase:', error.message)
+    return null
+  }
+  if (!data) return null
+
+  return getOrderByOrderId(orderId)
+}
+
 // === Agregasi produk terlaris ===
 
 // Opsi filter agregasi penjualan. from/to = ISO date string (inklusif) atas created_at.

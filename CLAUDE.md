@@ -605,9 +605,18 @@ NEXT_PUBLIC_GA_ID                # PUBLIC/client; Measurement ID GA4 (format G-X
                                  # src/app/layout.tsx via <GoogleAnalytics> (@next/third-parties). Render
                                  # kondisional — GA hanya jalan bila terisi. Set di Vercel juga + redeploy.
 
+# Sudah dipakai sekarang (Webhook Xendit)
+XENDIT_CALLBACK_TOKEN            # server-only, WAJIB. Dibandingkan waktu-konstan dengan header
+                                 # `x-callback-token` di POST /api/webhooks/xendit. Xendit TIDAK
+                                 # menandatangani body-nya (tak ada HMAC seperti Stripe), jadi token
+                                 # ini satu-satunya pembeda callback asli vs palsu. Ambil dari
+                                 # Xendit Dashboard → Settings → Webhooks. Tanpa var ini endpoint
+                                 # membalas 500 (bukan 401) — salah konfigurasi kita, bukan serangan.
+                                 # CATATAN: dulu didokumentasikan sebagai XENDIT_WEBHOOK_TOKEN;
+                                 # namanya diselaraskan ke header Xendit yang sebenarnya.
+
 # Roadmap (belum dipakai)
-XENDIT_SECRET_KEY                # server-only
-XENDIT_WEBHOOK_TOKEN             # server-only
+XENDIT_SECRET_KEY                # server-only (untuk MEMBUAT invoice; webhook tak butuh key ini)
 MENGANTAR_API_KEY                # server-only (untuk booking/tracking nanti; cek ongkir tak butuh key)
 ```
 
