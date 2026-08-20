@@ -140,8 +140,8 @@ Butuh keputusan pemilik toko sebelum disentuh (semuanya hasil audit, bukan dugaa
 | Temuan | Catatan |
 |---|---|
 | `GET /api/orders/get` — IDOR (temuan S-2); route-nya dead code, kandidat dihapus | `docs/security/` |
-| Nomor invoice mudah ditebak, dan `/checkout/success` menerbitkan token pembatalan untuk invoice apa pun | `docs/security/` |
-| `/checkout/success` & `/track` belum di-gate verifikasi no. telepon | `docs/security/` |
+| ~~Nomor invoice mudah ditebak~~ **selesai** — `generateInvoiceNumber()` kini 8 karakter base32 dari `crypto.randomUUID()` (40 bit). **Sisa**: pesanan lama masih bernomor 4 digit, dan `/checkout/success` masih menerbitkan token pembatalan untuk invoice apa pun | `docs/security/` |
+| `/checkout/success` & `/track` belum di-gate verifikasi no. telepon — `/track` kini juga menampilkan isi belanja & nominal (kartu Produk Dipesan), jadi gate-nya lebih berharga daripada sebelumnya | `docs/security/` |
 | `order_items` masih anon-readable di DB live (schema drift dari migration) | `docs/security/` |
 | No. telepon belum divalidasi ulang di server pada `orders/create` | `docs/security/` |
 | `shippingCost <= 0 → 0` (perlu ditinjau) | `docs/security/` |

@@ -14,6 +14,7 @@ import { Phone, MapPin, Package } from 'lucide-react'
 import TrackSearchForm from '@/components/track/TrackSearchForm'
 import TrackingTimeline from '@/components/track/TrackingTimeline'
 import ShippingStepper from '@/components/track/ShippingStepper'
+import OrderItemsCard from '@/components/track/OrderItemsCard'
 import { getOrderByOrderId } from '@/lib/mock-db/orders'
 import {
   generateTrackingHistory,
@@ -43,7 +44,9 @@ export default async function TrackPage({ searchParams }: TrackPageProps) {
     <div className="flex min-h-screen flex-col bg-brand-surface pt-14 text-zinc-900">
       {/* Header hijau brand + tombol kembali */}
       <header className="fixed inset-x-0 top-0 z-50 rounded-b-[2rem] bg-brand-header/90 text-white shadow-sm backdrop-blur-md">
-        <div className="mx-auto flex h-14 max-w-3xl items-center gap-3 px-4">
+        {/* max-w mengikuti <main> di lg+ supaya logo sejajar dengan tepi kiri kartu, bukan
+            mengapung di tengah saat halaman melebar jadi dua kolom. */}
+        <div className="mx-auto flex h-14 max-w-3xl items-center gap-3 px-4 lg:max-w-5xl">
           {/* Back → halaman Lacak Pesanan (satu halaman sebelumnya), bukan beranda */}
           <Link href="/track-order" aria-label="Kembali ke Lacak Pesanan" className="rounded-md p-1 transition active:scale-95">
             <BackIcon />
@@ -55,7 +58,9 @@ export default async function TrackPage({ searchParams }: TrackPageProps) {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-md flex-1 px-4 py-5">
+      {/* max-w-md di mobile (satu kolom), melebar ke max-w-5xl di lg+ agar kartu produk dan
+          timeline pengiriman bisa berdampingan alih-alih menumpuk di kolom sempit. */}
+      <main className="mx-auto w-full max-w-md flex-1 px-4 py-5 lg:max-w-5xl">
         {found ? (
           <TrackResult order={found} />
         ) : (
@@ -76,18 +81,32 @@ function TrackResult({ order }: { order: Order }) {
 
   return (
     <div className="space-y-4">
-      {/* 1 — Nomor pesanan + badge status */}
-      <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="text-sm text-gray-500">Nomor Pesanan</p>
-            <p className="mt-1 text-lg font-bold text-gray-900">{invoiceLabel}</p>
-          </div>
-          <StatusBadge status={order.status ?? 'Diproses'} cancelled={cancelled} />
-        </div>
-      </section>
+      {/* Dua kolom di lg+ — kiri: identitas pesanan & produk yang dibeli (menjawab "pesanan mana
+          yang sedang saya lacak"), kanan: status pengiriman & tujuan. Di mobile grid runtuh jadi
+          satu kolom dan urutannya mengikuti urutan DOM: pesanan → produk → status → riwayat →
+          kurir → alamat. `items-start` supaya kolom yang lebih pendek tak ikut meregang. */}
+      <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
+        {/* === Kolom kiri === */}
+        <div className="space-y-4">
+          {/* 1 — Nomor pesanan + tanggal + badge status */}
+          <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm text-gray-500">Nomor Pesanan</p>
+                <p className="mt-1 text-lg font-bold text-gray-900">{invoiceLabel}</p>
+                <p className="mt-1 text-xs text-gray-400">Dibuat {formatOrderDate(order.date)}</p>
+              </div>
+              <StatusBadge status={order.status ?? 'Diproses'} cancelled={cancelled} />
+            </div>
+          </section>
 
-      {/* 2 — Stepper status pengiriman (disembunyikan bila dibatalkan) */}
+          {/* 2 — Kartu produk yang dibeli + ringkasan biaya */}
+          <OrderItemsCard order={order} />
+        </div>
+
+        {/* === Kolom kanan === */}
+        <div className="space-y-4">
+      {/* 3 — Stepper status pengiriman (disembunyikan bila dibatalkan) */}
       {!cancelled && (
         <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
           <h2 className="mb-5 text-sm font-bold text-gray-900">Status Pengiriman</h2>
@@ -95,7 +114,7 @@ function TrackResult({ order }: { order: Order }) {
         </section>
       )}
 
-      {/* 3 — Riwayat perjalanan (timeline) */}
+      {/* 4 — Riwayat perjalanan (timeline) */}
       <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
         <h2 className="mb-4 text-sm font-bold text-gray-900">Riwayat Perjalanan</h2>
         {history.length > 0 ? (
@@ -105,7 +124,7 @@ function TrackResult({ order }: { order: Order }) {
         )}
       </section>
 
-      {/* 4 — Info kurir */}
+      {/* 5 — Info kurir */}
       <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -131,7 +150,7 @@ function TrackResult({ order }: { order: Order }) {
         </div>
       </section>
 
-      {/* 5 — Alamat pengiriman */}
+      {/* 6 — Alamat pengiriman */}
       <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
         <h2 className="mb-3 flex items-center gap-1.5 text-sm font-bold text-gray-900">
           <MapPin className="h-4 w-4 text-brand-primary" />
@@ -146,6 +165,8 @@ function TrackResult({ order }: { order: Order }) {
           </p>
         )}
       </section>
+        </div>
+      </div>
 
       <div className="pt-1 text-center">
         <Link href="/track-order" className="text-sm font-medium text-brand-primary transition hover:brightness-90">
@@ -160,7 +181,9 @@ function TrackResult({ order }: { order: Order }) {
 
 function SearchState({ hasQuery, query }: { hasQuery: boolean; query?: string }) {
   return (
-    <div className="flex min-h-[60vh] flex-col justify-center">
+    // max-w-md dipertahankan di sini: form pencarian tak ikut melebar walau <main> kini max-w-5xl
+    // di lg+ (pelebaran itu hanya untuk layout dua kolom hasil pelacakan).
+    <div className="mx-auto flex min-h-[60vh] w-full max-w-md flex-col justify-center">
       <div className="mx-auto w-full rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
         <div className="text-center">
           <h1 className="text-xl font-bold text-gray-900">Lacak Pesanan Anda</h1>
@@ -203,6 +226,14 @@ function formatAddress(order: Order): string {
     .join(', ')
   const street = a.shippingAddress ? maskStreet(a.shippingAddress) : ''
   return [street, region, a.kodepos].filter(Boolean).join(', ')
+}
+
+// Tanggal pesanan dibuat, mis. "20 Agustus 2026". Tanpa jam: pembeli hanya perlu mengenali
+// pesanannya, dan jam pembuatan sudah tampil di Riwayat Perjalanan.
+function formatOrderDate(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }).format(d)
 }
 
 // Badge status: hijau brand untuk alur normal, rose untuk dibatalkan.

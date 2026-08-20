@@ -237,7 +237,8 @@ src/
 │   │                             #   cek ongkir), PaymentModal, BottomSheet, OrderSummary, dll
 │   ├── order-cancellation/       # OrderCancellationView (client)
 │   ├── review/                   # Komponen review
-│   ├── track/                    # Komponen pelacakan
+│   ├── track/                    # Komponen pelacakan (TrackSearchForm, ShippingStepper,
+│   │                             #   TrackingTimeline, OrderItemsCard = kartu produk dipesan)
 │   ├── oms/                      # Sidebar (mendukung sub-menu), header, ComboForm,
 │   │                             #   PromotionForm, GudangTabs (sub-nav area Gudang),
 │   │                             #   WarehouseStockFields (input stok awal — HANYA form Tambah Produk),

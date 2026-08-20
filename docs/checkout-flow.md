@@ -32,6 +32,23 @@ auto-cari tanpa ketik). **Rate-limit sudah terpasang** — lihat "Rate Limiting"
 - `POST /api/orders/track-by-phone`: kembalikan info non-sensitif (invoice, status, resi, kurir, tanggal,
   item nama+qty+foto), nama **di-mask** (`lib/mask.ts`). Detail timeline lengkap tetap via `/track?order=INV-…`.
 
+#### `/track?order=INV-…` — tata letak & kartu produk
+- **Tak ada verifikasi kepemilikan**: nomor invoice adalah satu-satunya kunci. Karena itu nama,
+  no. telepon, dan detail jalan **di-mask** (`maskName`/`maskPhone`/`maskStreet`) sementara wilayah
+  tetap tampil agar pembeli masih mengenali pesanannya. Kompensasi lain = entropi nomor invoice
+  40 bit (lihat "Nomor invoice" di bagian skema `orders`).
+- **`OrderItemsCard`** (`src/components/track/OrderItemsCard.tsx`, Server Component) menampilkan
+  foto+nama+qty+harga tiap produk, lalu Subtotal → Ongkos Kirim & Biaya Lain → Pengiriman → Total.
+  - Harga = `item.price` (snapshot `order_items.price_at_purchase`), **bukan** harga katalog saat ini.
+  - Subtotal **mengecualikan** `isPromoItem` (hadiah promo berharga 0; tertulis "Gratis" + 🎁).
+  - **Ongkir tak punya kolom sendiri** di `orders` → barisnya = `jumlah_total − subtotal`, jadi
+    ongkir & diskon tak bisa dipisah. Selisih negatif dilabeli "Diskon". Bila kolom ongkir kelak
+    ditambahkan (lihat ROADMAP.md), baris ini bisa dipecah jadi angka sebenarnya.
+  - Nol query baru: `getOrderByOrderId` sudah me-resolve nama/foto/varian tiap item.
+- **Layout**: `max-w-md` satu kolom di mobile, `max-w-5xl` dua kolom di `lg+` — kiri identitas +
+  produk, kanan stepper/timeline/kurir/alamat. Urutan mobile mengikuti urutan DOM kolom kiri lalu
+  kanan. `<header>` ikut `lg:max-w-5xl` agar logo sejajar tepi kartu.
+
 ### Batalkan — `/cancel-order` (2 LANGKAH)
 - LANGKAH 1: cari by phone (reuse `track-by-phone`) → daftar ringkas → pilih satu.
 - LANGKAH 2: **ketik ULANG no_telepon** (tak di-prefill) → `POST /api/orders/verify-cancel` (query ulang
@@ -474,8 +491,17 @@ tidak perlu berubah saat skema DB berganti.
   dalam SATU transaksi — insert `orders` + `order_items` + kurangi `products.stock`. Stok salah satu
   produk kurang → `raise exception 'INSUFFICIENT_STOCK:<nama>'` → **seluruh transaksi rollback**;
   app melempar `OrderStockError` ("Stok produk … tidak mencukupi").
-- **Nomor invoice**: `generateInvoiceNumber()` = `INV-{YYYYMMDD}-{4 digit acak}`. Unik via index
-  `orders_nomor_invoice_key`; `saveOrder` retry beberapa kali bila tabrakan (unique violation).
+- **Nomor invoice**: `generateInvoiceNumber()` = `INV-{YYYYMMDD}-{8 karakter Crockford base32}`,
+  mis. `INV-20260820-MW2S47ZX`. Unik via index `orders_nomor_invoice_key`; `saveOrder` retry
+  beberapa kali bila tabrakan (unique violation).
+  - **Dulu 4 digit desimal** (9.000 kemungkinan per tanggal) — bisa dienumerasi habis dalam
+    hitungan menit, dan `/track` tidak memverifikasi kepemilikan apa pun. Sejak halaman itu juga
+    menampilkan isi belanja + nominal (kartu Produk Dipesan), entropinya dinaikkan ke **40 bit**
+    (≈1,1 × 10¹²). Sumber acak `crypto.randomUUID()`, BUKAN `Math.random()`.
+  - Alfabet `0123456789ABCDEFGHJKMNPQRSTVWXYZ` — tanpa I/L/O/U agar tak tertukar saat dibacakan;
+    panjang tepat 32 supaya pemetaan 5-bit tidak berbias.
+  - **Pesanan lama tetap bernomor 4 digit** dan tetap bisa dilacak. Format lama tak divalidasi di
+    mana pun (hanya placeholder di `TrackSearchForm`), jadi keduanya hidup berdampingan.
 - **Baris warisan**: `rowToOrder` pakai `orderId: nomor_invoice ?? id` (aman untuk baris lama
   tanpa `nomor_invoice`).
 

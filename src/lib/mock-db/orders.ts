@@ -131,11 +131,38 @@ export class OrderStockError extends Error {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-// Membuat nomor invoice: INV-{YYYY}{MM}{DD}-{4 digit acak}, mis. INV-20260601-4821.
+// Membuat nomor invoice: INV-{YYYY}{MM}{DD}-{8 karakter acak}, mis. INV-20260601-K7QM4T2X.
+//
+// KENAPA 8 KARAKTER, BUKAN 4 DIGIT seperti sebelumnya: nomor invoice adalah satu-satunya kunci
+// halaman /track — halaman itu tak memverifikasi kepemilikan apa pun (karena itu nama, telepon,
+// dan detail jalan di sana sudah di-mask). Dengan 4 digit desimal hanya ada 9.000 kemungkinan per
+// tanggal, jadi seluruh pesanan satu hari bisa dienumerasi dalam hitungan menit — dan sejak kartu
+// produk ditambahkan, halaman itu juga menampilkan isi belanja beserta nominalnya.
+// 8 karakter × 5 bit = 40 bit ≈ 1,1 × 10^12 kemungkinan per tanggal.
+//
+// Memakai crypto.randomUUID() sebagai sumber acak (bukan Math.random yang TIDAK aman secara
+// kriptografis dan bisa diprediksi dari keluaran sebelumnya).
+//
+// Alfabet = Crockford base32: tanpa I, L, O, U sehingga tak ada pasangan huruf/angka yang mudah
+// tertukar saat pembeli membacakan nomornya lewat telepon/WhatsApp. Panjangnya TEPAT 32 supaya
+// pemetaan 5-bit → 1 karakter tidak berbias; alfabet yang bukan pangkat dua akan membuat sebagian
+// karakter lebih sering muncul dan itu mengurangi entropi nyata.
+const INVOICE_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+const INVOICE_RANDOM_LENGTH = 8 // 8 × 5 bit = 40 bit acak
+
 function generateInvoiceNumber(): string {
   const d = new Date()
   const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
-  const rand = String(Math.floor(1000 + Math.random() * 9000)) // selalu 4 digit
+  // randomUUID → 32 digit hex acak-aman; 10 digit pertama = 40 bit yang dipakai di bawah.
+  // Dipecah dengan modulo/pembagian, BUKAN operator bit (`&`/`>>`): operator bit JavaScript
+  // memotong operandnya ke 32 bit, sehingga 8 bit teratas akan hilang tanpa suara.
+  // 2^40 masih jauh di bawah Number.MAX_SAFE_INTEGER, jadi aritmetikanya tetap eksak.
+  let bits = parseInt(crypto.randomUUID().replace(/-/g, '').slice(0, 10), 16)
+  let rand = ''
+  for (let i = 0; i < INVOICE_RANDOM_LENGTH; i += 1) {
+    rand = INVOICE_ALPHABET[bits % INVOICE_ALPHABET.length] + rand
+    bits = Math.floor(bits / INVOICE_ALPHABET.length)
+  }
   return `INV-${ymd}-${rand}`
 }
 
