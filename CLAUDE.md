@@ -212,6 +212,7 @@ src/
 │   │   │                        #   stock/matrix (matrix produk×gudang) | stock/set (tulis 1 sel)
 │   │   │                        #   (SEMUA admin-only — memuat origin id & koordinat gudang)
 │   │   ├── stock-mutations/    # list (riwayat mutasi stok, admin-only)
+│   │   ├── cron/                   # mengantar-pickup (GET, dipicu Vercel Cron, guard CRON_SECRET)
 │   │   └── mengantar/              # address/search (CORS-blocked → proxied) |
 │   │                               #   shipping/estimate (1 gudang) | shipping/options (POST,
 │   │                               #   perbandingan ongkir semua gudang → titik rate limit)
@@ -257,6 +258,8 @@ src/
 │   ├── warehouse-shipping.ts     # Perbandingan ongkir riil antar gudang (paralel + cache 10 mnt)
 │   ├── mengantar-estimate.ts     # Pemetaan respons estimasi Mengantar (dipakai client & server)
 │   ├── shipping-weight.ts        # SATU pintu berat kirim: gram (DB) -> kilogram (Mengantar), murni
+│   ├── pickup-schedule.ts        # Aturan jadwal pickup: hari kerja, cutoff 15:00 WIB, tanggal efektif (murni)
+│   ├── mengantar-pickup.ts       # SATU pintu time_id pickup: POST /time + tabel harian (server-only)
 │   ├── stock-audit.ts            # SATU pintu pencatatan riwayat stok → stock_mutations (server-only)
 │   ├── warehouse-validation.ts   # Validasi form gudang (nama, origin id 24 hex, lat/long berpasangan)
 │   ├── dashboard-period.ts       # Periode & granularity Dashboard OMS (murni, zona WIB)
@@ -272,7 +275,8 @@ src/
 │   ├── mock-db/                  # Akses data Supabase: products, orders, reviews, combos, promotions,
 │   │                             #   admins, variants, settings (store_settings key-value),
 │   │                             #   warehouses (gudang + stok per gudang),
-│   │                             #   stock-mutations (riwayat stok) — server only
+│   │                             #   stock-mutations (riwayat stok), pickup (jadwal pickup harian)
+│   │                             #   — server only
 │   │                             #   + cached-reads.ts (wrapper unstable_cache storefront: revalidate 30s + tags)
 │   └── data/                     # Dummy data tampilan pelengkap (dummy-*.ts)
 ├── emails/                       # Template HTML email (order-confirmation.html) — placeholder {{...}}
@@ -621,9 +625,36 @@ XENDIT_CALLBACK_TOKEN            # server-only, WAJIB. Dibandingkan waktu-konsta
                                  # CATATAN: dulu didokumentasikan sebagai XENDIT_WEBHOOK_TOKEN;
                                  # namanya diselaraskan ke header Xendit yang sebenarnya.
 
+# Sudah dipakai sekarang (Jadwal pickup harian Mengantar)
+MENGANTAR_BASE_URL               # server-only, WAJIB. Host API Mengantar untuk POST /time.
+                                 # Saat ini masih https://sandbox.mengantar.com — GANTI ke host
+                                 # produksi sebelum go-live, jadwal pickup sandbox tak nyata.
+                                 # CATATAN: cek ongkir & search alamat TIDAK memakai var ini
+                                 # (keduanya hardcode app.mengantar.com karena endpoint publik).
+MENGANTAR_API_KEY                # server-only, WAJIB untuk POST /time & POST /order.
+                                 # PERHATIAN: key ini menjadi SEGMEN PATH URL
+                                 # ({BASE}/api/public/{KEY}/time), bukan header. Jadi URL-nya
+                                 # rahasia — jangan pernah di-log, dan JANGAN dipakai dari
+                                 # komponen klien (akan terbaca utuh di tab Network).
+                                 # Cek ongkir & search alamat tetap tak butuh key.
+MENGANTAR_STORE_ADDRESS_ID       # server-only, WAJIB. _id alamat gudang/toko di Mengantar (ObjectId
+                                 # 24 hex) — dikirim sebagai address_id saat membuat slot pickup.
+                                 # BEDA dari MENGANTAR_ORIGIN_ID (itu _id kelurahan untuk ongkir).
+MENGANTAR_PICKUP_TIME_ID         # server-only, OPSIONAL. Slot pickup STATIS dari era sebelum tabel
+                                 # mengantar_daily_pickup ada. Kini hanya CADANGAN LAPIS TERAKHIR di
+                                 # getTodayPickupTimeId() bila tabel kosong DAN panggilan POST /time
+                                 # gagal. Jangan dijadikan sumber utama: satu id untuk selamanya
+                                 # berarti semua paket terdaftar di slot penjemputan yang sama.
+CRON_SECRET                      # server-only, WAJIB. Vercel otomatis menyisipkan header
+                                 # `Authorization: Bearer $CRON_SECRET` saat memanggil cron bila var
+                                 # ini ada. Dibandingkan waktu-konstan di
+                                 # GET /api/cron/mengantar-pickup. Tanpa guard ini siapa pun yang
+                                 # tahu URL-nya bisa memicu pembuatan slot pickup baru di Mengantar.
+                                 # Tanpa var ini endpoint membalas 500 (bukan 401) — salah
+                                 # konfigurasi kita, bukan serangan.
+
 # Roadmap (belum dipakai)
 XENDIT_SECRET_KEY                # server-only (untuk MEMBUAT invoice; webhook tak butuh key ini)
-MENGANTAR_API_KEY                # server-only (untuk booking/tracking nanti; cek ongkir tak butuh key)
 ```
 
 > Cara dapat `NEXT_PUBLIC_MENGANTAR_ORIGIN_ID`: panggil endpoint search alamat Mengantar dengan

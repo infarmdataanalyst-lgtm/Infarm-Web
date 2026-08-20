@@ -79,6 +79,118 @@ handler internal** — search karena CORS, ongkir agar bisa di-rate-limit.
   ongkir ditambahkan ke total. Tombol "Bayar Sekarang" baru aktif setelah kurir dipilih.
 - **Roadmap (belum ada)**: booking kurir + tracking resi otomatis (via webhook pembayaran).
 
+### Jadwal Pickup Harian — `time_id` untuk booking kurir
+
+Booking kurir butuh `time_id` (slot penjemputan) dari **`POST /time`** Mengantar. Satu slot dipakai
+untuk SEMUA paket hari itu, jadi memanggilnya per transaksi = satu round-trip tambahan di jalur
+bayar + boros kuota + titik gagal baru tepat saat pembeli menekan bayar. Karena itu ada tabel
+perantara yang diisi cron, dan checkout hanya **membaca**.
+
+| Berkas | Peran |
+|---|---|
+| `supabase/migrations/20260820120000_init_mengantar_daily_pickup.sql` | tabel `mengantar_daily_pickup` (`date` UNIQUE, `time_id`) |
+| `src/lib/pickup-schedule.ts` | **murni** — hari kerja, cutoff, tanggal pickup efektif |
+| `src/lib/mock-db/pickup.ts` | akses tabel (server-only) |
+| `src/lib/mengantar-pickup.ts` | **satu pintu** `POST /time` + `getTodayPickupTimeId()` |
+| `src/app/api/cron/mengantar-pickup/route.ts` | GET, dipicu Vercel Cron, guard `CRON_SECRET` |
+| `vercel.json` | `"schedule": "0 23 * * 0-5"` |
+
+- **⚠️ Cron Vercel memakai UTC, bukan WIB.** 06:00 WIB = **23:00 UTC hari SEBELUMNYA**, jadi
+  "Senin–Sabtu WIB" ditulis sebagai **Minggu–Jumat UTC** → `0 23 * * 0-5`. Menulis `0 6 * * 1-6`
+  akan jalan 13:00 WIB dan salah hari untuk Sabtu/Senin. Jangan "diperbaiki" tanpa menghitung ulang.
+- **Cutoff 15:00 WIB** (`PICKUP_CUTOFF_HOUR_WIB`): lewat jam itu, pesanan memakai `time_id` **hari
+  kerja berikutnya**. Sabtu sore → Senin. **Hari Minggu, jam berapa pun, juga → Senin** — cabang
+  `bukan-hari-pickup` di `resolvePickupDate`; tanpa itu pesanan Minggu pagi meminta slot untuk hari
+  yang kurirnya tidak datang.
+- **`getTodayPickupTimeId()` tiga lapis**: (1) baca tabel — jalur normal, nol panggilan keluar;
+  (2) fallback `POST /time` **yang hasilnya DISIMPAN**; (3) `MENGANTAR_PICKUP_TIME_ID` statis.
+- **Fallback lapis 2 adalah jalur NORMAL setiap sore**, bukan pengecualian: cron hanya membuat slot
+  untuk hari itu, sedangkan pesanan setelah 15:00 butuh tanggal besok yang cron-nya baru jalan besok
+  pagi. Karena hasilnya disimpan, hanya pesanan PERTAMA sore itu yang memanggil Mengantar — dan cron
+  esok hari otomatis melewati tanggal itu karena barisnya sudah ada. **Kalau panggilan sore ingin
+  dihilangkan sama sekali**, ubah cron agar meng-generate hari ini **dan** hari kerja berikutnya.
+- **Idempotensi**: `ensurePickupForDate` **membaca dulu, baru** memanggil Mengantar. Membaliknya
+  membuat setiap re-run cron menumpuk slot pickup sampah di sistem kurir.
+- **Balapan diselesaikan DB, bukan kode**: `savePickup` melakukan `insert` lalu menangkap
+  `23505` (unique_violation) dan membaca ulang baris pemenang — bukan pola "cek dulu lalu insert"
+  yang bocor saat cron re-run bersamaan dengan fallback checkout. Juga **bukan upsert**: menimpa
+  `time_id` yang sudah dipakai order lain hari itu membuat sebagian paket terdaftar di slot berbeda
+  dari yang tercatat di sistem.
+- **`CRON_SECRET` wajib.** Tanpa guard, siapa pun yang tahu URL-nya bisa memicu pembuatan slot
+  pickup baru di Mengantar. Env kosong → **500**, bukan 401 (salah konfigurasi kita, bukan serangan).
+#### Kontrak `POST /time` — TERVERIFIKASI terhadap sandbox
+
+```
+POST {MENGANTAR_BASE_URL}/api/public/{MENGANTAR_API_KEY}/time
+Content-Type: application/json          ← TANPA header auth
+{ "address_id": "<MENGANTAR_STORE_ADDRESS_ID>", "date": "08-20-2026", "time": "17:00" }
+```
+
+Respons:
+
+```json
+{ "success": true,
+  "data": { "_id": "6a8660eb458cf203c3cc498f", "date": "2026-08-20T00:00:00.000Z",
+            "time": "17:00", "status": "empty", "isSunday": false, "address": { … } } }
+```
+
+Tiga jebakan yang sudah menggigit dan sekarang terkunci di kode:
+
+1. **API key ada di dalam URL sebagai segmen path**, bukan header. Berarti URL-nya **rahasia** —
+   `publicEndpoint()` tak pernah dicetak ke log, dan cabang `network` hanya melaporkan
+   `error.name`, bukan `error.message` (yang di sebagian runtime memuat URL).
+   Konsekuensi lain: key ini **tak boleh pernah** dipakai dari komponen klien — ia akan terbaca
+   utuh di tab Network.
+2. **Tanggal berformat `MM-DD-YYYY`** (gaya AS), bukan ISO dan bukan `DD-MM-YYYY`. Konversi hanya
+   lewat `toMengantarDate()`. Terbukti benar karena respons memantulkan
+   `date: "2026-08-20T00:00:00.000Z"` untuk kiriman `"08-20-2026"`. Salah urutan berpotensi
+   diterima sebagai tanggal LAIN tanpa error — slot dibuat untuk hari yang salah dan baru terlihat
+   saat kurir tak datang.
+3. **`time_id` = `data._id`.** Mengantar tak memakai nama `time_id` di responsnya, padahal field
+   itulah yang diminta saat create order. `extractTimeId` mencoba `data._id` lebih dulu, sisanya
+   cadangan.
+
+Juga: **body membawa `success`.** HTTP 200 dengan `success: false` = ditolak secara logis (mis.
+`address_id` tak dikenal) dan diperlakukan sebagai gagal, bukan sukses.
+
+**Mengantar TIDAK men-dedupe berdasarkan tanggal** — terbukti: dua permintaan untuk tanggal sama
+menghasilkan dua `_id` berbeda. Inilah alasan `ensurePickupForDate` **membaca DB dulu**; tanpa itu
+setiap re-run cron meninggalkan slot pickup terlantar di sistem kurir.
+
+- **`MENGANTAR_BASE_URL` masih sandbox** (`https://sandbox.mengantar.com`) — jadwal pickup yang
+  dibuat tidak nyata. Ganti ke host produksi **beserta API key produksi** sebelum go-live.
+
+#### Kontrak `POST /order` — untuk booking kurir (BELUM diimplementasi)
+
+Dicatat di sini supaya tak perlu ditebak saat booking dikerjakan:
+
+```
+POST {MENGANTAR_BASE_URL}/api/public/{MENGANTAR_API_KEY}/order
+{
+  "courier": "jt",
+  "pickup": { "type": "scheduledPickup", "volume": "volumeMotor",
+              "address_id": "<MENGANTAR_STORE_ADDRESS_ID>",
+              "time_id": "<dari getTodayPickupTimeId()>" },
+  "orders": [{ "goodsValue": 50000, "customerName": "…", "customerPhone": "08…",
+               "customerAddress": "…", "customerAddressDataId": "<destination_id>",
+               "parcelContent": "…", "weight": 1, "quantity": 1 }]
+}
+```
+
+Pemetaan ke data kita saat nanti dikerjakan:
+
+| Field Mengantar | Sumber |
+|---|---|
+| `pickup.time_id` | `getTodayPickupTimeId()` |
+| `customerAddressDataId` | `orders.destination_id` (hasil search alamat) |
+| `weight` | **kilogram** — `shippingWeightKg()`, dihitung ulang dari `order_items` di DB |
+| `goodsValue` | subtotal barang dari DB, bukan angka client |
+| `courier` | kurir yang dipilih buyer (`orders.kurir`), perlu pemetaan nama → kode (`jt`, …) |
+- **Belum ada call site.** Booking kurir belum dibuat, jadi `getTodayPickupTimeId()` belum dipanggil
+  dari alur order mana pun. Saat booking dikerjakan, panggil dari route handler
+  (`POST /api/orders/create` atau endpoint booking terpisah) — **bukan** Server Action; project ini
+  tidak memakai Server Action sama sekali.
+
 ### Berat Kirim — SATU PINTU di `src/lib/shipping-weight.ts`
 
 **Berat produk disimpan GRAM (integer) di `products.berat`, tapi Mengantar meminta KILOGRAM.**

@@ -68,7 +68,9 @@ Search alamat + cek ongkir **sudah jalan**, dan ongkir kini memakai **berat riil
 
 | Pekerjaan | Detail |
 |---|---|
-| Booking kurir otomatis (via webhook pembayaran) | [docs/checkout-flow.md](docs/checkout-flow.md) → Mengantar (Logistik) |
+| Booking kurir otomatis (via webhook pembayaran) — **jadwal pickup harian (`time_id`) sudah siap**, tinggal dipakai | [docs/checkout-flow.md](docs/checkout-flow.md) → Jadwal Pickup Harian |
+| Ganti `MENGANTAR_BASE_URL` + `MENGANTAR_API_KEY` dari sandbox ke PRODUKSI (kontrak `POST /time` sudah terverifikasi) | [docs/checkout-flow.md](docs/checkout-flow.md) → Jadwal Pickup Harian |
+| Pemetaan nama kurir kita → kode kurir Mengantar (`jt`, …) untuk field `courier` di `POST /order` | [docs/checkout-flow.md](docs/checkout-flow.md) → Kontrak POST /order |
 | Tracking resi otomatis + pengisian `no_tracking` | [docs/checkout-flow.md](docs/checkout-flow.md) → Alur Post-Payment |
 | `MENGANTAR_API_KEY` belum dipakai (cek ongkir tak butuh key) | `CLAUDE.md` → Environment Variables |
 | **Berat saat booking kurir wajib dihitung ulang dari `order_items` di DB** (belum ada call site — booking belum dibuat) | [docs/checkout-flow.md](docs/checkout-flow.md) → Berat Kirim |
@@ -181,6 +183,7 @@ Dipindah dari `CLAUDE.md` → "Domain: Ecommerce & OMS". Daftar ini campuran `[x
 - [x] Halaman pembatalan pesanan Guest (`/order-cancellation` token) + by no_telepon 2 langkah (`/cancel-order`)
 - [x] Rate-limit endpoint publik rawan bot (lacak/batalkan/review by no_telepon, proxy Mengantar alamat+ongkir, create order, submit ulasan) — in-memory, ambang batas terpusat di `src/lib/rate-limit.ts`; belum terpusat lintas-instance (kandidat migrasi Supabase/Redis)
 - [x] Search alamat + **cek ongkir** Mengantar di checkout (client; ongkir masuk ke total)
+- [x] **Jadwal pickup harian Mengantar** — tabel `mengantar_daily_pickup`, Vercel Cron 06:00 WIB (Sen–Sab), cutoff 15:00 WIB, `getTodayPickupTimeId()` (belum ada call site: booking kurir belum dibuat)
 - [x] **Berat produk** (`products.berat`, gram) sebagai dasar ongkir — form OMS + kolom tabel + badge "Belum diisi", total berat keranjang, hitung ulang server-side di `orders/create`
 - [x] Validasi form checkout (nama/telepon/email/alamat/kurir) + gating tombol "Bayar Sekarang"
 - [x] Template email konfirmasi pesanan (`src/emails/`, preview di `/dev/email-preview`)

@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/mengantar-pickup",
+      "schedule": "0 23 * * 0-5"
+    }
+  ]
+}
