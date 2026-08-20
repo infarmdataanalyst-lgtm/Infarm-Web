@@ -213,6 +213,7 @@ src/
 │   │   │                        #   (SEMUA admin-only — memuat origin id & koordinat gudang)
 │   │   ├── stock-mutations/    # list (riwayat mutasi stok, admin-only)
 │   │   ├── cron/                   # mengantar-pickup (GET, dipicu Vercel Cron, guard CRON_SECRET)
+│   │   ├── dev/                    # simulate-payment (DEV-ONLY: NODE_ENV + requireAdmin)
 │   │   └── mengantar/              # address/search (CORS-blocked → proxied) |
 │   │                               #   shipping/estimate (1 gudang) | shipping/options (POST,
 │   │                               #   perbandingan ongkir semua gudang → titik rate limit)
@@ -257,9 +258,12 @@ src/
 │   │                             #   stok efektif, origin id (server-only; TANPA jarak/Haversine)
 │   ├── warehouse-shipping.ts     # Perbandingan ongkir riil antar gudang (paralel + cache 10 mnt)
 │   ├── mengantar-estimate.ts     # Pemetaan respons estimasi Mengantar (dipakai client & server)
+│   ├── mengantar-host.ts         # SATU pintu host Mengantar (MENGANTAR_BASE_URL) — ongkir+time+order
 │   ├── shipping-weight.ts        # SATU pintu berat kirim: gram (DB) -> kilogram (Mengantar), murni
 │   ├── pickup-schedule.ts        # Aturan jadwal pickup: hari kerja, cutoff 15:00 WIB, tanggal efektif (murni)
 │   ├── mengantar-pickup.ts       # SATU pintu time_id pickup: POST /time + tabel harian (server-only)
+│   ├── mengantar-shipment.ts     # SATU pintu booking kurir J&T: POST /order (server-only)
+│   ├── shipment-booking.ts       # Orkestrasi booking setelah bayar sukses + catat hasil/kegagalan
 │   ├── stock-audit.ts            # SATU pintu pencatatan riwayat stok → stock_mutations (server-only)
 │   ├── warehouse-validation.ts   # Validasi form gudang (nama, origin id 24 hex, lat/long berpasangan)
 │   ├── dashboard-period.ts       # Periode & granularity Dashboard OMS (murni, zona WIB)
@@ -509,6 +513,12 @@ lewat `src/lib/shipping-weight.ts` (salah satuan = ongkir 1000× lebih mahal). J
 sendiri (Mengantar sudah menerapkan aturan `ceil(kg − 0,3)`), dan jangan memakai nilai `weight` dari
 client sebagai dasar tagihan — server menghitung ulang dari berat di DB.
 
+**Kurir dibatasi J&T saja** — daftar putih `ALLOWED_COURIER_IDS` di `src/lib/mengantar-estimate.ts`,
+disaring **di server**. Kode kurirnya `'JT'` (kapital, tanpa `&`) untuk cek ongkir **maupun** booking;
+`"jt"` huruf kecil ditolak Mengantar. Booking kurir dipicu setelah pembayaran sukses dan
+**kegagalannya wajib ditandai** (`shipment_status='FAILED'`), jangan silent fail — uang pembeli sudah
+masuk.
+
 **Halaman `/checkout` membaca cookie `infarm_checkout`, BUKAN `infarm_cart`** — setiap aksi menuju
 checkout (tombol Checkout di keranjang maupun "Beli Langsung") WAJIB memanggil `setCheckoutItems(...)`
 lebih dulu. Checkout bersifat atomik lewat RPC `create_order_with_items`, dan minimum pembelian
@@ -626,11 +636,18 @@ XENDIT_CALLBACK_TOKEN            # server-only, WAJIB. Dibandingkan waktu-konsta
                                  # namanya diselaraskan ke header Xendit yang sebenarnya.
 
 # Sudah dipakai sekarang (Jadwal pickup harian Mengantar)
-MENGANTAR_BASE_URL               # server-only, WAJIB. Host API Mengantar untuk POST /time.
-                                 # Saat ini masih https://sandbox.mengantar.com — GANTI ke host
-                                 # produksi sebelum go-live, jadwal pickup sandbox tak nyata.
-                                 # CATATAN: cek ongkir & search alamat TIDAK memakai var ini
-                                 # (keduanya hardcode app.mengantar.com karena endpoint publik).
+MENGANTAR_BASE_URL               # server-only, WAJIB. Host API Mengantar untuk POST /time,
+                                 # POST /order, DAN cek ongkir (allEstimatePublic) — satu pintu
+                                 # di src/lib/mengantar-host.ts. Saat ini masih
+                                 # https://sandbox.mengantar.com — GANTI ke
+                                 # https://app.mengantar.com sebelum go-live.
+                                 # PENTING: cek ongkir & booking WAJIB satu host. Tabel tarif
+                                 # sandbox berbeda jauh dari produksi (J&T 1kg Jakarta->Jakarta:
+                                 # produksi Rp8.000 vs sandbox Rp25.520) dan sandbox mengalikan
+                                 # berat linear, bukan ceil(kg-0,3). Kalau host-nya beda, harga
+                                 # yang DIKUTIP ke pembeli tak akan pernah cocok dengan biaya
+                                 # booking. Search alamat SENGAJA tetap ke app.mengantar.com
+                                 # (master data wilayah & _id identik di kedua host).
 MENGANTAR_API_KEY                # server-only, WAJIB untuk POST /time & POST /order.
                                  # PERHATIAN: key ini menjadi SEGMEN PATH URL
                                  # ({BASE}/api/public/{KEY}/time), bukan header. Jadi URL-nya
@@ -640,6 +657,19 @@ MENGANTAR_API_KEY                # server-only, WAJIB untuk POST /time & POST /o
 MENGANTAR_STORE_ADDRESS_ID       # server-only, WAJIB. _id alamat gudang/toko di Mengantar (ObjectId
                                  # 24 hex) — dikirim sebagai address_id saat membuat slot pickup.
                                  # BEDA dari MENGANTAR_ORIGIN_ID (itu _id kelurahan untuk ongkir).
+MENGANTAR_PICKUP_ORIGIN_ID       # server-only, OPSIONAL tapi SANGAT DISARANKAN selama akun Mengantar
+                                 # hanya punya SATU alamat pickup. _id kelurahan alamat pickup itu
+                                 # (mis. CENGKARENG BARAT). Bila di-set, SELURUH kutipan ongkir
+                                 # memakai origin ini — bukan origin per gudang — sehingga harga yang
+                                 # dilihat pembeli = harga yang benar-benar ditagih saat booking.
+                                 # KENAPA PERLU: POST /order tak punya field origin; Mengantar
+                                 # menagih dari pickup.address_id. Tanpa env ini pembeli bisa dikutip
+                                 # tarif Surabaya lalu ditagih tarif Cengkareng — selisihnya keluar
+                                 # dari saldo Mengantar tanpa jejak di tabel orders.
+                                 # Dibaca HANYA oleh getQuoteOriginId() di src/lib/warehouse.ts.
+                                 # Konsekuensi: semua gudang berharga sama → pemilihan gudang tak
+                                 # lagi berbasis ongkir (jatuh ke gudang ber-stok, default dulu).
+                                 # Cabut setelah tiap gudang punya mengantar_address_id sendiri.
 MENGANTAR_PICKUP_TIME_ID         # server-only, OPSIONAL. Slot pickup STATIS dari era sebelum tabel
                                  # mengantar_daily_pickup ada. Kini hanya CADANGAN LAPIS TERAKHIR di
                                  # getTodayPickupTimeId() bila tabel kosong DAN panggilan POST /time

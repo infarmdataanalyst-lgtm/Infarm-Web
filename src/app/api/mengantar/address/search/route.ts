@@ -16,6 +16,11 @@
 import { NextResponse } from 'next/server'
 import { RATE_LIMITS, enforceRateLimit, getClientIp } from '@/lib/rate-limit'
 
+// SENGAJA tetap ke host produksi, TIDAK mengikuti MENGANTAR_BASE_URL seperti cek ongkir.
+// Alasannya: master data wilayah identik di kedua host — pencarian "Kemayoran" mengembalikan
+// _id yang sama persis di produksi maupun sandbox, dan _id dari produksi terbukti diterima saat
+// booking di sandbox. Jadi tak ada yang perlu diseragamkan, sementara membiarkannya di produksi
+// membuat pencarian alamat tetap hidup walau MENGANTAR_BASE_URL salah isi.
 const MENGANTAR_SEARCH_URL = 'https://app.mengantar.com/api/public/test/address/search'
 
 // Batas panjang keyword (anti payload sampah / relay abuse)

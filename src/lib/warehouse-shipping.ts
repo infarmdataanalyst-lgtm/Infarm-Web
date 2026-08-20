@@ -12,21 +12,24 @@
 // Buyer memilih kurir seperti biasa; gudang mana yang memenuhi tidak perlu ia ketahui.
 
 import {
-  isSelectableCourier,
+  isOfferableCourier,
   mapCourierEstimates,
   type RawCourierEstimate,
   type ShippingCourier,
 } from '@/lib/mengantar-estimate'
+import { mengantarEstimateUrl } from '@/lib/mengantar-host'
 import { readStockRows, readWarehouses } from '@/lib/mock-db/warehouses'
 import {
   getDefaultWarehouse,
-  getOriginIdForWarehouse,
+  getQuoteOriginId,
   isMultiWarehouse,
   type StockRequirement,
 } from '@/lib/warehouse'
 import type { Warehouse } from '@/types/warehouse'
 
-const ESTIMATE_URL = 'https://app.mengantar.com/api/order/allEstimatePublic'
+// Host cek ongkir mengikuti MENGANTAR_BASE_URL (lihat lib/mengantar-host.ts) supaya tarif yang
+// dikutip ke pembeli berasal dari LINGKUNGAN YANG SAMA dengan booking kurir. Dulu hardcode ke
+// produksi sementara booking di sandbox — dua tabel tarif berbeda, angkanya tak pernah cocok.
 
 // Timeout per gudang. Satu gudang yang lambat TIDAK boleh menahan seluruh cek ongkir; hasilnya
 // cukup dibuang (gudang itu dianggap tak menawarkan opsi) selama masih ada gudang lain yang balas.
@@ -128,16 +131,17 @@ export async function getEligibleWarehouses(
 
 // === Perbandingan ongkir ===
 
-// Mengambil tarif satu gudang. null bila gagal/timeout/origin belum diisi — pemanggil MENGABAIKAN
-// gudang itu, tidak menggagalkan seluruh cek ongkir.
-async function fetchWarehouseCouriers(
-  warehouse: Warehouse,
+// Mengambil tarif untuk SATU origin. null bila gagal/timeout — pemanggil MENGABAIKAN gudang yang
+// memakai origin itu, tidak menggagalkan seluruh cek ongkir.
+//
+// Kunci pemanggilan = origin, bukan gudang: beberapa gudang bisa berbagi kelurahan asal (dan SELALU
+// begitu ketika MENGANTAR_PICKUP_ORIGIN_ID di-set), sedangkan tarif Mengantar hanya bergantung pada
+// origin+tujuan+berat. Satu panggilan per origin, bukan per gudang.
+async function fetchCouriersForOrigin(
+  originId: string,
   destinationId: string,
   weight: number,
-): Promise<WarehouseShippingOption[] | null> {
-  const originId = await getOriginIdForWarehouse(warehouse.id)
-  if (!originId) return null
-
+): Promise<ShippingCourier[] | null> {
   const params = new URLSearchParams({
     origin_id: originId,
     destination_id: destinationId,
@@ -147,16 +151,17 @@ async function fetchWarehouseCouriers(
   // AbortSignal.timeout dipakai (bukan setTimeout manual) agar fetch benar-benar dibatalkan,
   // bukan hanya diabaikan hasilnya.
   try {
-    const res = await fetch(`${ESTIMATE_URL}?${params.toString()}`, {
+    const res = await fetch(`${mengantarEstimateUrl()}?${params.toString()}`, {
       signal: AbortSignal.timeout(ESTIMATE_TIMEOUT_MS),
     })
     if (!res.ok) return null
     const json = (await res.json()) as { data?: Record<string, RawCourierEstimate> }
-    return mapCourierEstimates(json.data)
-      .filter(isSelectableCourier)
-      .map((c) => ({ ...c, warehouseId: warehouse.id, warehouseName: warehouse.nama }))
+    // Penyaringan DI SISI SERVER: hanya kurir dalam daftar putih (saat ini J&T) yang melewati
+    // batas jaringan. Kalau disaring di client, daftar kurir lain sempat terkirim dan bisa
+    // terlihat sekejap sebelum ter-filter.
+    return mapCourierEstimates(json.data).filter(isOfferableCourier)
   } catch {
-    // Timeout / jaringan / JSON rusak → gudang ini dilewati
+    // Timeout / jaringan / JSON rusak → origin ini dilewati
     return null
   }
 }
@@ -178,17 +183,35 @@ export async function resolveShippingOptions(
     candidates = def ? [def] : []
   }
 
+  // Kelompokkan gudang menurut origin kutipannya. Gudang tanpa origin (konfigurasi belum lengkap)
+  // dibuang di sini — dulu tersaring di dalam fetch, sekarang tak boleh ikut membentuk kelompok.
+  const origins = await Promise.all(candidates.map((w) => getQuoteOriginId(w.id)))
+  const byOrigin = new Map<string, Warehouse[]>()
+  candidates.forEach((w, i) => {
+    const originId = origins[i]
+    if (!originId) return
+    const list = byOrigin.get(originId)
+    if (list) list.push(w)
+    else byOrigin.set(originId, [w])
+  })
+
+  const groups = [...byOrigin.entries()]
   const settled = await Promise.allSettled(
-    candidates.map((w) => fetchWarehouseCouriers(w, destinationId, weight)),
+    groups.map(([originId]) => fetchCouriersForOrigin(originId, destinationId, weight)),
   )
 
   const merged: WarehouseShippingOption[] = []
   let responded = 0
-  for (const s of settled) {
-    if (s.status !== 'fulfilled' || s.value === null) continue
-    responded += 1
-    merged.push(...s.value)
-  }
+  groups.forEach(([, warehouses], i) => {
+    const s = settled[i]
+    if (s.status !== 'fulfilled' || s.value === null) return
+    // Satu tarif dipakai bersama seluruh gudang dalam kelompok — masing-masing tetap muncul sebagai
+    // opsi tersendiri karena pembuatan order memakai daftar ini untuk fallback gudang.
+    responded += warehouses.length
+    for (const w of warehouses) {
+      merged.push(...s.value.map((c) => ({ ...c, warehouseId: w.id, warehouseName: w.nama })))
+    }
+  })
 
   // Urut termurah → termahal. Harga sama → gudang default lebih dulu tidak dipaksakan di sini;
   // urutan alami hasil paralel sudah cukup dan tarifnya identik bagi buyer.

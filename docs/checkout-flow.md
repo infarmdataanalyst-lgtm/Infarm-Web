@@ -160,32 +160,178 @@ setiap re-run cron meninggalkan slot pickup terlantar di sistem kurir.
 - **`MENGANTAR_BASE_URL` masih sandbox** (`https://sandbox.mengantar.com`) — jadwal pickup yang
   dibuat tidak nyata. Ganti ke host produksi **beserta API key produksi** sebelum go-live.
 
-#### Kontrak `POST /order` — untuk booking kurir (BELUM diimplementasi)
+### Host Mengantar — SATU PINTU di `src/lib/mengantar-host.ts`
 
-Dicatat di sini supaya tak perlu ditebak saat booking dikerjakan:
+`MENGANTAR_BASE_URL` menentukan host untuk **cek ongkir, `POST /time`, DAN `POST /order`**.
+Sebelumnya cek ongkir hardcode ke `app.mengantar.com` sementara booking memakai env → kita
+**mengutip harga produksi lalu membooking di sandbox**.
+
+**Tabel tarif sandbox BUKAN tarif nyata** (J&T, 1 kg, terukur):
+
+| Rute | `app.mengantar.com` | `sandbox.mengantar.com` |
+|---|---|---|
+| Surabaya → Surabaya | Rp4.800 | Rp61.200 |
+| Surabaya → Jakarta | Rp11.200 | Rp18.640 |
+| Jakarta → Jakarta | Rp8.000 | Rp25.520 |
+
+Bukti bahwa sandbox dummy: intra-Surabaya di sandbox **lebih mahal** daripada Surabaya→Jakarta —
+mustahil pada tarif nyata. **Aturan pembulatan berat juga beda**: produksi memakai
+`ceil(kg − 0,3)`, sandbox mengalikan **linear** (18.640 × 1,03 = 19.199). Jadi jangan pernah
+memvalidasi aturan pembulatan terhadap sandbox.
+
+- **Beralih lingkungan = ganti satu env var + redeploy.** Tak ada perubahan kode.
+- **Search alamat SENGAJA tetap ke `app.mengantar.com`** dan tidak mengikuti env: master data
+  wilayah identik di kedua host (pencarian "Kemayoran" mengembalikan `_id` yang sama persis, dan
+  `_id` dari produksi terbukti diterima saat booking di sandbox). Membiarkannya di produksi membuat
+  pencarian alamat tetap hidup walau `MENGANTAR_BASE_URL` salah isi.
+- **⚠️ Selama sandbox aktif, perbandingan gudang jadi terbalik.** Dengan tarif sandbox, Gudang Utama
+  (Surabaya) tampak LEBIH MURAH (±Rp19k) daripada Gudang Jakarta (±Rp26k), padahal di produksi
+  justru sebaliknya (Rp11.200 vs Rp8.000). Jadi selama pengujian setiap pesanan akan diarahkan ke
+  gudang Surabaya — sementara booking selalu berangkat dari alamat pickup Cengkareng.
+  Lihat "Origin gudang vs alamat pickup" di bawah.
+
+### Origin gudang vs alamat pickup — BELUM selaras
+
+| Gudang (tabel `warehouses`) | `mengantar_origin_id` menunjuk ke | Alamat pickup booking |
+|---|---|---|
+| Gudang Utama Infarm (**default**) | **SURABAYA** / Sukolilo / Keputih | Cengkareng, Jakarta Barat |
+| Gudang Jakarta | Jakarta Barat / Cengkareng / Kedaung Kali Angke | Cengkareng, Jakarta Barat |
+
+Cek ongkir membandingkan **origin per gudang**, tapi booking memakai **satu**
+`MENGANTAR_STORE_ADDRESS_ID` (`PICKUP_ADDRESS "Jl Melati no 9"`, `CENGKARENG BARAT`). Artinya paket
+SELALU dijemput di Cengkareng, kurirnya menagih rute dari Cengkareng, tapi pembeli bisa dikutip
+tarif dari Surabaya. Hanya **Gudang Jakarta** yang konsisten.
+
+#### Penyelarasan sekarang: `MENGANTAR_PICKUP_ORIGIN_ID`
+
+Diselaraskan lewat **satu env**, dibaca hanya oleh `getQuoteOriginId()` di `src/lib/warehouse.ts`:
+
+```
+MENGANTAR_PICKUP_ORIGIN_ID=5fc62f5ff8f44b34aa4c0dbc   # CENGKARENG BARAT — kelurahan alamat pickup
+```
+
+Bila di-set, **seluruh kutipan ongkir** memakai origin ini, apa pun gudang pemenuhnya → harga yang
+dilihat pembeli = harga yang benar-benar ditagih saat booking. Kosong → perilaku lama (origin per
+gudang) tanpa perubahan kode.
+
+Seluruh kelurahan Cengkareng berbagi `ORIGIN_CODE: CGK10000` dan `JT_Code: JKT001`, jadi kelurahan
+mana pun di Cengkareng memberi tarif identik — nilai di atas tak perlu persis sama dengan kelurahan
+`PICKUP_ADDRESS`, cukup satu zona asal yang sama.
+
+**Konsekuensi yang disengaja:** semua gudang jadi berharga sama, jadi pemilihan gudang **tak lagi
+berbasis ongkir**. Pemenangnya cukup gudang ber-stok, deterministik lewat `resolveWarehouseForOrder`
+(gudang default didahulukan). `resolveShippingOptions` kini mengelompokkan gudang per origin dan
+memanggil Mengantar **satu kali per origin**, bukan per gudang.
+
+Jalan keluar permanen (belum dikerjakan — lihat ROADMAP.md): tambah kolom `mengantar_address_id` per
+gudang, booking memakai alamat pickup milik gudang pemenuh, lalu **cabut env ini**. Butuh alamat
+gudang Surabaya didaftarkan lebih dulu di dashboard Mengantar + slot `time_id` per alamat (cron
+sekarang hanya membuat satu slot).
+
+### Kurir dibatasi J&T saja
+
+Daftar putih ada di **`src/lib/mengantar-estimate.ts`** (`ALLOWED_COURIER_IDS`, saat ini hanya
+`JT_COURIER_ID = 'JT'`). Menambah kurir lain = tambah satu entri di situ.
+
+- **Kode kurir J&T = `JT`** — dua huruf kapital, TANPA `&` dan tanpa spasi. Terverifikasi lewat
+  probe 4 rute; respons `allEstimatePublic` memuat 16 key (`JNE, JNECargo, SiCepat, SiCepatCargo,
+  SAP, SAPLite, SapCargo, iDexpress, iDlite, JT, lion, iDexpressCargo, anteraja, paxel, Ninja,
+  pos`). Nama `"J&T"` hanya ada di `COURIER_DISPLAY_NAMES` (label kita) dan di
+  `orders.nama_ekspedisi` (`JT_COURIER_LABEL`) — **bukan** di respons Mengantar.
+- **Respons cek ongkir TIDAK punya field `nama_ekspedisi`/`jenis_layanan`.** Bentuknya objek
+  ber-key kode kurir: `{ data: { JT: { estimatedSpecialPrice, estimatedDate, unsupported } } }`.
+  Kolom `nama_ekspedisi`/`jenis_layanan` adalah kolom tabel `orders` kita. Jadi filter
+  "nama_ekspedisi mengandung J&T" tidak akan cocok apa pun.
+- **Dicocokkan EKSAK (`id === 'JT'`), bukan substring `includes('jt')`** — pencocokan longgar akan
+  menyambar key baru yang kebetulan memuat huruf itu, dan pembeli ditawari layanan yang booking-nya
+  belum kita dukung.
+- **Penyaringan DI SISI SERVER**, di `warehouse-shipping.ts` sebelum respons dikirim. Kurir lain
+  tak pernah melewati batas jaringan — tak ada kedipan daftar kurir lain di UI.
+- **Daftar kosong → `reason: 'NO_JT_SERVICE'`** (dulu `NO_COURIER_AVAILABLE`), dan checkout
+  menampilkan *"Maaf, J&T tidak melayani pengiriman ke alamat ini saat ini."* Dibedakan dari
+  `ESTIMATE_UNAVAILABLE` yang layak dicoba ulang.
+- **Opsi termurah AUTO-SELECTED** saat dimuat (`selected` masih null). Nama kurir cuma satu, jadi
+  memaksa buka-sheet-lalu-Konfirmasi adalah langkah kosong. Sheet tetap ada karena dengan beberapa
+  gudang J&T muncul **beberapa kali dengan tarif berbeda**.
+- **`optionKey()` = `warehouseId::courierId`.** WAJIB gabungan: daftar adalah gabungan beberapa
+  gudang, jadi semua baris ber-id `JT`. Memakai `courier.id` saja menyebabkan duplicate React key
+  DAN `find()` mengembalikan baris pertama — buyer melihat tarif gudang A tapi ordernya diarahkan
+  ke gudang B.
+- **SATU baris per kurir (termurah) yang dikirim ke pembeli** — `cheapestPerCourier()` diterapkan di
+  `/api/mengantar/shipping/options` sebelum respons. Tanpa ini, produk yang stoknya ada di beberapa
+  gudang memunculkan dua baris berlabel **persis sama** (`"J&T"`, estimasi sama) yang hanya beda
+  harga, tanpa cara apa pun bagi pembeli membedakannya — dan tak ada alasan seseorang memilih yang
+  lebih mahal. Gejalanya baru telanjang setelah kurir difilter J&T saja; sebelumnya tersamar di
+  antara 16 nama kurir.
+  **Daftar LENGKAP tetap disimpan di cache** `shippingOptionsKey` — `orders/create` memakainya untuk
+  jatuh ke gudang termurah BERIKUTNYA bila gudang pilihan gagal verifikasi stok. Men-dedupe sebelum
+  cache akan menghapus jalur fallback itu.
+- `fetchShippingEstimate` (jalur satu gudang, **tanpa pemanggil**) TIDAK menerapkan daftar putih.
+  Jangan dipakai untuk checkout.
+
+### Booking Kurir (`POST /order`) — TERPASANG
+
+| Berkas | Peran |
+|---|---|
+| `src/lib/mengantar-shipment.ts` | **satu pintu** `POST /order` (server-only, memegang API key) |
+| `src/lib/shipment-booking.ts` | orkestrasi: panggil Mengantar → catat hasil ke pesanan |
+| `src/app/api/webhooks/xendit/route.ts` | pemicu NYATA, di dalam `handlePaid()` |
+| `src/app/api/dev/simulate-payment/route.ts` | pemicu SIMULASI, **development-only** |
+| `supabase/migrations/20260820130000_add_orders_shipment.sql` | kolom `shipment_status/error/booked_at` |
+
+Kontrak terverifikasi terhadap sandbox:
 
 ```
 POST {MENGANTAR_BASE_URL}/api/public/{MENGANTAR_API_KEY}/order
-{
-  "courier": "jt",
+{ "courier": "JT",
   "pickup": { "type": "scheduledPickup", "volume": "volumeMotor",
-              "address_id": "<MENGANTAR_STORE_ADDRESS_ID>",
-              "time_id": "<dari getTodayPickupTimeId()>" },
-  "orders": [{ "goodsValue": 50000, "customerName": "…", "customerPhone": "08…",
-               "customerAddress": "…", "customerAddressDataId": "<destination_id>",
-               "parcelContent": "…", "weight": 1, "quantity": 1 }]
-}
+              "address_id": "<MENGANTAR_STORE_ADDRESS_ID>", "time_id": "<getTodayPickupTimeId()>" },
+  "orders": [{ "goodsValue": 46000, "customerName": "…", "customerPhone": "08…",
+               "customerAddress": "<detail jalan saja>", "customerAddressDataId": "<destination_id>",
+               "parcelContent": "…", "weight": 1, "quantity": 1 }] }
 ```
 
-Pemetaan ke data kita saat nanti dikerjakan:
+Respons: `{ success, data: [ { cnote_no, ORDER_ID, SERVICE_CODE, … } ], batch, batch_id, courier,
+errors: [], ordersClosedDestination: [] }`
 
-| Field Mengantar | Sumber |
-|---|---|
-| `pickup.time_id` | `getTodayPickupTimeId()` |
-| `customerAddressDataId` | `orders.destination_id` (hasil search alamat) |
-| `weight` | **kilogram** — `shippingWeightKg()`, dihitung ulang dari `order_items` di DB |
-| `goodsValue` | subtotal barang dari DB, bukan angka client |
-| `courier` | kurir yang dipilih buyer (`orders.kurir`), perlu pemetaan nama → kode (`jt`, …) |
+- **⚠️ `courier` harus `"JT"` KAPITAL.** Huruf kecil `"jt"` ditolak `400 {"message":"Invalid courier"}`
+  — sudah diuji. Kebetulan sama dengan key di cek ongkir, jadi satu konstanta.
+- **Nomor resi = `data[0].cnote_no`** (mis. `JO9303785004`). `jenis_layanan` diisi dari
+  `data[0].SERVICE_CODE` (mis. `REG`).
+- **`success: true` BUKAN jaminan sukses.** Mengantar bisa menaruh order bermasalah di `errors` /
+  `ordersClosedDestination` sambil tetap `success: true` — keduanya diperiksa
+  (`collectPartialErrors`) dan dianggap **gagal**.
+- **`quantity` = jumlah KOLI, bukan jumlah barang.** Selalu `1`; mengirim total pcs membuat kurir
+  menagih beberapa paket untuk satu kiriman.
+- **`weight` dihitung ulang server** dari `products.berat` (bukan dari client, bukan dari
+  `order_items` yang tak menyimpan berat). `goodsValue` dari `SUM(price × qty)` `order_items` —
+  bukan `totalAmount` yang sudah memuat ongkir & dikurangi diskon.
+- **`customerAddress` hanya detail jalan.** Kota/kecamatan/kelurahan di-resolve Mengantar dari
+  `customerAddressDataId`.
+
+Penanganan kegagalan (poin penting — uang pembeli sudah masuk):
+
+- Pesanan **TETAP tersimpan**. Yang ditandai: `shipment_status = 'FAILED'` + `shipment_error`
+  (alasan + detail), resi TIDAK disentuh. Tabel Pesanan OMS menampilkan badge merah
+  **"Booking gagal"** di kolom No. Resi (tooltip = pesan errornya), dan CSV ekspor punya kolom
+  **"Status Booking Kurir"**.
+- `shipment_status` **NULL ≠ FAILED**: NULL = belum pernah dicoba (pesanan lama / belum dibayar).
+  Tanpa pembedaan ini resi kosong tak bisa dibedakan dari pesanan yang memang belum waktunya.
+- **Idempoten**: resi yang sudah terbit tak pernah diganti resi baru (paket fisiknya sudah
+  berlabel). Callback ulang → `ALREADY_BOOKED`.
+- **Kegagalan booking TIDAK membuat webhook membalas non-2xx.** Pembayarannya sah dan sudah
+  tercatat; mengulang callback tak memperbaiki alamat yang salah, hanya menumpuk percobaan booking.
+- `BOOKED_BUT_NOT_SAVED` = resi terbit di Mengantar tapi gagal tercatat. Paling berbahaya (tak ada
+  jejak) → dicatat sekeras mungkin di log.
+- Kolom `shipment_*` belum di-migrate → `updateShipment` **tetap menyimpan resi** lewat fallback
+  `PGRST204`/`42703`, hanya status booking yang tak tercatat.
+
+**⚠️ Ongkir yang dikutip vs biaya booking bisa BEDA bila `MENGANTAR_PICKUP_ORIGIN_ID` kosong.**
+`POST /order` tak punya field origin — Mengantar menagih dari `pickup.address_id`. Terbukti pada
+`INV-20260820-4876`: gudang pemenuh Surabaya, dikutip Surabaya→Kemayoran Rp18.000, ditagih
+Cengkareng→Kemayoran ±Rp25.000. Selisihnya keluar dari saldo Mengantar dan **tak tercatat di pesanan
+mana pun** (tabel `orders` tidak punya kolom ongkir sama sekali — lihat ROADMAP.md).
+Penyelarasannya: bagian "Origin gudang vs alamat pickup" di atas.
 - **Belum ada call site.** Booking kurir belum dibuat, jadi `getTodayPickupTimeId()` belum dipanggil
   dari alur order mana pun. Saat booking dikerjakan, panggil dari route handler
   (`POST /api/orders/create` atau endpoint booking terpisah) — **bukan** Server Action; project ini

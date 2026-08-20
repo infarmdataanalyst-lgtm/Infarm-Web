@@ -10,13 +10,14 @@
 
 import { NextResponse } from 'next/server'
 import { RATE_LIMITS, enforceRateLimit, getClientIp } from '@/lib/rate-limit'
-import { getOriginIdForWarehouse, resolveWarehouseForOrder } from '@/lib/warehouse'
+import { mengantarEstimateUrl } from '@/lib/mengantar-host'
+import { getQuoteOriginId, resolveWarehouseForOrder } from '@/lib/warehouse'
 import type { StockRequirement } from '@/lib/warehouse'
 
 // createAdminClient (dipakai lapisan gudang) butuh runtime Node.js, bukan Edge
 export const runtime = 'nodejs'
 
-const ESTIMATE_URL = 'https://app.mengantar.com/api/order/allEstimatePublic'
+// Host mengikuti MENGANTAR_BASE_URL — lihat lib/mengantar-host.ts.
 
 // Mengurai param opsional `items` → daftar kebutuhan stok, untuk memilih gudang asal di mode multi.
 // Format ringkas agar tetap satu GET (bisa di-cache & di-rate-limit seperti sekarang):
@@ -52,10 +53,11 @@ export async function GET(request: Request) {
 
   // Endpoint ini melayani SATU gudang saja (jalur lama). Perbandingan ongkir antar gudang untuk
   // checkout ada di /api/mengantar/shipping/options — lihat catatan di file itu.
-  // Origin bersumber dari GUDANG, bukan env; getOriginIdForWarehouse tetap jatuh ke env bila
-  // kolomnya kosong, jadi ongkir tak pernah mati hanya karena data gudang belum lengkap.
+  // Origin kutipan lewat getQuoteOriginId: MENGANTAR_PICKUP_ORIGIN_ID menang bila di-set (agar harga
+  // yang dikutip = harga yang ditagih saat booking), sisanya origin gudang lalu env lama — jadi
+  // ongkir tak pernah mati hanya karena data gudang belum lengkap.
   const warehouse = await resolveWarehouseForOrder(parseItemsParam(searchParams.get('items')))
-  const originId = await getOriginIdForWarehouse(warehouse?.id)
+  const originId = await getQuoteOriginId(warehouse?.id)
 
   if (!originId) {
     return NextResponse.json({ error: 'Konfigurasi pengiriman belum lengkap.' }, { status: 500 })
@@ -68,7 +70,7 @@ export async function GET(request: Request) {
   })
 
   try {
-    const res = await fetch(`${ESTIMATE_URL}?${params.toString()}`)
+    const res = await fetch(`${mengantarEstimateUrl()}?${params.toString()}`)
     if (!res.ok) throw new Error(`Upstream ${res.status}`)
     const json = await res.json()
     return NextResponse.json(json)

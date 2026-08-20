@@ -68,10 +68,11 @@ Search alamat + cek ongkir **sudah jalan**, dan ongkir kini memakai **berat riil
 
 | Pekerjaan | Detail |
 |---|---|
-| Booking kurir otomatis (via webhook pembayaran) — **jadwal pickup harian (`time_id`) sudah siap**, tinggal dipakai | [docs/checkout-flow.md](docs/checkout-flow.md) → Jadwal Pickup Harian |
-| Ganti `MENGANTAR_BASE_URL` + `MENGANTAR_API_KEY` dari sandbox ke PRODUKSI (kontrak `POST /time` sudah terverifikasi) | [docs/checkout-flow.md](docs/checkout-flow.md) → Jadwal Pickup Harian |
-| Pemetaan nama kurir kita → kode kurir Mengantar (`jt`, …) untuk field `courier` di `POST /order` | [docs/checkout-flow.md](docs/checkout-flow.md) → Kontrak POST /order |
-| Tracking resi otomatis + pengisian `no_tracking` | [docs/checkout-flow.md](docs/checkout-flow.md) → Alur Post-Payment |
+| **Alamat pickup per gudang** — `MENGANTAR_PICKUP_ORIGIN_ID` sudah menyelaraskan kutipan dengan tagihan (semua kutipan dari zona alamat pickup), tapi harganya: pemilihan gudang tak lagi berbasis ongkir. Solusi permanen: daftarkan alamat tiap gudang di dashboard Mengantar → kolom `warehouses.mengantar_address_id` → booking pakai alamat gudang pemenuh + `time_id` per alamat → cabut env-nya | [docs/checkout-flow.md](docs/checkout-flow.md) → Origin gudang vs alamat pickup |
+| **Tabel `orders` tak punya kolom ongkir** — ongkir melebur ke `jumlah_total`, jadi selisih kutipan vs tagihan Mengantar tak bisa dideteksi otomatis (ditemukan manual dengan membandingkan dashboard Mengantar). Usul: `ongkir INT` (dikutip) + `ongkir_aktual INT` (ditagih) supaya OMS bisa menandai pesanan yang selisih | [docs/checkout-flow.md](docs/checkout-flow.md) → Booking Kurir |
+| **Ganti `MENGANTAR_BASE_URL` + `MENGANTAR_API_KEY` dari sandbox ke PRODUKSI setelah pengujian selesai.** Satu env var itu kini menentukan host cek ongkir SEKALIGUS booking, jadi tak ada perubahan kode. Selama masih sandbox, tarif yang dilihat pembeli adalah angka dummy (Jakarta→Jakarta Rp25.520 vs produksi Rp8.000) | [docs/checkout-flow.md](docs/checkout-flow.md) → Host Mengantar |
+| Ganti endpoint simulasi dev (`/api/dev/simulate-payment`) dengan Xendit sungguhan begitu pembuatan invoice terpasang | [docs/checkout-flow.md](docs/checkout-flow.md) → Booking Kurir |
+| Tracking status paket otomatis (webhook/polling Mengantar) — `no_tracking` SUDAH terisi otomatis saat booking | [docs/checkout-flow.md](docs/checkout-flow.md) → Booking Kurir |
 | `MENGANTAR_API_KEY` belum dipakai (cek ongkir tak butuh key) | `CLAUDE.md` → Environment Variables |
 | **Berat saat booking kurir wajib dihitung ulang dari `order_items` di DB** (belum ada call site — booking belum dibuat) | [docs/checkout-flow.md](docs/checkout-flow.md) → Berat Kirim |
 | **Berat per varian** — `product_variants` belum punya kolom berat, semua varian memakai berat produk induk | [docs/oms-dashboard.md](docs/oms-dashboard.md) → Berat Produk |
@@ -183,6 +184,7 @@ Dipindah dari `CLAUDE.md` → "Domain: Ecommerce & OMS". Daftar ini campuran `[x
 - [x] Halaman pembatalan pesanan Guest (`/order-cancellation` token) + by no_telepon 2 langkah (`/cancel-order`)
 - [x] Rate-limit endpoint publik rawan bot (lacak/batalkan/review by no_telepon, proxy Mengantar alamat+ongkir, create order, submit ulasan) — in-memory, ambang batas terpusat di `src/lib/rate-limit.ts`; belum terpusat lintas-instance (kandidat migrasi Supabase/Redis)
 - [x] Search alamat + **cek ongkir** Mengantar di checkout (client; ongkir masuk ke total)
+- [x] **Kurir dibatasi J&T** (daftar putih server-side, kode `JT`) + booking kurir otomatis setelah pembayaran sukses (resi `cnote_no` → `orders.no_tracking`, kegagalan ditandai `shipment_status=FAILED`)
 - [x] **Jadwal pickup harian Mengantar** — tabel `mengantar_daily_pickup`, Vercel Cron 06:00 WIB (Sen–Sab), cutoff 15:00 WIB, `getTodayPickupTimeId()` (belum ada call site: booking kurir belum dibuat)
 - [x] **Berat produk** (`products.berat`, gram) sebagai dasar ongkir — form OMS + kolom tabel + badge "Belum diisi", total berat keranjang, hitung ulang server-side di `orders/create`
 - [x] Validasi form checkout (nama/telepon/email/alamat/kurir) + gating tombol "Bayar Sekarang"

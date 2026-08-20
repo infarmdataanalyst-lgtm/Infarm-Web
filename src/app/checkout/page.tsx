@@ -302,7 +302,11 @@ export default function CheckoutPage() {
           // Server menghitung ulang total dari harga DB + ongkir + diskon (totalAmount client diabaikan)
           totalAmount: total, // dikirim untuk kompatibilitas; server tetap hitung ulang
           shippingCost: selectedCourier.price,
-          logistics: { courier: selectedCourier.name, service: selectedCourier.estimatedDate },
+          // service = JENIS LAYANAN, bukan estimasi tiba. Dulu diisi estimatedDate sehingga
+          // kolom jenis_layanan di OMS berisi "2-4 hari" — menyesatkan. Nilai final ditulis ulang
+          // oleh booking kurir dengan SERVICE_CODE dari Mengantar (mis. 'REG'); ini hanya nilai
+          // awal sebelum pembayaran sukses.
+          logistics: { courier: selectedCourier.name, service: 'Reguler' },
           // Gudang asal tarif yang dipilih buyer + berat yang dipakai saat cek ongkir.
           // Server memverifikasi ulang gudang ini (aktif & stok cukup) dan, bila gagal, jatuh ke
           // opsi termurah berikutnya dari perbandingan ongkir yang masih tersimpan di server.

@@ -16,6 +16,17 @@ import { formatRupiah } from '@/lib/format'
 import BottomSheet from '@/components/checkout/BottomSheet'
 import { fetchShippingOptions, type WarehouseShippingOption } from '@/lib/mengantar'
 
+// Identitas satu baris pilihan: gudang + kode kurir.
+//
+// WAJIB gabungan, bukan `courier.id` saja. Daftar ini adalah GABUNGAN hasil beberapa gudang, jadi
+// kurir yang sama muncul sekali per gudang dengan tarif berbeda — dan sejak kurir dibatasi J&T
+// saja, SEMUA baris ber-id 'JT'. Memakai id saja berakibat dua hal: React memperingatkan
+// duplicate key, dan `find(c => c.id === draftId)` mengembalikan baris PERTAMA yang cocok —
+// buyer bisa melihat tarif gudang A tapi ordernya diarahkan ke gudang B.
+function optionKey(option: WarehouseShippingOption): string {
+  return `${option.warehouseId}::${option.id}`
+}
+
 // Menampilkan tombol trigger + bottom sheet pemilihan kurir.
 // onSelect dipanggil saat buyer menekan "Konfirmasi" (bukan saat sekadar memilih card).
 export default function ShippingOptions({
@@ -36,6 +47,9 @@ export default function ShippingOptions({
   const [couriers, setCouriers] = useState<WarehouseShippingOption[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  // Alasan daftar kosong. Dipisah dari `error` karena maknanya beda bagi buyer: `error` layak
+  // dicoba ulang, `emptyReason` tidak — alamatnya yang tak terlayani.
+  const [emptyReason, setEmptyReason] = useState('')
   const [retry, setRetry] = useState(0)
 
   const [open, setOpen] = useState(false)
@@ -69,6 +83,7 @@ export default function ShippingOptions({
     async function load() {
       setLoading(true)
       setError('')
+      setEmptyReason('')
       try {
         const { options, reason } = await fetchShippingOptions(
           destinationId,
@@ -78,9 +93,17 @@ export default function ShippingOptions({
         )
         if (ctrl.signal.aborted) return
         setCouriers(options)
-        // Semua gudang gagal/timeout → beri tahu bahwa ini layak dicoba ulang, bukan alamatnya salah
-        if (options.length === 0 && reason === 'ESTIMATE_UNAVAILABLE') {
-          setError('Gagal memuat ongkos kirim, silakan coba lagi')
+        if (options.length === 0) {
+          if (reason === 'ESTIMATE_UNAVAILABLE') {
+            // Semua gudang gagal/timeout → layak dicoba ulang, bukan alamatnya yang salah
+            setError('Gagal memuat ongkos kirim, silakan coba lagi')
+          } else {
+            // J&T tak melayani rute ini. Sebut kurirnya dengan jelas — "belum ada kurir tersedia"
+            // membuat buyer menyangka seluruh alamatnya bermasalah dan mencoba ulang tanpa guna.
+            setEmptyReason(
+              'Maaf, J&T tidak melayani pengiriman ke alamat ini saat ini. Coba gunakan alamat lain.',
+            )
+          }
         }
       } catch (err) {
         if (!ctrl.signal.aborted) {
@@ -96,22 +119,40 @@ export default function ShippingOptions({
     return () => ctrl.abort()
   }, [destinationId, weight, itemsKey, retry])
 
-  // Server sudah memfilter kurir tak terlayani & mengurutkan termurah; pengurutan diulang di sini
-  // sebagai jaring pengaman agar tampilan tetap benar walau bentuk respons berubah.
+  // Server sudah memfilter kurir (daftar putih J&T + yang benar-benar melayani) dan mengurutkan
+  // termurah; pengurutan diulang di sini sebagai jaring pengaman bila bentuk respons berubah.
   const supported = useMemo(() => [...couriers].sort((a, b) => a.price - b.price), [couriers])
 
+  // Auto-pilih opsi termurah saat baru dimuat dan buyer belum memilih apa pun.
+  //
+  // Sejak kurir dibatasi J&T saja, tinggal satu nama kurir — memaksa buyer membuka sheet lalu
+  // menekan "Konfirmasi" hanya untuk satu-satunya pilihan adalah langkah kosong yang menahan tombol
+  // "Bayar Sekarang". Ongkirnya tetap terlihat di baris trigger, dan sheet tetap bisa dibuka: bila
+  // ada beberapa gudang, J&T muncul beberapa kali dengan tarif berbeda dan buyer masih boleh
+  // memilih yang lain.
+  //
+  // Hanya berjalan saat `selected` masih null → tidak pernah menimpa pilihan buyer, dan tidak
+  // menahannya kalau ia sengaja memilih opsi yang lebih mahal.
+  useEffect(() => {
+    if (selected || supported.length === 0) return
+    onSelect(supported[0])
+    // onSelect sengaja tak masuk dependency: identitasnya bisa berubah tiap render induk
+    // (fungsi inline), yang akan membuat efek ini berjalan berulang.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supported, selected])
+
   const disabled = !destinationId
-  const draftValid = supported.some((c) => c.id === draftId)
+  const draftValid = supported.some((c) => optionKey(c) === draftId)
 
   // Buka sheet dengan pilihan awal = kurir yang sudah dikonfirmasi (bila ada)
   function openSheet() {
-    setDraftId(selected?.id ?? '')
+    setDraftId(selected ? optionKey(selected) : '')
     setOpen(true)
   }
 
   // Simpan pilihan & tutup sheet
   function handleConfirm() {
-    const courier = supported.find((c) => c.id === draftId)
+    const courier = supported.find((c) => optionKey(c) === draftId)
     if (courier) onSelect(courier)
     setOpen(false)
   }
@@ -171,20 +212,26 @@ export default function ShippingOptions({
               </button>
             </div>
           ) : supported.length === 0 ? (
-            <p className="rounded-lg border border-orange-200 bg-orange-50 px-3 py-4 text-sm text-orange-800">
-              Belum ada kurir tersedia ke alamat tujuan.
-            </p>
+            <div className="rounded-lg border border-orange-200 bg-orange-50 p-4">
+              <div className="flex items-start gap-2 text-orange-800">
+                <AlertTriangle className="mt-0.5 h-5 w-5 flex-none" />
+                <p className="text-sm leading-relaxed">
+                  {emptyReason || "Belum ada kurir tersedia ke alamat tujuan."}
+                </p>
+              </div>
+            </div>
           ) : (
             <ul className="space-y-2" role="radiogroup" aria-label="Pilihan kurir">
               {supported.map((courier) => {
-                const active = courier.id === draftId
+                const key = optionKey(courier)
+                const active = key === draftId
                 return (
-                  <li key={courier.id}>
+                  <li key={key}>
                     <button
                       type="button"
                       role="radio"
                       aria-checked={active}
-                      onClick={() => setDraftId(courier.id)}
+                      onClick={() => setDraftId(key)}
                       className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left transition ${
                         active
                           ? 'border-brand-primary bg-brand-surface ring-1 ring-brand-primary'

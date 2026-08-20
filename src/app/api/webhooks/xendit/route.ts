@@ -29,6 +29,7 @@ import {
 } from '@/lib/mock-db/orders'
 import { restoreStock } from '@/lib/mock-db/products'
 import { recordOrderStockChanges } from '@/lib/stock-audit'
+import { bookShipmentForPaidOrder } from '@/lib/shipment-booking'
 import {
   parseInvoiceCallback,
   resolvePaymentOutcome,
@@ -145,7 +146,15 @@ async function handlePaid(order: Order, invoice: string, transactionId?: string)
   revalidatePath('/oms/dashboard')
 
   console.log(`${LOG} invoice=${invoice} → Lunas / Diproses`)
-  return NextResponse.json({ received: true, handled: true, status: 'PAID' })
+
+  // Booking kurir dipicu di sini — inilah titik "pembayaran sukses".
+  // `updated` (bukan `order`) yang dipakai: ia hasil baca ulang setelah status berubah, jadi
+  // memuat data terkini. Kegagalan booking TIDAK mengubah balasan ke Xendit menjadi non-2xx:
+  // pembayarannya memang sudah sah dan sudah tercatat: mengulang callback tak akan memperbaiki
+  // alamat yang salah, dan retry berulang justru menumpuk percobaan booking.
+  const shipment = await bookShipmentForPaidOrder(updated, LOG)
+
+  return NextResponse.json({ received: true, handled: true, status: 'PAID', shipment })
 }
 
 // === Pembayaran kedaluwarsa / gagal ===

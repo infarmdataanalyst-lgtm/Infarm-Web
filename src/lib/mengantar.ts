@@ -68,8 +68,9 @@ const OPTIONS_URL = '/api/mengantar/shipping/options'
 
 // Mengambil pilihan kurir dari SELURUH gudang yang stoknya cukup, sudah diurutkan termurah.
 // Inilah jalur yang dipakai checkout: gudang pemenuh ditentukan oleh ongkir riil, bukan jarak.
-// `reason` terisi bila daftarnya kosong: 'NO_COURIER_AVAILABLE' (tak ada kurir ke alamat itu) atau
-// 'ESTIMATE_UNAVAILABLE' (semua gudang gagal/timeout → layak dicoba ulang).
+// `reason` terisi bila daftarnya kosong: 'NO_JT_SERVICE' (J&T tak melayani alamat itu — kurir lain
+// TIDAK ditawarkan, lihat daftar putih di mengantar-estimate.ts) atau 'ESTIMATE_UNAVAILABLE'
+// (semua gudang gagal/timeout → layak dicoba ulang).
 export async function fetchShippingOptions(
   destinationId: string,
   weight: number,
@@ -91,8 +92,11 @@ export async function fetchShippingOptions(
   return { options: json.options ?? [], reason: json.reason }
 }
 
-// Cek ongkir SATU gudang (gudang default) — jalur lama, dipertahankan untuk pemanggil non-checkout.
-// Mengembalikan SEMUA kurir (termasuk unsupported); pemanggil yang memfilter & mengurutkan.
+// Cek ongkir SATU gudang (gudang default) — jalur lama, TANPA pemanggil saat ini.
+// Mengembalikan SEMUA kurir (termasuk unsupported) dan TIDAK menerapkan daftar putih J&T.
+// ⚠️ Jangan pakai ini untuk checkout: hasilnya menawarkan kurir yang booking-nya belum kita dukung.
+// Pakai fetchShippingOptions di atas. Bila kelak dipakai lagi, saring dengan isOfferableCourier()
+// dari @/lib/mengantar-estimate.
 export async function fetchShippingEstimate(
   destinationId: string,
   weight: number,

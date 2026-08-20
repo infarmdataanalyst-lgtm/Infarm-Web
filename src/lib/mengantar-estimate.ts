@@ -62,3 +62,59 @@ export function mapCourierEstimates(
 export function isSelectableCourier(courier: ShippingCourier): boolean {
   return !courier.unsupported && courier.price > 0
 }
+
+// === Kurir yang diizinkan ditawarkan ke pembeli ===
+
+// Kode kurir J&T pada respons allEstimatePublic. Terverifikasi lewat probe 4 rute: key-nya PERSIS
+// 'JT' — dua huruf kapital, tanpa '&' dan tanpa spasi. Nama "J&T" hanya ada di
+// COURIER_DISPLAY_NAMES (label tampilan kita), BUKAN di respons Mengantar.
+export const JT_COURIER_ID = 'JT'
+
+// Label yang disimpan ke orders.nama_ekspedisi & ditampilkan di OMS.
+// Dipisah dari kode API supaya kolom DB tak berisi 'JT' yang tak bermakna bagi admin.
+export const JT_COURIER_LABEL = 'J&T'
+
+// Daftar putih kurir yang boleh ditawarkan. Saat ini hanya J&T (keputusan bisnis: satu kurir agar
+// booking & penanganan resi seragam).
+//
+// Dicocokkan EKSAK, bukan substring 'jt' case-insensitive. Alasannya: respons memuat 16 key
+// (JNE, JNECargo, SiCepat, SAPLite, iDexpress, JT, lion, anteraja, paxel, Ninja, pos, …) dan
+// pencocokan substring akan ikut menyambar kurir lain begitu Mengantar menambah key baru yang
+// kebetulan memuat huruf itu — pembeli tiba-tiba ditawari layanan yang belum kita dukung booking-nya.
+// Menambah layanan lain = tambah satu entri di sini, bukan melonggarkan pencocokan.
+const ALLOWED_COURIER_IDS = new Set<string>([JT_COURIER_ID])
+
+// Apakah kurir ini boleh ditawarkan ke pembeli. DIPAKAI DI SISI SERVER — kurir yang tak lolos
+// tak pernah melewati batas jaringan, jadi tak ada kedipan daftar kurir lain sebelum tersaring.
+export function isAllowedCourier(courier: ShippingCourier): boolean {
+  return ALLOWED_COURIER_IDS.has(courier.id)
+}
+
+// Kurir yang lolos SEMUA syarat: diizinkan bisnis + benar-benar melayani rute.
+export function isOfferableCourier(courier: ShippingCourier): boolean {
+  return isAllowedCourier(courier) && isSelectableCourier(courier)
+}
+
+// === Dedupe untuk tampilan pembeli ===
+
+// Menyisakan SATU baris per kode kurir: yang termurah.
+//
+// Daftar mentah adalah gabungan hasil beberapa gudang, jadi kurir yang sama muncul sekali per
+// gudang. Sejak kurir dibatasi J&T, pembeli melihat dua baris berlabel identik ("J&T", estimasi
+// sama) yang hanya beda harga — tanpa cara apa pun untuk membedakannya, dan tanpa alasan seseorang
+// memilih yang lebih mahal. Gudang asal memang bukan urusan pembeli (lihat header
+// ShippingOptions.tsx), jadi yang ditawarkan cukup harga terbaik untuk kurir itu.
+//
+// PENTING: dipakai HANYA untuk respons ke pembeli. Daftar LENGKAP tetap disimpan di cache
+// perbandingan ongkir, karena pembuatan order memakainya untuk jatuh ke gudang termurah BERIKUTNYA
+// bila gudang pilihan gagal verifikasi stok. Men-dedupe sebelum cache akan menghapus jalur itu.
+//
+// Generik atas T supaya bisa dipakai untuk ShippingCourier maupun WarehouseShippingOption.
+export function cheapestPerCourier<T extends { id: string; price: number }>(options: T[]): T[] {
+  const best = new Map<string, T>()
+  for (const o of options) {
+    const current = best.get(o.id)
+    if (!current || o.price < current.price) best.set(o.id, o)
+  }
+  return [...best.values()].sort((a, b) => a.price - b.price)
+}

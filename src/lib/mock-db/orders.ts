@@ -97,6 +97,10 @@ type OrderRow = {
   order_status: string
   destination_id: string | null
   warehouse_id?: string | null // gudang pemenuh (kolom baru; null untuk pesanan lama)
+  // Hasil booking kurir (kolom baru; undefined bila migration shipment belum di-apply)
+  shipment_status?: string | null
+  shipment_error?: string | null
+  shipment_booked_at?: string | null
   created_at: string
 }
 
@@ -225,6 +229,13 @@ function rowToOrder(row: OrderRow, items: OrderItem[], warehouseNames?: Map<stri
     order.logistics = { courier: row.nama_ekspedisi ?? '', service: row.jenis_layanan ?? '' }
   }
   if (row.no_tracking) order.trackingNumber = row.no_tracking
+  // Status booking kurir. Hanya dua nilai yang dikenal app; nilai lain (atau kolom yang belum
+  // di-migrate) dibiarkan undefined agar UI menampilkannya sebagai "belum dibooking".
+  if (row.shipment_status === "BOOKED" || row.shipment_status === "FAILED") {
+    order.shipmentStatus = row.shipment_status
+  }
+  if (row.shipment_error) order.shipmentError = row.shipment_error
+  if (row.shipment_booked_at) order.shipmentBookedAt = row.shipment_booked_at
   if (row.id_transaksi) order.transactionId = row.id_transaksi
   // Gudang pemenuh — dipakai saat pembatalan untuk mengembalikan stok ke gudang yang benar
   if (row.warehouse_id) {
@@ -721,6 +732,78 @@ export async function updatePaymentStatus(
 
   if (error) {
     console.error('Gagal memperbarui status pembayaran di Supabase:', error.message)
+    return null
+  }
+  if (!data) return null
+
+  return getOrderByOrderId(orderId)
+}
+
+// === Hasil booking kurir (shipment) ===
+
+// Menandai hasil booking kurir pada sebuah pesanan.
+//
+// `booked` memisahkan dua jalur yang efeknya sangat berbeda bagi admin:
+//   - berhasil → resi + ekspedisi + layanan tersimpan, shipment_error DIKOSONGKAN (percobaan
+//     sebelumnya yang gagal tak boleh terus tampil sebagai peringatan setelah berhasil).
+//   - gagal    → shipment_status 'FAILED' + alasannya, dan resi TIDAK disentuh. Pembayaran sudah
+//     masuk, jadi pesanannya tetap ada; yang ditandai adalah bahwa ia butuh tindakan manual.
+//
+// Status alur pesanan (`order_status`) TIDAK diubah di sini — itu wewenang updateOrderStatus.
+// Booking berhasil tidak sama dengan barang sudah dikirim; kurir baru menjemput nanti.
+export type ShipmentUpdate =
+  | { booked: true; trackingNumber: string; courier: string; service: string }
+  | { booked: false; error: string }
+
+export async function updateShipment(
+  orderId: string,
+  update: ShipmentUpdate,
+): Promise<Order | null> {
+  const supabase = createAdminClient()
+  const patch: Record<string, string | null> = {}
+
+  if (update.booked) {
+    patch.shipment_status = 'BOOKED'
+    patch.shipment_error = null
+    patch.shipment_booked_at = new Date().toISOString()
+    patch.no_tracking = update.trackingNumber
+    patch.nama_ekspedisi = update.courier
+    patch.jenis_layanan = update.service
+  } else {
+    patch.shipment_status = 'FAILED'
+    // Dipotong agar satu respons pihak ketiga yang panjang tak membengkakkan baris pesanan.
+    patch.shipment_error = update.error.slice(0, 500)
+  }
+
+  let { data, error } = await supabase
+    .from('orders')
+    .update(patch)
+    .eq('nomor_invoice', orderId)
+    .select('id')
+    .maybeSingle()
+
+  // Jaring pengaman bila kolom shipment_* belum di-migrate: ulangi tanpa kolom itu supaya resi
+  // tetap tersimpan (yang paling berguna bagi pembeli), bukan gagal total.
+  // PGRST204 = kolom tak dikenal PostgREST; 42703 = kolom tak ada di Postgres.
+  if (error?.code === 'PGRST204' || error?.code === '42703') {
+    console.error(
+      `${'[orders]'} kolom shipment_* belum di-migrate — status booking ${orderId} tidak tercatat`,
+    )
+    const fallback = { ...patch }
+    delete fallback.shipment_status
+    delete fallback.shipment_error
+    delete fallback.shipment_booked_at
+    if (Object.keys(fallback).length === 0) return getOrderByOrderId(orderId)
+    ;({ data, error } = await supabase
+      .from('orders')
+      .update(fallback)
+      .eq('nomor_invoice', orderId)
+      .select('id')
+      .maybeSingle())
+  }
+
+  if (error) {
+    console.error('Gagal menyimpan hasil booking kurir:', error.message)
     return null
   }
   if (!data) return null

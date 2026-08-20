@@ -120,6 +120,30 @@ export async function getOriginIdForWarehouse(warehouseId?: string): Promise<str
   )
 }
 
+// === Origin KUTIPAN ongkir (boleh berbeda dari origin gudang) ===
+
+// Origin yang dipakai untuk MENGUTIP ongkir ke pembeli.
+//
+// Kenapa terpisah dari getOriginIdForWarehouse: `POST /order` Mengantar TIDAK punya field origin
+// sama sekali — biaya kirim dihitung dari `pickup.address_id`, yaitu satu alamat penjemputan milik
+// akun (MENGANTAR_STORE_ADDRESS_ID). Selama akun cuma punya SATU alamat pickup, mengutip dari origin
+// per-gudang membuat pembeli melihat harga rute yang tak pernah dipakai:
+//   INV-20260820-4876 — dikutip Surabaya→Kemayoran Rp18.000, ditagih Cengkareng→Kemayoran Rp25.000.
+//   Selisihnya keluar dari saldo Mengantar dan tak tercatat di pesanan mana pun.
+//
+// MENGANTAR_PICKUP_ORIGIN_ID = _id kelurahan alamat pickup tersebut. Bila di-set, SELURUH kutipan
+// memakai origin ini sehingga harga yang dilihat pembeli = harga yang benar-benar ditagih.
+// Konsekuensi yang disengaja: semua gudang berharga sama, jadi pemilihan gudang tak lagi berbasis
+// ongkir — pemenangnya cukup gudang ber-stok (deterministik lewat resolveWarehouseForOrder).
+//
+// Kosong → perilaku lama (origin per gudang). Cabut env ini setelah tiap gudang punya alamat pickup
+// sendiri di Mengantar (lihat ROADMAP.md → kolom warehouses.mengantar_address_id).
+export async function getQuoteOriginId(warehouseId?: string): Promise<string> {
+  const pinned = process.env.MENGANTAR_PICKUP_ORIGIN_ID?.trim()
+  if (pinned) return pinned
+  return getOriginIdForWarehouse(warehouseId)
+}
+
 // === Stok efektif ===
 
 // Stok yang "berlaku" untuk satu produk/varian.

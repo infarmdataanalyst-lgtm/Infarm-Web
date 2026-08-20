@@ -67,6 +67,11 @@ export type Order = {
   // tak pernah dikirim ke storefront. undefined bila pesanan lama (warehouse_id NULL) atau gudangnya
   // sudah dihapus; UI menampilkannya sebagai "Belum ditentukan".
   warehouseName?: string
+  // Hasil booking kurir Mengantar. undefined = belum pernah dicoba (pesanan lama / belum dibayar).
+  // FAILED = pembayaran sudah masuk tapi resi gagal terbit -> WAJIB ditindaklanjuti admin.
+  shipmentStatus?: "BOOKED" | "FAILED"
+  shipmentError?: string // alasan kegagalan terakhir (untuk admin OMS)
+  shipmentBookedAt?: string // ISO, kapan resi terbit
 }
 
 // Payload dari checkout ke API (sebelum disimpan). nomor_invoice digenerate di server.

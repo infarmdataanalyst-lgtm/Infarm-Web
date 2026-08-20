@@ -11,6 +11,7 @@
 
 import { NextResponse } from 'next/server'
 import { RATE_LIMITS, enforceRateLimit, getClientIp } from '@/lib/rate-limit'
+import { cheapestPerCourier } from '@/lib/mengantar-estimate'
 import { resolveShippingOptions } from '@/lib/warehouse-shipping'
 import type { StockRequirement } from '@/lib/warehouse'
 
@@ -68,15 +69,21 @@ export async function POST(request: Request) {
     const result = await resolveShippingOptions(items, destinationId, weight)
 
     if (result.options.length === 0) {
-      // Bedakan "tak ada kurir melayani" dari "semua gudang gagal merespons" supaya UI bisa
+      // Bedakan "J&T tak melayani alamat itu" dari "semua gudang gagal merespons" supaya UI
       // menyarankan tindakan yang tepat (ganti alamat vs coba lagi).
+      //
+      // Karena daftar putih kurir kini hanya J&T (lihat isOfferableCourier), gudang yang MENJAWAB
+      // tapi tak menghasilkan opsi berarti tepatnya: J&T tak melayani rute itu. Kurir lain memang
+      // ada di respons Mengantar, tapi sengaja tidak ditawarkan.
       const reason =
-        result.warehousesResponded === 0 ? 'ESTIMATE_UNAVAILABLE' : 'NO_COURIER_AVAILABLE'
+        result.warehousesResponded === 0 ? 'ESTIMATE_UNAVAILABLE' : 'NO_JT_SERVICE'
       return NextResponse.json({ options: [], reason }, { status: 200 })
     }
 
+    // Satu baris per kurir (termurah) untuk pembeli. Daftar LENGKAP tetap di cache server dan
+    // dipakai orders/create sebagai jalur fallback gudang — lihat cheapestPerCourier().
     return NextResponse.json({
-      options: result.options,
+      options: cheapestPerCourier(result.options),
       warehousesConsidered: result.warehousesConsidered,
       warehousesResponded: result.warehousesResponded,
     })

@@ -7,7 +7,7 @@
 
 import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Download, ChevronLeft, ChevronRight, Inbox, Eye } from 'lucide-react'
+import { Download, ChevronLeft, ChevronRight, Inbox, Eye, AlertTriangle } from 'lucide-react'
 import OmsHeader from '@/components/oms/OmsHeader'
 import OrderStatusModal from '@/components/oms/OrderStatusModal'
 import WarehouseMultiFilter from '@/components/oms/WarehouseMultiFilter'
@@ -225,6 +225,7 @@ function OrdersContent() {
       'Kurir',
       'Layanan',
       'No. Resi',
+      'Status Booking Kurir',
       'Pembayaran',
       'Status',
       'Gudang',
@@ -240,6 +241,7 @@ function OrdersContent() {
         o.logistics?.courier ?? '',
         o.logistics?.service ?? '',
         o.trackingNumber ?? '',
+        o.shipmentStatus === 'FAILED' ? `GAGAL: ${o.shipmentError ?? ''}` : (o.shipmentStatus ?? ''),
         o.paymentStatus,
         o.status ?? '',
         warehouseLabel(o),
@@ -514,9 +516,24 @@ function OrdersContent() {
                           <span className="text-gray-300">—</span>
                         )}
                       </td>
-                      {/* No. Resi */}
+                      {/* No. Resi — plus penanda bila booking kurir GAGAL.
+                          Pembayaran sudah masuk pada titik itu, jadi baris seperti ini WAJIB
+                          terlihat: tanpa penanda, resi kosong tak bisa dibedakan dari pesanan
+                          yang memang belum waktunya dibooking. */}
                       <td className="px-5 py-4 font-mono text-xs text-gray-500">
-                        {order.trackingNumber ?? '—'}
+                        {order.trackingNumber ? (
+                          order.trackingNumber
+                        ) : order.shipmentStatus === 'FAILED' ? (
+                          <span
+                            title={order.shipmentError ?? 'Booking kurir gagal'}
+                            className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-red-50 px-2 py-1 font-sans text-[11px] font-semibold text-red-700"
+                          >
+                            <AlertTriangle className="h-3 w-3" />
+                            Booking gagal
+                          </span>
+                        ) : (
+                          '—'
+                        )}
                       </td>
                       {/* Pembayaran */}
                       <td className="px-5 py-4">
