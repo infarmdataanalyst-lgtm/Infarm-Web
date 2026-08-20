@@ -245,6 +245,27 @@ gudang, booking memakai alamat pickup milik gudang pemenuh, lalu **cabut env ini
 gudang Surabaya didaftarkan lebih dulu di dashboard Mengantar + slot `time_id` per alamat (cron
 sekarang hanya membuat satu slot).
 
+### Logo kurir — `src/lib/courier-logo.ts` + `CourierLogo.tsx`
+
+Tampil di baris trigger "Metode Pengiriman" (36px) dan di tiap opsi bottom sheet (44px).
+Susunan baris: `[logo] [nama + estimasi tiba] … [harga] [centang bila terpilih]`.
+
+- **Peta kurir→file** di `src/lib/courier-logo.ts` (`COURIER_LOGOS`). Kunci = kode kurir yang sudah
+  dinormalkan `normalizeCourierKey()` (huruf besar, buang non-alfanumerik) sehingga `'JT'` dari
+  `courier.id`, `'J&T'` dari `courier.name`, dan `orders.nama_ekspedisi` **menghasilkan logo yang
+  sama**. File di `public/images/couriers/<kode huruf kecil>.png` (lihat README di folder itu).
+- **Menambah kurir = taruh file + satu baris di peta.** Tak ada gaya/ukuran yang perlu disentuh.
+- **Radio button lama DIHAPUS**; logo mengambil tempatnya. Penanda terpilih = border+ring hijau
+  kartu, ditambah centang di ujung kanan. Ruang centang tetap disediakan saat tak aktif supaya
+  harga tak bergeser ketika buyer berpindah pilihan. `role="radio"`/`aria-checked` dipertahankan.
+- **Kotak logo SELALU putih**, termasuk saat kartu aktif berlatar `brand-surface`. Logo kurir
+  umumnya PNG transparan berwarna gelap; membiarkannya di atas latar hijau membuatnya menempel ke
+  ring penanda pilihan. Karena itu README mensyaratkan logo BERWARNA, bukan versi putih.
+- **File belum ada → jatuh ke ikon truk** lewat `onError` (karena itu `CourierLogo` `'use client'`).
+  Terverifikasi: `GET /images/couriers/jt.png` 404 → ikon truk, tanpa gambar rusak. Catatan: 404-nya
+  tetap muncul di console browser, jadi entri di `COURIER_LOGOS` sebaiknya hanya ditambahkan setelah
+  filenya benar-benar ada.
+
 ### Kurir dibatasi J&T saja
 
 Daftar putih ada di **`src/lib/mengantar-estimate.ts`** (`ALLOWED_COURIER_IDS`, saat ini hanya

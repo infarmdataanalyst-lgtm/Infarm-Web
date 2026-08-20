@@ -298,6 +298,10 @@ src/
 # public/images/email/: aset gambar email (mis. logo-infarm.png) — lihat README di folder tsb
 # public/images/categories/<slug>.(webp|jpg): foto latar tombol kategori beranda (CategoryGrid resolve fs)
 # public/images/icons/{cart,user}.png: ikon UI header (512px, PUTIH, transparan — latar header hijau)
+# public/images/couriers/<kode-kurir>.png: logo kurir di checkout (mis. jt.png). Nama file = kode
+#   kurir dari respons Mengantar huruf kecil; peta di src/lib/courier-logo.ts. BERWARNA (kotaknya
+#   selalu putih), transparan, bujur sangkar. Belum ada file → jatuh ke ikon truk. Lihat README
+#   di folder tsb
 # public/images/value-props/<slug>.png: ikon 4 keunggulan beranda (512px, BERWARNA, transparan —
 #   lingkaran latar #E8F5E0 terang; nama file = slug judul, lihat ValuePropositionBanner)
 # public/images/hero-background(.jpg) + hero-background-mobile.(jpg|webp|png): bg hero art-direction

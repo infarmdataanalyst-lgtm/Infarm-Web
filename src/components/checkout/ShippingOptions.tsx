@@ -2,8 +2,11 @@
 
 // src/components/checkout/ShippingOptions.tsx
 // Pemilihan kurir & ongkir (Mengantar) lewat pola bottom sheet (seperti PaymentModal):
-// tombol trigger menampilkan kurir terpilih → klik membuka bottom sheet berisi daftar kurir
-// (radio card, termurah→termahal) → "Konfirmasi" menyimpan pilihan.
+// tombol trigger menampilkan logo + kurir terpilih → klik membuka bottom sheet berisi daftar kurir
+// (kartu berlogo, termurah→termahal) → "Konfirmasi" menyimpan pilihan.
+//
+// Tiap baris: [logo kurir] [nama + estimasi tiba] … [harga] [centang bila terpilih].
+// Logo dari CourierLogo (peta kurir→file di lib/courier-logo.ts).
 //
 // Daftar kurir = GABUNGAN hasil perbandingan ongkir dari SEMUA gudang yang stoknya cukup
 // (/api/mengantar/shipping/options). Buyer tidak perlu tahu tarif itu dari gudang mana — ia hanya
@@ -11,9 +14,10 @@
 // membuat order, lalu diverifikasi ulang di server.
 
 import { useEffect, useMemo, useState } from 'react'
-import { Truck, ChevronRight, Loader2, AlertTriangle, Check, X } from 'lucide-react'
+import { ChevronRight, Loader2, AlertTriangle, Check, X } from 'lucide-react'
 import { formatRupiah } from '@/lib/format'
 import BottomSheet from '@/components/checkout/BottomSheet'
+import CourierLogo from '@/components/checkout/CourierLogo'
 import { fetchShippingOptions, type WarehouseShippingOption } from '@/lib/mengantar'
 
 // Identitas satu baris pilihan: gudang + kode kurir.
@@ -171,9 +175,9 @@ export default function ShippingOptions({
         title={disabled ? 'Pilih alamat pengiriman terlebih dahulu' : undefined}
         className="flex w-full items-center gap-3 bg-white px-4 py-4 text-left transition active:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-60"
       >
-        <span className="shrink-0 text-brand-primary">
-          <Truck className="h-6 w-6" />
-        </span>
+        {/* Logo kurir terpilih; belum memilih → CourierLogo jatuh ke ikon truk generik.
+            Buyer jadi mengenali kurirnya tanpa perlu membuka sheet. */}
+        <CourierLogo courier={selected?.id} label={selected?.name} size="sm" />
         <div className="min-w-0 flex-1">
           <p className="text-xs text-zinc-500">Metode Pengiriman</p>
           <p className={`truncate text-sm font-semibold ${selected ? 'text-zinc-800' : 'text-zinc-400'}`}>
@@ -238,13 +242,10 @@ export default function ShippingOptions({
                           : 'border-zinc-200 bg-white hover:border-brand-light'
                       }`}
                     >
-                      <span
-                        className={`flex h-5 w-5 flex-none items-center justify-center rounded-full border ${
-                          active ? 'border-brand-primary bg-brand-primary text-white' : 'border-zinc-300'
-                        }`}
-                      >
-                        {active && <Check className="h-3.5 w-3.5" />}
-                      </span>
+                      {/* Logo kurir menggantikan bulatan radio yang dulu di sini: ia lebih cepat
+                          dikenali daripada nama yang harus dibaca, dan penanda "terpilih" sudah
+                          dibawa oleh border+ring hijau kartu ini. */}
+                      <CourierLogo courier={courier.id} label={courier.name} size="md" />
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-semibold text-zinc-800">{courier.name}</p>
                         <p className="text-xs text-zinc-500">Estimasi tiba: {courier.estimatedDate}</p>
@@ -252,6 +253,17 @@ export default function ShippingOptions({
                       <p className="flex-none text-sm font-bold text-brand-primary">
                         {formatRupiah(courier.price)}
                       </p>
+                      {/* Centang penanda pilihan, dipindah ke ujung kanan. Ruangnya DISEDIAKAN
+                          walau tak aktif (bukan render kondisional) supaya harga tidak bergeser
+                          saat buyer berpindah pilihan. */}
+                      <span
+                        className={`flex h-5 w-5 flex-none items-center justify-center rounded-full ${
+                          active ? 'bg-brand-primary text-white' : 'bg-transparent'
+                        }`}
+                        aria-hidden
+                      >
+                        {active && <Check className="h-3.5 w-3.5" />}
+                      </span>
                     </button>
                   </li>
                 )
@@ -286,7 +298,8 @@ function SkeletonList() {
       </div>
       {[0, 1, 2].map((i) => (
         <div key={i} className="flex items-center gap-3 rounded-xl border border-zinc-200 p-3">
-          <div className="h-5 w-5 flex-none animate-pulse rounded-full bg-zinc-100" />
+          {/* Ukurannya mengikuti kotak logo (44px) agar tinggi baris tak melompat saat data tiba */}
+          <div className="h-11 w-11 flex-none animate-pulse rounded-lg bg-zinc-100" />
           <div className="min-w-0 flex-1">
             <div className="h-3.5 w-24 animate-pulse rounded bg-zinc-100" />
             <div className="mt-2 h-3 w-32 animate-pulse rounded bg-zinc-100" />
