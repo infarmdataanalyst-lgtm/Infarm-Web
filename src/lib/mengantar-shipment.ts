@@ -23,6 +23,7 @@
 // sudah diuji. Kebetulan sama dengan key kurir di respons cek ongkir, jadi satu konstanta saja.
 
 import { JT_COURIER_ID } from '@/lib/mengantar-estimate'
+import { mengantarWriteHost } from '@/lib/mengantar-host'
 import { getTodayPickupTimeId } from '@/lib/mengantar-pickup'
 import { readProducts } from '@/lib/mock-db/products'
 import { shippingWeightKg } from '@/lib/shipping-weight'
@@ -58,6 +59,7 @@ export type ShipmentResult =
 
 export type ShipmentFailureReason =
   | 'not-configured' // env belum lengkap
+  | 'blocked-environment' // host produksi ditulis dari luar deployment produksi (penjaga saldo)
   | 'no-pickup-time' // time_id tak bisa didapat (cron & fallback gagal)
   | 'incomplete-order' // data pesanan kurang (alamat/telepon/destination_id)
   | 'http-error' // Mengantar menolak
@@ -141,10 +143,19 @@ function collectPartialErrors(body: unknown): string | null {
 // Tidak menyentuh DB — pemanggil yang menyimpan hasil/kegagalannya, supaya modul ini bisa diuji
 // dan supaya keputusan "apa yang dilakukan saat gagal" ada di satu tempat (route handler).
 export async function createShipmentOrder(order: Order): Promise<ShipmentResult> {
-  const base = process.env.MENGANTAR_BASE_URL
+  // Host lewat penjaga tulis (lib/mengantar-host.ts): host PRODUKSI hanya boleh dibooking dari
+  // deployment produksi. Ini dicek PALING AWAL — sebelum menyentuh DB atau membuat slot pickup —
+  // supaya lingkungan yang diblokir tak meninggalkan efek samping apa pun.
+  const writeHost = mengantarWriteHost()
+  if (!writeHost.allowed) {
+    console.warn(`${LOG} booking ${order.orderId} DIBATALKAN — ${writeHost.reason}`)
+    return { ok: false, reason: 'blocked-environment', detail: writeHost.reason }
+  }
+  const base = writeHost.host
+
   const key = process.env.MENGANTAR_API_KEY
   const addressId = process.env.MENGANTAR_STORE_ADDRESS_ID
-  if (!base || !key || !addressId) {
+  if (!key || !addressId) {
     return { ok: false, reason: 'not-configured', detail: 'env Mengantar belum lengkap' }
   }
 

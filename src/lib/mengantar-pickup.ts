@@ -17,6 +17,7 @@
 // 3. Nama field `time_id` di respons belum dipastikan (contoh curl tak menyertakan responsnya),
 //    jadi extractTimeId sengaja toleran terhadap beberapa penamaan.
 
+import { mengantarWriteHost } from '@/lib/mengantar-host'
 import { getPickupByDate, savePickup, type DailyPickup } from '@/lib/mock-db/pickup'
 import {
   PICKUP_TIME_HHMM,
@@ -52,7 +53,7 @@ export type CreateTimeResult =
   | { ok: true; timeId: string }
   | {
       ok: false
-      reason: 'not-configured' | 'http-error' | 'no-time-id' | 'network'
+      reason: 'not-configured' | 'blocked-environment' | 'http-error' | 'no-time-id' | 'network'
       detail?: string
     }
 
@@ -91,11 +92,19 @@ function extractTimeId(body: unknown): string | null {
 // Meminta slot pickup baru ke Mengantar untuk satu tanggal. TIDAK menyentuh DB — pemisahan ini
 // membuat pemanggil yang menyimpan hasilnya bisa memutuskan sendiri apa yang dilakukan saat gagal.
 export async function createPickupTime(date: string): Promise<CreateTimeResult> {
-  const base = process.env.MENGANTAR_BASE_URL
   const key = process.env.MENGANTAR_API_KEY
   const addressId = process.env.MENGANTAR_STORE_ADDRESS_ID
 
-  if (!base || !key || !addressId) {
+  // Host lewat penjaga tulis (lib/mengantar-host.ts): host produksi hanya boleh ditulis dari
+  // deployment produksi. Membaca MENGANTAR_BASE_URL langsung di sini akan memutar balik penjaganya.
+  const writeHost = mengantarWriteHost()
+  if (!writeHost.allowed) {
+    console.warn(`${LOG} slot pickup ${date} DIBATALKAN — ${writeHost.reason}`)
+    return { ok: false, reason: 'blocked-environment', detail: writeHost.reason }
+  }
+  const base = writeHost.host
+
+  if (!key || !addressId) {
     // Salah konfigurasi KITA, bukan gangguan Mengantar — dibedakan agar log tak menyesatkan.
     return { ok: false, reason: 'not-configured' }
   }

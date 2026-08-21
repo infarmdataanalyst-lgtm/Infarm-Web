@@ -697,6 +697,62 @@ XENDIT_SECRET_KEY                # server-only (untuk MEMBUAT invoice; webhook t
 
 ---
 
+## ⛔ Panggilan API Berbayar — WAJIB Konfirmasi Pemilik Proyek
+
+**Jangan pernah memanggil endpoint pihak ketiga yang menghabiskan uang atau menerbitkan dokumen
+nyata tanpa persetujuan eksplisit pemilik proyek lebih dulu.** Ini berlaku untuk siapa pun/apa pun
+yang bekerja di repo ini, termasuk asisten AI.
+
+Yang termasuk **panggilan TULIS berbayar**:
+
+| Panggilan | Akibatnya |
+|---|---|
+| `POST {host}/api/public/{KEY}/order` | Memotong saldo Mengantar + menerbitkan resi nyata. **Tak bisa dibatalkan dari sisi kita** |
+| `POST {host}/api/public/{KEY}/time` | Membuat slot penjemputan di akun Mengantar |
+| `POST /api/dev/simulate-payment` | Menandai LUNAS lalu **memicu booking kurir** — sama mahalnya dengan pembayaran sungguhan |
+| Xendit `api.xendit.co` | Membuat invoice/charge = uang sungguhan |
+
+Yang **bebas dipanggil** (gratis, tanpa API key, tanpa efek samping): cek ongkir
+`allEstimatePublic`, search alamat `/api/public/test/address/search`, dan seluruh endpoint lokal
+`/api/...` milik app ini yang hanya membaca.
+
+**Verifikasi kontrak API dilakukan dengan MEMBACA** — kode, dokumen, respons yang sudah pernah
+tercatat di `docs/` — **bukan** dengan memanggil endpoint berbayar berulang kali sampai bentuknya
+ketemu. Kalau memang harus memanggil: jelaskan dulu apa yang akan dipanggil dan berapa biayanya,
+lalu biarkan pemilik proyek yang menjalankannya.
+
+**Latar belakang (kenapa aturan ini ada):** saat integrasi booking kurir dikerjakan, verifikasi
+kontrak API dijalankan dengan 4 kali booking sungguhan ke sandbox tanpa bertanya lebih dulu.
+Saldo terpotong oleh kiriman uji yang **bercampur** dengan pengujian pemilik proyek, dan dashboard
+Mengantar tak punya penanda apa pun untuk membedakan keduanya — angka yang terpotong jadi tak bisa
+dijelaskan. Di sandbox itu kerugian yang bisa ditoleransi. Dengan kunci produksi, itu uang nyata
+dan paket nyata yang akan dijemput kurir.
+
+### Tiga lapis penegaknya (jangan dilemahkan tanpa diminta)
+
+1. **Penjaga lingkungan** — `mengantarWriteHost()` di `src/lib/mengantar-host.ts`. Host PRODUKSI
+   Mengantar hanya boleh ditulis dari deployment produksi (`NODE_ENV=production` dan bukan preview
+   Vercel). SETIAP titik `POST /order` / `POST /time` **wajib** lewat fungsi ini; membaca
+   `MENGANTAR_BASE_URL` langsung untuk panggilan tulis = memutar balik penjaganya.
+   **Sengaja tanpa jalan pintas** — tuas "izinkan sekali ini" selalu berakhir menyala di tempat
+   yang salah. Mau menguji booking? Sandbox di lokal, atau di deployment produksi sungguhan.
+2. **Hook blokir** — `.claude/hooks/guard-paid-api.cjs` (terdaftar sebagai `PreToolUse` di
+   `.claude/settings.json`). Memblokir perintah shell yang menyentuh endpoint berbayar, **termasuk
+   yang disembunyikan di dalam file skrip** (hook ikut membaca isi file yang disebut di perintah).
+   Jangan mencari jalan lain untuk melewatinya — mengganti nama file, merangkai perintah, atau
+   menyamarkan URL melanggar maksud aturannya.
+3. **Kunci produksi tidak disimpan di mesin lokal** — `MENGANTAR_API_KEY` & `XENDIT_SECRET_KEY`
+   produksi HANYA di environment variable Vercel, tidak pernah di `.env.local`. Ini lapisan
+   terkuat: tanpa kredensial produksi di lokal, tak ada cara menghabiskan uang sungguhan dari sini.
+
+**Lubang yang masih terbuka & sengaja dibiarkan:** `npm run build && npm run start` di mesin lokal
+ber-`NODE_ENV=production` tanpa `VERCEL_ENV`, jadi lapis 1 mengizinkannya menulis ke host produksi.
+Mengetatkannya sampai mewajibkan `VERCEL_ENV=production` akan membuat booking **gagal senyap** bila
+app kelak di-host sendiri (VPS) — pembeli sudah bayar tapi resi tak pernah terbit, jauh lebih buruk.
+Lubang ini ditutup oleh lapis 3, bukan oleh kode.
+
+---
+
 ## Security Rules
 
 - **Jangan expose** `SUPABASE_SERVICE_ROLE_KEY`, `XENDIT_SECRET_KEY`, atau `MENGANTAR_API_KEY` di frontend
