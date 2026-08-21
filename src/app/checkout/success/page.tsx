@@ -17,6 +17,7 @@ import { getOrderByOrderId } from '@/lib/mock-db/orders'
 import { generateCancelToken } from '@/lib/order-token'
 import { formatRupiah } from '@/lib/format'
 import type { Order } from '@/types/order'
+import PayNowButton from './PayNowButton'
 
 // Order contoh bila halaman dibuka tanpa ?order= (mis. preview langsung)
 const FALLBACK_ORDER: Order = {
@@ -56,10 +57,10 @@ function estimasiTiba(iso: string): string {
 export default async function CheckoutSuccessPage({
   searchParams,
 }: {
-  searchParams: Promise<{ invoice?: string; order?: string }>
+  searchParams: Promise<{ invoice?: string; order?: string; pay_error?: string }>
 }) {
   // Utamakan ?invoice= (baru); ?order= tetap didukung untuk tautan lama
-  const { invoice, order: orderParam } = await searchParams
+  const { invoice, order: orderParam, pay_error: payError } = await searchParams
   const key = invoice ?? orderParam
 
   // Ambil order asli dari Supabase berdasarkan nomor_invoice; fallback ke contoh bila tak ketemu
@@ -68,6 +69,35 @@ export default async function CheckoutSuccessPage({
     order = await getOrderByOrderId(key.replace(/^#/, ''))
   }
   const data = order ?? FALLBACK_ORDER
+
+  // === Status dibaca dari DB, BUKAN dari parameter URL ===
+  //
+  // Halaman ini juga menjadi `failure_redirect_url` Xendit, jadi ia bisa dibuka oleh pembeli yang
+  // BELUM membayar maupun yang sudah. Parameter redirect tak pernah dipercaya: siapa pun bisa
+  // mengetiknya, dan status yang sah hanya datang dari webhook. Yang menentukan tampilan di bawah
+  // adalah `status_pembayaran`/`order_status` yang baru saja dibaca dari Supabase.
+  const isPaid = data.paymentStatus === 'Lunas'
+  const isCancelled = data.status === 'Dibatalkan'
+  const awaitingPayment = !isPaid && !isCancelled
+  // Tombol bayar hanya bermakna untuk pesanan sungguhan yang masih menunggu — bukan untuk
+  // FALLBACK_ORDER (halaman dibuka tanpa parameter).
+  const canPay = awaitingPayment && Boolean(order)
+
+  const heading = isCancelled
+    ? 'Pesanan Dibatalkan'
+    : isPaid
+      ? 'Yeay! Pesananmu Sedang Disiapkan'
+      : 'Selesaikan Pembayaran'
+  const headerTitle = isCancelled
+    ? 'Pesanan Dibatalkan'
+    : isPaid
+      ? 'Pesanan Berhasil'
+      : 'Menunggu Pembayaran'
+  const subheading = isCancelled
+    ? 'Pesanan ini sudah dibatalkan. Stok produk telah dilepas kembali.'
+    : isPaid
+      ? 'Terima kasih telah berbelanja!'
+      : 'Pesananmu sudah tersimpan. Selesaikan pembayaran agar segera kami proses.'
   const invoiceLabel = data.orderId.startsWith('#') ? data.orderId : `#${data.orderId}`
   // Token keamanan untuk tautan pembatalan (guest tidak login → tautan dilindungi token)
   const cancelToken = generateCancelToken(data.orderId)
@@ -86,7 +116,7 @@ export default async function CheckoutSuccessPage({
         >
           <X className="h-5 w-5" />
         </Link>
-        <h1 className="text-lg font-bold text-white">Pesanan Berhasil</h1>
+        <h1 className="text-lg font-bold text-white">{headerTitle}</h1>
       </header>
 
       {/* pb-28 (mobile): ruang aman agar konten paling bawah tak tertutup tombol WhatsApp
@@ -126,22 +156,45 @@ export default async function CheckoutSuccessPage({
 
             {/* === Pesan utama (rata tengah di semua lebar layar) === */}
             <div className="mt-4 text-center">
-              <h2 className="text-2xl font-bold text-zinc-900">Yeay! Pesananmu Sedang Disiapkan</h2>
+              <h2 className="text-2xl font-bold text-zinc-900">{heading}</h2>
               <p className="mx-auto mt-2 max-w-xs text-sm text-zinc-500">
-                Terima kasih telah berbelanja!
+                {subheading}
               </p>
             </div>
 
-            {/* === Kartu estimasi pengiriman (informasi, bukan aksi) === */}
-            <div className="mt-6 rounded-2xl bg-brand-primary p-5 text-white">
-              <div className="flex items-center gap-2">
-                <Clock className="h-4 w-4" />
-                <p className="text-sm font-semibold">Estimasi Tiba: {estimasiTiba(data.date)}</p>
+            {/* === Kartu informasi, isinya mengikuti status pembayaran ===
+                Estimasi tiba HANYA ditampilkan bila sudah lunas. Menampilkannya pada pesanan yang
+                belum dibayar adalah janji yang belum tentu ditepati — kurir baru dipesan setelah
+                pembayaran masuk. */}
+            {isPaid ? (
+              <div className="mt-6 rounded-2xl bg-brand-primary p-5 text-white">
+                <div className="flex items-center gap-2">
+                  <Clock className="h-4 w-4" />
+                  <p className="text-sm font-semibold">Estimasi Tiba: {estimasiTiba(data.date)}</p>
+                </div>
+                <p className="mt-1 text-sm text-white/80">
+                  Pesananmu akan segera dikirimkan oleh kurir kami.
+                </p>
               </div>
-              <p className="mt-1 text-sm text-white/80">
-                Pesananmu akan segera dikirimkan oleh kurir kami.
-              </p>
-            </div>
+            ) : isCancelled ? (
+              <div className="mt-6 rounded-2xl border border-rose-200 bg-rose-50 p-5">
+                <p className="text-sm font-semibold text-rose-800">Pesanan ini tidak diproses</p>
+                <p className="mt-1 text-sm text-rose-700">
+                  Jika Anda tetap ingin memesan, silakan buat pesanan baru.
+                </p>
+              </div>
+            ) : (
+              <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-5">
+                <div className="flex items-center gap-2 text-amber-900">
+                  <Clock className="h-4 w-4" />
+                  <p className="text-sm font-semibold">Menunggu Pembayaran</p>
+                </div>
+                <p className="mt-1 text-sm leading-relaxed text-amber-800">
+                  Pesanan diproses setelah pembayaran kami terima. Selesaikan dalam 24 jam —
+                  setelah itu pesanan dibatalkan otomatis dan stok dilepas kembali.
+                </p>
+              </div>
+            )}
           </section>
 
           {/* ================= BLOK 2: rincian item & total =================
@@ -232,6 +285,22 @@ export default async function CheckoutSuccessPage({
               Mobile: blok TERAKHIR, setelah rincian pesanan. Desktop: kiri-bawah (baris 2 grid,
               yang tingginya pas isi) sehingga berhenti tepat di dasar layar. */}
           <div className="space-y-3 lg:col-start-1 lg:row-start-2">
+            {/* Penerbitan tagihan gagal saat checkout (?pay_error=1). Pesanannya TETAP tersimpan —
+                itu yang perlu ditegaskan supaya pembeli tak menyangka harus checkout ulang dan
+                membuat pesanan kedua. */}
+            {canPay && payError && (
+              <div
+                role="alert"
+                className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-relaxed text-amber-800"
+              >
+                Pesanan Anda sudah tersimpan, tapi halaman pembayaran gagal dibuka. Tekan{' '}
+                <strong>Bayar Sekarang</strong> untuk mencoba lagi — jangan checkout ulang.
+              </div>
+            )}
+
+            {/* Tombol bayar hanya muncul untuk pesanan yang MASIH menunggu pembayaran */}
+            {canPay && <PayNowButton invoice={data.orderId} />}
+
             <Link
               href="/track-order"
               className="flex items-center justify-center gap-2 rounded-xl bg-brand-primary py-3 font-heading text-sm font-bold text-white shadow-sm transition hover:brightness-90 active:scale-[0.99]"

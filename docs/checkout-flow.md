@@ -561,10 +561,85 @@ bisa di bawah minimum payment gateway):
 
 ---
 
-## Pembayaran Xendit — Virtual Account (Payment Request v3)
+## Pembayaran Xendit — Invoice API v2 (JALUR AKTIF)
 
-Dua sisi, dibangun terpisah: **penerimaan** (webhook) sudah lama jadi, **pembuatan** (VA) baru
-dipasang. Keduanya bertemu di `orders.nomor_invoice`.
+Keputusan pemilik proyek 2026-08-21: checkout memakai **Invoice API v2**. Pembeli dibawa ke halaman
+pembayaran yang di-host Xendit (`invoice_url`) yang sudah menyediakan semua metode (VA, e-wallet,
+QRIS, retail) tanpa kita membangun UI apa pun.
+
+> Jalur **Payment Request v3 / Virtual Account** (bagian di bawah) **TIDAK dipakai lagi** oleh
+> checkout. Kodenya utuh dan tak dihapus — lihat ROADMAP.md.
+
+| Berkas | Peran |
+|---|---|
+| `src/lib/xendit/config.ts` | satu pintu kredensial + penjaga lingkungan (dipakai kedua jalur) |
+| `src/lib/xendit/invoice.ts` | penyusun payload `POST /v2/invoices` + pemetaan respons |
+| `src/app/api/payments/invoice/route.ts` | endpoint yang dipanggil checkout |
+| `src/app/checkout/success/PayNowButton.tsx` | tombol bayar ulang bila penerbitan gagal / halaman ditutup |
+
+### Alurnya
+
+```
+"Bayar Sekarang" di /checkout
+  → POST /api/orders/create        (RPC atomik: orders + order_items + potong stok)
+  → POST /api/payments/invoice     { invoice: nomor_invoice }
+  → Xendit POST /v2/invoices
+  → window.location.replace(invoice_url)     ← FULL redirect, bukan router.push
+  → pembeli bayar di halaman Xendit
+  → callback "Invoice paid" → /api/webhooks/xendit → Lunas + booking kurir J&T
+  → Xendit redirect ke /checkout/success?invoice=…
+```
+
+### Aturan yang tak boleh dilanggar
+
+- **`external_id` WAJIB `orders.nomor_invoice`**, bukan `orders.id` (UUID). Webhook mencari pesanan
+  dengan `.eq('nomor_invoice', external_id)`; mengisi UUID = SETIAP callback gagal menemukan
+  pesanannya dan pembayaran tak pernah tercatat meski uangnya masuk.
+- **Tagihan diterbitkan SETELAH order tersimpan**, bukan sebelum — ia mengacu pada `nomor_invoice`
+  yang baru dibuat server. Efek samping yang disengaja: penerbitan tagihan gagal **tidak**
+  menghilangkan pesanan; ia tetap ada berstatus Menunggu, dan pembeli diarahkan ke
+  `/checkout/success?invoice=…&pay_error=1` yang menyediakan tombol bayar ulang.
+- **Client hanya mengirim nomor invoice.** Nominal/nama/telepon dibaca dari tabel `orders`.
+- **`invoice_duration` 24 jam** (`INVOICE_DURATION_SECONDS`). Sengaja pendek: pesanan menunggu bayar
+  MENAHAN STOK, dan callback EXPIRED-lah yang melepasnya kembali.
+- **`items` sengaja TIDAK dikirim** ke Xendit. Jumlah harga item ≠ `amount` (amount memuat ongkir
+  dan dikurangi diskon, sementara ongkir tak punya kolom sendiri), dan daftar yang tak berjumlah
+  sama dengan tagihan lebih membingungkan daripada tak ada daftar.
+
+### Notifikasi lewat WhatsApp, bukan email
+
+`orders.email` NULL untuk semua pesanan baru (field email sudah dihapus dari checkout), jadi
+`payer_email` tak dikirim. Sebagai gantinya `customer.mobile_number` + `customer_notification_preference`
+diisi dengan saluran `whatsapp` untuk keempat peristiwa (created/reminder/paid/expired).
+
+- Nomor dikonversi ke E.164 oleh **`toE164Phone()`** di `src/lib/phone.ts` (`08…` → `+628…`).
+  Xendit menolak format lokal. Nomor tak valid → blok `customer` **tak dikirim sama sekali**
+  (mengirim `mobile_number` kosong ditolak).
+- ⚠️ Saluran WhatsApp harus **diaktifkan di Dashboard Xendit** (Settings → Customer notifications).
+  Bila belum, invoice tetap terbit tapi notifikasinya tak terkirim.
+- ⚠️ UNVERIFIED: sebagian versi Invoice API mewajibkan `payer_email`. Bila Xendit menolak dengan
+  `API_VALIDATION_ERROR`, nama field-nya akan muncul apa adanya di log lewat `describeXenditError()`.
+
+### `success_redirect_url` = `failure_redirect_url`
+
+Keduanya menuju `/checkout/success?invoice=…`. Halaman itu membaca status **FRESH dari Supabase**,
+jadi ia menampilkan keadaan sungguhan tanpa mempercayai parameter redirect — status yang sah hanya
+datang dari webhook, dan URL bisa diketik siapa pun.
+
+| Keadaan di DB | Yang tampil |
+|---|---|
+| `Lunas` | "Pesanan Berhasil" + "Yeay! Pesananmu Sedang Disiapkan" + Estimasi Tiba |
+| `Menunggu` | "Menunggu Pembayaran" + "Selesaikan Pembayaran" + kartu amber 24 jam + **tombol Bayar Sekarang** |
+| `Dibatalkan` | "Pesanan Dibatalkan" + catatan stok sudah dilepas |
+
+Estimasi tiba **hanya** muncul saat lunas — menampilkannya pada pesanan yang belum dibayar adalah
+janji yang belum tentu ditepati (kurir baru dipesan setelah pembayaran masuk).
+
+## Pembayaran Xendit — Virtual Account (Payment Request v3, TIDAK AKTIF)
+
+**Tidak dipakai checkout sejak 2026-08-21** (diganti Invoice API di atas). Kode utuh, tak dihapus.
+Dua sisi: **penerimaan** (webhook) sudah lama jadi, **pembuatan** (VA) dibangun lalu ditinggalkan.
+Keduanya bertemu di `orders.nomor_invoice`.
 
 ### Pembuatan VA — `POST /api/payments/create`
 

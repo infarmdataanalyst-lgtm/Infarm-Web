@@ -688,7 +688,14 @@ CRON_SECRET                      # server-only, WAJIB. Vercel otomatis menyisipk
                                  # Tanpa var ini endpoint membalas 500 (bukan 401) — salah
                                  # konfigurasi kita, bukan serangan.
 
-# Sudah dipakai sekarang (Pembuatan Virtual Account Xendit)
+NEXT_PUBLIC_SITE_URL             # PUBLIC/client, OPSIONAL. Asal URL situs (mis.
+                                 # https://infarm.id) untuk menyusun success/failure redirect
+                                 # Xendit. Bila kosong, endpoint menurunkannya dari header
+                                 # x-forwarded-host/proto — cukup benar di Vercel. WAJIB di-set
+                                 # bila memakai domain kustom di depan Vercel, kalau tidak pembeli
+                                 # bisa dipulangkan ke domain *.vercel.app alih-alih domain toko.
+
+# Sudah dipakai sekarang (Pembuatan Invoice / Virtual Account Xendit)
 XENDIT_SECRET_KEY                # server-only, WAJIB agar pembayaran bisa dibuat. JANGAN pernah
                                  # diberi prefix NEXT_PUBLIC_ — key ini bisa membuat invoice,
                                  # menarik dana, dan membaca transaksi.

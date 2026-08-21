@@ -335,11 +335,42 @@ export default function CheckoutPage() {
 
       // Order berhasil → simpan no_telepon ke cookie (auto-recognize di /track-order & /cancel-order),
       // naikkan estimasi pesanan aktif (badge angka header; di-refresh akurat saat buka /pesanan-saya),
-      // kosongkan keranjang, lalu ke halaman sukses.
+      // kosongkan keranjang.
       setGuestPhone(address.phone)
       incrementActiveOrderCount()
       clearCart()
-      router.push(`/checkout/success?invoice=${encodeURIComponent(data.invoice)}`)
+
+      // Terbitkan tagihan Xendit lalu bawa pembeli ke halaman pembayarannya.
+      //
+      // Dilakukan SETELAH order tersimpan — bukan sebelum — karena tagihan mengacu pada
+      // `nomor_invoice` yang baru dibuat server. Urutan ini juga berarti pesanannya TIDAK HILANG
+      // bila penerbitan tagihan gagal: ia tetap ada berstatus Menunggu Pembayaran, dan pembeli
+      // diarahkan ke halaman sukses yang menyediakan tombol bayar ulang.
+      const payRes = await fetch('/api/payments/invoice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoice: data.invoice }),
+      })
+      const payData = (await payRes.json().catch(() => ({}))) as {
+        invoiceUrl?: string
+        error?: string
+      }
+
+      if (payRes.ok && payData.invoiceUrl) {
+        // FULL redirect (bukan router.push): tujuannya domain Xendit, di luar aplikasi ini.
+        // `replace` supaya tombol "kembali" browser tak memantulkan pembeli ke halaman checkout
+        // yang keranjangnya sudah dikosongkan.
+        window.location.replace(payData.invoiceUrl)
+        return
+      }
+
+      // Gagal menerbitkan tagihan → JANGAN biarkan pembeli menyangka pesanannya batal.
+      // Ke halaman sukses (yang menampilkan status sungguhan dari DB + tombol bayar ulang),
+      // sambil membawa alasannya agar bisa ditampilkan di sana.
+      console.error('[checkout] gagal menerbitkan tagihan:', payData.error ?? payRes.status)
+      router.push(
+        `/checkout/success?invoice=${encodeURIComponent(data.invoice)}&pay_error=1`,
+      )
     } catch {
       setToast('Gagal memproses pesanan. Periksa koneksi lalu coba lagi.')
       setIsPaying(false)

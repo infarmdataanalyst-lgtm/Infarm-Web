@@ -56,8 +56,9 @@ Turunan yang menunggu Xendit:
 
 | Pekerjaan | Detail |
 |---|---|
-| **Sambungkan `/api/payments/create` ke halaman `/checkout`** — endpointnya ada, pemanggilnya belum. Butuh keputusan UX: VA ditampilkan di halaman sukses, atau halaman pembayaran tersendiri | [docs/checkout-flow.md](docs/checkout-flow.md) → Pembayaran Xendit |
-| **Nomor VA tidak disimpan** di `orders` (tak ada kolomnya) → pembeli yang menutup halaman kehilangan nomornya. Perlu kolom baru atau pengambilan ulang dari Xendit | [docs/checkout-flow.md](docs/checkout-flow.md) → Pembayaran Xendit |
+| ~~Sambungkan pembayaran ke `/checkout`~~ **SELESAI 2026-08-21** lewat Invoice API v2: checkout → `POST /api/payments/invoice` → redirect ke `invoice_url`. `/checkout/success` kini sadar-status + tombol bayar ulang | [docs/checkout-flow.md](docs/checkout-flow.md) → Pembayaran Xendit (Invoice) |
+| **Jalur VA (Payment Request v3) kini TAK DIPAKAI** — `lib/xendit/payment-request.ts`, `/api/payments/create`, `/test-xendit`. Kode utuh, tak dihapus. Putuskan: hapus, atau hidupkan kembali sebagai pilihan kedua di PaymentModal | [docs/checkout-flow.md](docs/checkout-flow.md) → Virtual Account (TIDAK AKTIF) |
+| **Aktifkan saluran WhatsApp** di Dashboard Xendit (Settings → Customer notifications). Payload sudah mengirim `customer_notification_preference: whatsapp`; tanpa diaktifkan, invoice terbit tapi notifikasi tak terkirim | [docs/checkout-flow.md](docs/checkout-flow.md) → Notifikasi WhatsApp |
 | **Verifikasi kontrak Xendit** pada panggilan pertama, lalu ganti seluruh komentar `UNVERIFIED` dengan bentuk respons yang sebenarnya | `src/lib/xendit/payment-request.ts` |
 | Pesanan `Menunggu` tak punya batas waktu — 18 pesanan lama (6 Juli–14 Agu) menahan 50 unit stok. VA berumur 24 jam akan menutup ini untuk pesanan BARU (callback EXPIRED → stok kembali), tapi yang lama perlu dibersihkan manual atau lewat cron | [docs/checkout-flow.md](docs/checkout-flow.md) → Pembayaran Xendit |
 | ~~webhook → update status order + stok~~ **SUDAH ADA** (`/api/webhooks/xendit`). Sisa alur post-payment yang belum: booking kurir, isi no. resi, hapus cookie keranjang, kirim email | [docs/checkout-flow.md](docs/checkout-flow.md) → Alur Post-Payment (Webhook) |
