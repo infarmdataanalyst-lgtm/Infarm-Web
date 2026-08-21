@@ -766,6 +766,33 @@ export async function updatePaymentStatus(
   return getOrderByOrderId(orderId)
 }
 
+// Menyimpan id transaksi pembayaran (Xendit) TANPA menyentuh status pembayaran.
+//
+// Dipisah dari updatePaymentStatus karena urutannya berbeda: id transaksi terbit saat Virtual
+// Account DIBUAT (pesanan masih Menunggu), sementara status baru berubah nanti ketika callback
+// masuk. Memakai updatePaymentStatus di sini akan menulis ulang status_pembayaran dengan nilai
+// yang belum tentu benar.
+//
+// true bila tersimpan; false bila nomor invoice tak ditemukan / gagal tulis.
+export async function setOrderTransactionId(
+  orderId: string,
+  transactionId: string,
+): Promise<boolean> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('orders')
+    .update({ id_transaksi: transactionId })
+    .eq('nomor_invoice', orderId)
+    .select('id')
+    .maybeSingle()
+
+  if (error) {
+    console.error('Gagal menyimpan id transaksi di Supabase:', error.message)
+    return false
+  }
+  return Boolean(data)
+}
+
 // === Hasil booking kurir (shipment) ===
 
 // Menandai hasil booking kurir pada sebuah pesanan.

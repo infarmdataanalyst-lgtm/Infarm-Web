@@ -688,8 +688,20 @@ CRON_SECRET                      # server-only, WAJIB. Vercel otomatis menyisipk
                                  # Tanpa var ini endpoint membalas 500 (bukan 401) — salah
                                  # konfigurasi kita, bukan serangan.
 
-# Roadmap (belum dipakai)
-XENDIT_SECRET_KEY                # server-only (untuk MEMBUAT invoice; webhook tak butuh key ini)
+# Sudah dipakai sekarang (Pembuatan Virtual Account Xendit)
+XENDIT_SECRET_KEY                # server-only, WAJIB agar pembayaran bisa dibuat. JANGAN pernah
+                                 # diberi prefix NEXT_PUBLIC_ — key ini bisa membuat invoice,
+                                 # menarik dana, dan membaca transaksi.
+                                 # Autentikasi Xendit = HTTP Basic dengan key sebagai USERNAME dan
+                                 # password KOSONG → base64("{KEY}:"), titik dua wajib ada.
+                                 # Dibaca HANYA oleh xenditCredentials() di lib/xendit/config.ts.
+                                 # PENJAGA LINGKUNGAN: kunci LIVE (xnd_production_…) DITOLAK bila
+                                 # dijalankan di luar deployment produksi. Kunci test
+                                 # (xnd_development_…) jalan di mana saja dan tak menyentuh uang
+                                 # sungguhan. Format tak dikenal dianggap LIVE (menolak-dengan-aman).
+                                 # Host sama untuk test & live (api.xendit.co) — yang membedakan
+                                 # lingkungan adalah KUNCINYA, beda dari Mengantar yang punya host
+                                 # sandbox tersendiri.
 ```
 
 > Cara dapat `NEXT_PUBLIC_MENGANTAR_ORIGIN_ID`: panggil endpoint search alamat Mengantar dengan

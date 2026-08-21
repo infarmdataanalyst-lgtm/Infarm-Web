@@ -65,18 +65,27 @@ export type PaymentOutcome =
 export type ParsedCallback = {
   // nomor_invoice pesanan kita
   invoice: string
-  // id invoice di Xendit (untuk orders.id_transaksi); kosong bila tak dikirim
+  // id transaksi di Xendit (untuk orders.id_transaksi); kosong bila tak dikirim
   transactionId?: string
   rawStatus: string
   paidAmount: number
   paymentMethod?: string
+  // Bentuk payload yang cocok — hanya untuk log. Berguna saat dua jalur pembayaran hidup
+  // berdampingan dan perlu tahu callback mana yang datang.
+  source: 'invoice' | 'payment_request'
 }
 
 // Status Xendit yang dianggap "uang sudah masuk".
-// SETTLED = dana sudah diteruskan ke saldo merchant; PAID = pembayaran diterima. Keduanya sah.
-const PAID_STATUSES = new Set(['PAID', 'SETTLED'])
-// EXPIRED = invoice lewat batas waktu. FAILED muncul di sebagian channel.
-const FAILED_STATUSES = new Set(['EXPIRED', 'FAILED'])
+//   Invoice API v2      : PAID (pembayaran diterima), SETTLED (dana masuk saldo merchant)
+//   Payments API v3     : SUCCEEDED, CAPTURED
+const PAID_STATUSES = new Set(['PAID', 'SETTLED', 'SUCCEEDED', 'CAPTURED'])
+// Status yang berarti uangnya TIDAK akan masuk → stok wajib dilepas kembali.
+//   Invoice API v2      : EXPIRED (lewat batas waktu), FAILED
+//   Payments API v3     : VOIDED, CANCELED (ejaan Xendit satu 'L')
+const FAILED_STATUSES = new Set(['EXPIRED', 'FAILED', 'VOIDED', 'CANCELED', 'CANCELLED'])
+// Masih menunggu pembayaran → tak ada yang perlu diubah.
+// REQUIRES_ACTION = VA sudah terbit, pembeli belum transfer (status pertama Payment Request v3).
+const PENDING_STATUSES = new Set(['PENDING', 'REQUIRES_ACTION', 'AWAITING_CAPTURE'])
 
 function asString(v: unknown): string | undefined {
   return typeof v === 'string' && v.trim().length > 0 ? v.trim() : undefined
@@ -107,7 +116,77 @@ export function parseInvoiceCallback(body: unknown): ParsedCallback | null {
     ...(asString(raw.payment_method) || asString(raw.payment_channel)
       ? { paymentMethod: asString(raw.payment_method) ?? asString(raw.payment_channel)! }
       : {}),
+    source: 'invoice',
   }
+}
+
+// === Payments API v3 (Payment Request / Virtual Account) ===
+//
+// Bentuk callback-nya BERBEDA dari Invoice API: datanya bersarang di `data`, referensi kita bernama
+// `reference_id` (bukan `external_id`), dan jenis peristiwanya ada di `event`.
+//
+// ⚠️ UNVERIFIED — disusun dari dokumentasi, belum pernah menerima callback sungguhan. Bentuk yang
+// DIHARAPKAN:
+//   { event: "payment.succeeded",
+//     data: { id, payment_request_id, reference_id, status, amount, currency,
+//             payment_method: { type: "VIRTUAL_ACCOUNT", ... } } }
+// Setelah callback pertama masuk, cocokkan dengan log `[xendit-webhook] masuk …` dan perbarui
+// komentar ini beserta kandidat field di bawah.
+
+// Status turunan dari nama peristiwa, dipakai HANYA bila `data.status` tak ada.
+const EVENT_STATUS_FALLBACK: Record<string, string> = {
+  'payment.succeeded': 'SUCCEEDED',
+  'payment.failed': 'FAILED',
+  'payment.pending': 'PENDING',
+  'payment_method.expired': 'EXPIRED',
+  'payment_method.activated': 'REQUIRES_ACTION',
+}
+
+export function parsePaymentRequestCallback(body: unknown): ParsedCallback | null {
+  if (typeof body !== 'object' || body === null) return null
+  const root = body as Record<string, unknown>
+  if (typeof root.data !== 'object' || root.data === null) return null
+  const data = root.data as Record<string, unknown>
+
+  const invoice = asString(data.reference_id)
+  if (!invoice) return null
+
+  const event = asString(root.event)?.toLowerCase()
+  const rawStatus = asString(data.status) ?? (event ? EVENT_STATUS_FALLBACK[event] : undefined)
+  if (!rawStatus) return null
+
+  // `payment_request_id` DIDAHULUKAN atas `data.id`: ia stabil untuk satu pesanan, sementara
+  // `data.id` adalah id percobaan pembayaran yang bisa berbeda tiap callback. Kolom
+  // orders.id_transaksi harus memuat id yang sama dengan yang disimpan saat VA dibuat.
+  const transactionId = asString(data.payment_request_id) ?? asString(data.id)
+
+  const paymentMethodType =
+    typeof data.payment_method === 'object' && data.payment_method !== null
+      ? asString((data.payment_method as Record<string, unknown>).type)
+      : undefined
+
+  return {
+    invoice,
+    ...(transactionId ? { transactionId } : {}),
+    rawStatus: rawStatus.toUpperCase(),
+    // `amount` = nominal yang benar-benar dibayar. `captured_amount`/`request_amount` sebagai
+    // cadangan bila penamaannya berbeda; nol berarti tak terbaca dan akan tertangkap sebagai
+    // kurang bayar oleh resolvePaymentOutcome (menolak-dengan-aman).
+    paidAmount: asNumber(data.amount) || asNumber(data.captured_amount) || asNumber(data.request_amount),
+    ...(paymentMethodType ? { paymentMethod: paymentMethodType } : {}),
+    source: 'payment_request',
+  }
+}
+
+// === Pintu masuk tunggal ===
+
+// Membaca callback Xendit apa pun bentuknya. Invoice API dicoba lebih dulu (bentuknya lebih
+// spesifik: `external_id` + `status` di akar), lalu Payment Request v3.
+//
+// Dua bentuk dipertahankan berdampingan supaya jalur pembayaran bisa dipindah tanpa mematikan
+// callback yang sudah beredar di Xendit — invoice lama yang belum dibayar tetap tertangani.
+export function parseXenditCallback(body: unknown): ParsedCallback | null {
+  return parseInvoiceCallback(body) ?? parsePaymentRequestCallback(body)
 }
 
 // Menentukan tindakan atas sebuah pesanan dari status callback + nominal tagihan pesanan itu.
@@ -129,7 +208,7 @@ export function resolvePaymentOutcome(
   if (FAILED_STATUSES.has(parsed.rawStatus)) {
     return { kind: 'failed', paymentStatus: 'Gagal', orderStatus: 'Dibatalkan' }
   }
-  if (parsed.rawStatus === 'PENDING') return { kind: 'pending' }
+  if (PENDING_STATUSES.has(parsed.rawStatus)) return { kind: 'pending' }
   return { kind: 'ignored', rawStatus: parsed.rawStatus }
 }
 

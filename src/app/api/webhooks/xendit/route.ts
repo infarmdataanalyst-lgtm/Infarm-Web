@@ -31,7 +31,7 @@ import { restoreStock } from '@/lib/mock-db/products'
 import { recordOrderStockChanges } from '@/lib/stock-audit'
 import { bookShipmentForPaidOrder } from '@/lib/shipment-booking'
 import {
-  parseInvoiceCallback,
+  parseXenditCallback,
   resolvePaymentOutcome,
   verifyCallbackToken,
 } from '@/lib/xendit/webhook'
@@ -65,16 +65,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Body bukan JSON yang valid.' }, { status: 400 })
   }
 
-  const parsed = parseInvoiceCallback(body)
+  const parsed = parseXenditCallback(body)
   if (!parsed) {
     // Bisa jadi callback jenis lain (disbursement, dll) yang belum kita tangani. Balas 200 agar
     // Xendit tidak mengulang terus-menerus untuk sesuatu yang memang bukan urusan endpoint ini.
-    console.warn(`${LOG} payload tanpa external_id/status — dilewati`)
+    console.warn(`${LOG} payload tanpa external_id/reference_id/status — dilewati`)
     return NextResponse.json({ received: true, handled: false, reason: 'UNSUPPORTED_PAYLOAD' })
   }
 
   console.log(
-    `${LOG} masuk invoice=${parsed.invoice} status=${parsed.rawStatus} paid=${parsed.paidAmount}`,
+    `${LOG} masuk invoice=${parsed.invoice} status=${parsed.rawStatus} paid=${parsed.paidAmount} bentuk=${parsed.source}`,
   )
 
   // 3) Pesanan harus ada. Nominal tagihan dibaca dari DB, bukan dari payload.

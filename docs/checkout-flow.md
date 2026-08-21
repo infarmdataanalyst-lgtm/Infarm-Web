@@ -561,6 +561,88 @@ bisa di bawah minimum payment gateway):
 
 ---
 
+## Pembayaran Xendit — Virtual Account (Payment Request v3)
+
+Dua sisi, dibangun terpisah: **penerimaan** (webhook) sudah lama jadi, **pembuatan** (VA) baru
+dipasang. Keduanya bertemu di `orders.nomor_invoice`.
+
+### Pembuatan VA — `POST /api/payments/create`
+
+Body: `{ invoice, method }`. Client hanya mengirim **nomor invoice** dan **pilihan bank** —
+nominal SELALU dibaca dari `orders.jumlah_total` di DB. Kalau nominal diambil dari body, siapa pun
+bisa menerbitkan VA Rp1.000 untuk pesanan Rp1.000.000.
+
+- **Route Handler, bukan Server Action** — project ini nol Server Action; keamanannya identik dan
+  helper rate-limit/`requireAdmin` yang sudah ada langsung terpakai.
+- **`src/lib/xendit/config.ts`** = satu pintu kredensial. Basic Auth `base64("{KEY}:")` (password
+  KOSONG, titik dua wajib). **Penjaga lingkungan**: kunci LIVE (`xnd_production_…`) ditolak di luar
+  deployment produksi, aturan & alasan sama dengan `mengantarWriteHost()` — lihat CLAUDE.md →
+  "Panggilan API Berbayar". Kunci berformat tak dikenal dianggap LIVE.
+- **`src/lib/xendit/payment-request.ts`** = penyusun payload + pemetaan respons. Daftar putih bank
+  EKSPLISIT (`VA_CHANNEL_CODES`); bank di luar daftar ditolak dengan pesan kita sendiri, bukan
+  dibiarkan ditolak Xendit setelah pembeli menekan bayar. Urutan validasi: **input dulu, kredensial
+  belakangan** — kalau dibalik, bank tak didukung dilaporkan sebagai "belum dikonfigurasi" dan
+  pembeli menunggu perbaikan yang tak akan datang.
+- **`Idempotency-key: nomor_invoice`** — pembeli menekan bayar dua kali mengembalikan Payment
+  Request yang SAMA, bukan VA kedua untuk satu pesanan.
+- **VA berumur `VA_EXPIRY_HOURS = 24`.** Sengaja pendek: setiap pesanan menunggu bayar MENAHAN STOK
+  (checkout sudah memotongnya), jadi VA berumur panjang = stok terkunci tanpa uang masuk.
+- **`orders.id_transaksi`** diisi `payment_request_id` lewat `setOrderTransactionId()` — fungsi
+  terpisah dari `updatePaymentStatus()` karena id terbit saat VA dibuat (status masih Menunggu),
+  bukan saat pembayaran masuk. Gagal menyimpan **tidak** membatalkan respons: VA sudah terbit dan
+  webhook menemukan pesanan lewat `reference_id`, bukan kolom ini.
+- **Rate limit** `PAYMENT_CREATE_IP` 6/5 mnt/IP + `PAYMENT_CREATE_INVOICE` 5/30 mnt/invoice.
+- **Pesan error ke client digeneralkan** (peta `PUBLIC_ERRORS`); detail respons Xendit hanya ke log.
+
+### Webhook menerima DUA bentuk payload
+
+`parseXenditCallback()` mencoba bentuk Invoice API v2 lebih dulu, lalu Payment Request v3:
+
+| | Invoice v2 | Payment Request v3 |
+|---|---|---|
+| Referensi kita | `external_id` (akar) | `data.reference_id` |
+| Status | `status` | `data.status`, cadangan dari `event` |
+| Nominal | `paid_amount` \|\| `amount` | `data.amount` \|\| `captured_amount` \|\| `request_amount` |
+| id transaksi | `id` | `data.payment_request_id` (didahulukan) \|\| `data.id` |
+
+Keduanya dipertahankan supaya jalur pembayaran bisa dipindah tanpa mematikan callback yang sudah
+beredar. `ParsedCallback.source` mencatat bentuk mana yang cocok (muncul di log sebagai `bentuk=`).
+
+Status: PAID/SETTLED/**SUCCEEDED**/CAPTURED → lunas · EXPIRED/FAILED/**VOIDED**/CANCELED →
+gagal + stok dikembalikan · PENDING/**REQUIRES_ACTION**/AWAITING_CAPTURE → tak ada perubahan.
+Nominal kurang → **tak pernah** ditandai lunas. Nominal yang tak terbaca jatuh jadi 0 → kurang
+bayar (menolak-dengan-aman).
+
+### ⚠️ Yang masih UNVERIFIED
+
+Belum ada satu pun panggilan Xendit yang pernah dijalankan dari project ini, jadi hal berikut
+disusun dari dokumentasi dan **wajib dicocokkan setelah panggilan pertama**:
+
+- **Path endpoint** `XENDIT_PAYMENT_REQUEST_PATH = '/payment_requests'`. Sebagian dokumentasi
+  Xendit memakai `/v3/payment_requests`. Satu konstanta di `config.ts` — koreksinya satu baris.
+- **Letak nomor VA** di respons (`payment_method.virtual_account.channel_properties
+  .virtual_account_number`). `extractVirtualAccount()` mencoba beberapa kandidat.
+- **Bentuk callback v3** dan nama peristiwanya (`payment.succeeded`, dll).
+- **Ketersediaan channel** — sebagian VA harus diaktifkan lewat dashboard Xendit. `danamon` sengaja
+  TIDAK ada di peta meski muncul di `PAYMENT_METHODS`; tambahkan bila terbukti tersedia.
+
+Setelah callback pertama masuk, cocokkan dengan log `[xendit-webhook] masuk …` lalu perbarui
+komentar `UNVERIFIED` di kode.
+
+### Halaman uji `/test-xendit` — development only
+
+Bukan bagian dari checkout. Dua lapis: `NODE_ENV !== 'development'` → `notFound()` (404, bukan
+halaman "akses ditolak" yang justru mengonfirmasi keberadaannya), lalu `getAdminIdentity()` wajib
+ada. Menampilkan 30 pesanan terakhir yang masih `Menunggu` + input invoice manual.
+
+### Belum tersambung ke checkout
+
+`/api/payments/create` **belum dipanggil** dari `/checkout` — halaman itu masih langsung menuju
+`/checkout/success` setelah order dibuat. Menyambungkannya butuh keputusan UX: menampilkan VA di
+halaman sukses, atau halaman pembayaran tersendiri. Juga: **nomor VA tidak disimpan** di `orders`
+(tak ada kolomnya), jadi pembeli yang menutup halaman kehilangan nomornya — perlu kolom baru atau
+pengambilan ulang dari Xendit. Lihat ROADMAP.md.
+
 ## Flowchart Sistem Ecommerce (target end-to-end)
 
 Alur lengkap sistem sebagai acuan saat membangun fitur. Data produk/order/review sudah Supabase;
@@ -585,14 +667,14 @@ resi masih roadmap (dijalankan dengan mock).
    (Field email sudah dihapus dari form — lihat "Email Konfirmasi Pesanan".)
 9. User isi form → klik "Bayar Sekarang" → `POST /api/orders/create` → RPC atomik `create_order_with_items`
    (insert `orders` + `order_items` + kurangi stok; rollback bila stok kurang; nomor invoice `INV-…`)
-10. Backend **buat invoice** → hubungi Xendit API untuk generate link pembayaran *(roadmap)*
-11. Xendit kirim balik URL invoice *(roadmap)*
-12. User di-redirect ke halaman pembayaran Xendit *(roadmap)*
+10. Backend **buat Virtual Account** → `POST /api/payments/create` → Xendit Payment Request v3 *(sudah ada, BELUM disambung ke halaman checkout)*
+11. Xendit kirim balik nomor VA + batas waktu; `payment_request_id` disimpan ke `orders.id_transaksi` *(sudah ada)*
+12. Nomor VA ditampilkan di halaman kita sendiri (pembeli tak keluar dari situs) *(UI belum dibuat)*
 13. User melakukan pembayaran
 
-### Alur Post-Payment (Webhook) — roadmap
+### Alur Post-Payment (Webhook) — SUDAH TERPASANG
 14. Xendit kirim notifikasi ke webhook (`/api/webhooks/xendit`)
-15. Backend verifikasi signature → update tabel `orders` + update stok produk
+15. Backend verifikasi `x-callback-token` (Xendit tak menandatangani body) → update `orders`; stok TIDAK disentuh saat lunas karena checkout sudah memotongnya, tapi DIKEMBALIKAN saat EXPIRED/FAILED
 16. Kirim data ke API Mengantar untuk proses booking kurir
 17. Mengantar kirim balik no. resi / booking ID resmi
 18. Update tabel order dengan no. resi
@@ -606,8 +688,8 @@ resi masih roadmap (dijalankan dengan mock).
 - Langkah 3 & 7: operasi cookie via `src/lib/cart-client.ts`
 - Langkah 8: cek ongkir Mengantar via `src/lib/mengantar.ts` (`fetchShippingEstimate`), UI `ShippingOptions` *(sudah real)*
 - Langkah 9 & 22: data order via `src/lib/mock-db/orders.ts` (Supabase)
-- Langkah 10-12: logika Xendit di `src/lib/xendit/`, jangan di frontend *(roadmap)*
-- Langkah 14-20: semua terjadi di `src/app/api/webhooks/xendit/route.ts` *(roadmap)*
+- Langkah 10-12: logika Xendit di `src/lib/xendit/` (`config.ts` + `payment-request.ts`), jangan di frontend *(sudah ada)*
+- Langkah 14-18: `src/app/api/webhooks/xendit/route.ts` *(sudah ada)*. Langkah 19-20 (hapus cookie, email) belum
 - Langkah 16-17: booking/tracking kurir Mengantar (pakai `MENGANTAR_API_KEY`) *(roadmap)*
 - Langkah 19: pastikan cookie dihapus **hanya setelah** webhook dikonfirmasi sukses, bukan setelah redirect
 - Langkah 20: template email ada di `src/emails/order-confirmation.html` (preview `/dev/email-preview`); pengiriman email otomatis *(roadmap)*

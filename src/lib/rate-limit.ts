@@ -37,6 +37,14 @@ export const RATE_LIMITS = {
 
   // Submit ulasan — cegah spam review
   REVIEW_CREATE_IP: { max: 3, windowMs: 10 * MINUTE },
+
+  // Pembuatan Virtual Account (Xendit). Lebih longgar dari ORDER_CREATE_IP karena pembeli yang sah
+  // memang bisa mencoba beberapa bank berbeda untuk satu pesanan, tapi tetap dibatasi: setiap
+  // panggilan menembus ke API Xendit dan menghabiskan kuota di sana.
+  PAYMENT_CREATE_IP: { max: 6, windowMs: 5 * MINUTE },
+  // Per nomor invoice — satu pesanan tak butuh belasan VA. Menahan skrip yang membuat VA berulang
+  // untuk satu pesanan (setiap VA adalah objek baru di dashboard Xendit).
+  PAYMENT_CREATE_INVOICE: { max: 5, windowMs: 30 * MINUTE },
 } as const satisfies Record<string, RateRule>
 
 // Pesan generik untuk user (JANGAN bocorkan angka limit persis ke klien)

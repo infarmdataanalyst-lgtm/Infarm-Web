@@ -42,16 +42,24 @@ Dipindah APA ADANYA dari `CLAUDE.md` (heading aslinya dipertahankan):
 `POST /api/webhooks/xendit` + `src/lib/xendit/webhook.ts` sudah terpasang & teruji
 (token `x-callback-token` waktu-konstan, idempoten, PAID → Lunas/Diproses,
 EXPIRED/FAILED → Gagal/Dibatalkan + stok dikembalikan + dicatat ke `stock_mutations`,
-kurang bayar ditolak). Yang masih kosong: **pembuatan invoice** — belum ada kode yang
-memanggil Xendit API, jadi belum ada callback nyata yang akan masuk. Saat membuat invoice
-nanti, `external_id` WAJIB diisi `orders.nomor_invoice` karena webhook mencocokkan lewat
-kolom itu, dan `id` invoice Xendit disimpan ke `orders.id_transaksi`.
+kurang bayar ditolak).
+
+**Status per 2026-08-21 — sisi PEMBUATAN Virtual Account sudah dibangun:**
+`POST /api/payments/create` + `src/lib/xendit/{config,payment-request}.ts` (Payment Request v3,
+VA langsung). Webhook kini mengenali DUA bentuk payload (Invoice v2 & Payment Request v3) lewat
+`parseXenditCallback()`. `reference_id` = `orders.nomor_invoice`; `payment_request_id` →
+`orders.id_transaksi`. **Belum pernah dipanggil sungguhan** — `XENDIT_SECRET_KEY` belum di-set dan
+beberapa detail kontrak masih `UNVERIFIED` (path endpoint, letak nomor VA, bentuk callback v3,
+ketersediaan channel). Lihat [docs/checkout-flow.md](docs/checkout-flow.md) → "Pembayaran Xendit".
 
 Turunan yang menunggu Xendit:
 
 | Pekerjaan | Detail |
 |---|---|
-| Langkah 10–12 alur checkout (buat invoice → URL Xendit → redirect) masih mock | [docs/checkout-flow.md](docs/checkout-flow.md) → Alur Checkout & Pembayaran |
+| **Sambungkan `/api/payments/create` ke halaman `/checkout`** — endpointnya ada, pemanggilnya belum. Butuh keputusan UX: VA ditampilkan di halaman sukses, atau halaman pembayaran tersendiri | [docs/checkout-flow.md](docs/checkout-flow.md) → Pembayaran Xendit |
+| **Nomor VA tidak disimpan** di `orders` (tak ada kolomnya) → pembeli yang menutup halaman kehilangan nomornya. Perlu kolom baru atau pengambilan ulang dari Xendit | [docs/checkout-flow.md](docs/checkout-flow.md) → Pembayaran Xendit |
+| **Verifikasi kontrak Xendit** pada panggilan pertama, lalu ganti seluruh komentar `UNVERIFIED` dengan bentuk respons yang sebenarnya | `src/lib/xendit/payment-request.ts` |
+| Pesanan `Menunggu` tak punya batas waktu — 18 pesanan lama (6 Juli–14 Agu) menahan 50 unit stok. VA berumur 24 jam akan menutup ini untuk pesanan BARU (callback EXPIRED → stok kembali), tapi yang lama perlu dibersihkan manual atau lewat cron | [docs/checkout-flow.md](docs/checkout-flow.md) → Pembayaran Xendit |
 | ~~webhook → update status order + stok~~ **SUDAH ADA** (`/api/webhooks/xendit`). Sisa alur post-payment yang belum: booking kurir, isi no. resi, hapus cookie keranjang, kirim email | [docs/checkout-flow.md](docs/checkout-flow.md) → Alur Post-Payment (Webhook) |
 | Alokasi/rilis stok penuh saat pembayaran gagal/expired | [docs/warehouse.md](docs/warehouse.md) |
 | Email konfirmasi pesanan: template & preview sudah ada, **pengiriman otomatis belum**, dan sejak field email dihapus dari checkout **tak ada alamat tujuan** | [docs/checkout-flow.md](docs/checkout-flow.md) → Email Konfirmasi Pesanan |

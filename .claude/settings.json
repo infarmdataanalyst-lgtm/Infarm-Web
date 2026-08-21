@@ -45,11 +45,10 @@
     "deny": [
       "Bash(curl * https://app.mengantar.com/api/public/*)",
       "Bash(curl * https://sandbox.mengantar.com/api/public/*)",
-      "Bash(*api.xendit.co*)",
-      "Bash(*simulate-payment*)",
-      "PowerShell(*mengantar.com/api/public/*)",
-      "PowerShell(*api.xendit.co*)",
-      "PowerShell(*simulate-payment*)"
+      "Bash(curl * https://api.xendit.co/*)",
+      "Bash(curl -X POST *simulate-payment*)",
+      "PowerShell(Invoke-RestMethod * https://api.xendit.co/*)",
+      "PowerShell(Invoke-WebRequest * https://api.xendit.co/*)"
     ]
   },
   "hooks": {
