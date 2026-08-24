@@ -27,12 +27,13 @@ import {
 import { useSidebar } from './SidebarContext'
 
 // === Definisi Menu Navigasi ===
+// Sengaja TANPA sub-menu. Sub-halaman Gudang (Daftar / Kelola Stok / Riwayat Mutasi) dinavigasi
+// lewat tab di dalam halamannya sendiri (`GudangTabs`) — menampilkannya di dua tempat sekaligus
+// membuat pengguna harus memilih dua kali untuk tujuan yang sama.
 type NavItem = {
   label: string
   href: string
   icon: LucideIcon
-  // Sub-menu, tampil hanya saat menu induk sedang aktif (menghemat tinggi sidebar).
-  children?: { label: string; href: string }[]
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -42,16 +43,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Promosi', href: '/oms/dashboard/promosi', icon: Megaphone },
   { label: 'Pesanan', href: '/oms/dashboard/orders', icon: ShoppingCart },
   { label: 'Ulasan', href: '/oms/dashboard/reviews', icon: Star },
-  {
-    label: 'Gudang',
-    href: '/oms/dashboard/gudang',
-    icon: Warehouse,
-    children: [
-      { label: 'Daftar Gudang', href: '/oms/dashboard/gudang' },
-      { label: 'Kelola Stok', href: '/oms/dashboard/gudang/stok' },
-      { label: 'Riwayat Mutasi', href: '/oms/dashboard/gudang/riwayat' },
-    ],
-  },
+  { label: 'Gudang', href: '/oms/dashboard/gudang', icon: Warehouse },
   { label: 'Pengaturan', href: '/oms/dashboard/pengaturan', icon: Settings },
 ]
 
@@ -162,44 +154,18 @@ function SidebarContent({ pathname }: { pathname: string }) {
           const active = isActive(item.href)
           const Icon = item.icon
           return (
-            <div key={item.href}>
-              <Link
-                href={item.href}
-                className={`flex items-center gap-3 rounded-lg border-l-4 px-3 py-2.5 text-sm font-medium transition-colors ${
-                  active
-                    ? 'border-emerald-400 bg-emerald-800 text-white'
-                    : 'border-transparent text-emerald-200/80 hover:bg-emerald-900 hover:text-white'
-                }`}
-              >
-                <Icon className="h-5 w-5 flex-none" />
-                {item.label}
-              </Link>
-
-              {/* Sub-menu: hanya dirender saat menu induk aktif, supaya sidebar tak memanjang
-                  untuk area yang sedang tidak dipakai. */}
-              {active && item.children && (
-                <div className="mt-1 space-y-0.5 pl-11">
-                  {item.children.map((child) => {
-                    // Sub-menu dicocokkan PERSIS: href "Daftar Gudang" sama dengan href induk,
-                    // jadi startsWith akan menyalakan semua sub-menu sekaligus.
-                    const childActive = pathname === child.href
-                    return (
-                      <Link
-                        key={child.href}
-                        href={child.href}
-                        className={`block rounded-md px-3 py-1.5 text-sm transition-colors ${
-                          childActive
-                            ? 'bg-emerald-900 font-semibold text-white'
-                            : 'text-emerald-200/70 hover:bg-emerald-900/60 hover:text-white'
-                        }`}
-                      >
-                        {child.label}
-                      </Link>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
+            <Link
+              key={item.href}
+              href={item.href}
+              className={`flex items-center gap-3 rounded-lg border-l-4 px-3 py-2.5 text-sm font-medium transition-colors ${
+                active
+                  ? 'border-emerald-400 bg-emerald-800 text-white'
+                  : 'border-transparent text-emerald-200/80 hover:bg-emerald-900 hover:text-white'
+              }`}
+            >
+              <Icon className="h-5 w-5 flex-none" />
+              {item.label}
+            </Link>
           )
         })}
       </nav>

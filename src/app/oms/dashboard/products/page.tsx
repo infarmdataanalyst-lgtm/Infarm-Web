@@ -39,7 +39,7 @@ import {
   NAME_MAX,
   DESC_MAX,
 } from '@/lib/product-validation'
-import { WEIGHT_GRAM_MIN, formatWeight, isWeightUnset } from '@/lib/shipping-weight'
+import { WEIGHT_GRAM_MIN, formatWeight } from '@/lib/shipping-weight'
 import type { ProductCategory, StoredProduct } from '@/types/product'
 
 // === Tipe Data ===
@@ -388,14 +388,6 @@ function ProductsContent() {
       return s >= lowStockThreshold // 'tersedia'
     },
     [stockOf, lowStockThreshold],
-  )
-
-  // Jumlah produk (aktif, bukan yang diarsipkan) yang beratnya belum diisi → dasar banner
-  // pengingat. Produk diarsipkan dikecualikan: ia tak bisa dibeli, jadi beratnya tak memengaruhi
-  // ongkir siapa pun dan hanya akan membuat angka pengingat terlihat lebih besar dari kenyataan.
-  const missingWeightCount = useMemo(
-    () => products.filter((p) => !p.archived && isWeightUnset(p.berat)).length,
-    [products],
   )
 
   // Hasil SEMUA filter KECUALI status stok.
@@ -1107,26 +1099,6 @@ function ProductsContent() {
           </div>
         )}
 
-        {/* === Pengingat berat belum diisi ===
-             Dihitung dari SELURUH produk (bukan hasil filter/halaman): admin perlu tahu total
-             pekerjaan yang tersisa, bukan hanya yang kebetulan tampil di halaman ini. */}
-        {missingWeightCount > 0 && (
-          <div className="mt-4 flex items-start gap-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3">
-            <ScaleIcon />
-            <div className="text-xs leading-relaxed text-orange-800">
-              <p className="font-semibold">
-                {missingWeightCount} produk belum mengisi berat
-              </p>
-              <p className="mt-0.5">
-                Ongkir produk tersebut sementara dihitung memakai berat cadangan{' '}
-                <strong>1 kg per pcs</strong>, jadi tarif yang dilihat pembeli bisa jauh dari tarif
-                kurir sebenarnya. Buka <strong>Edit</strong> pada baris ber-badge{' '}
-                <span className="font-semibold">Belum diisi</span> dan isi berat aslinya.
-              </p>
-            </div>
-          </div>
-        )}
-
         {/* === Tabel Produk === */}
         <section className="mt-4 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
           {/* Info jumlah hasil filter */}
@@ -1258,8 +1230,7 @@ function ProductsContent() {
                     </td>
                     {/* Berat TIDAK dikolomkan di sini: angka per baris tak membantu pekerjaan harian
                         admin (berat hanya relevan saat mengedit produk & saat ongkir dihitung).
-                        Pengingat produk yang beratnya belum diisi tetap ada sebagai banner di atas
-                        tabel — lihat missingWeightCount. */}
+                        Berat hanya terlihat & diisi lewat modal Edit Produk. */}
                     <td className="px-3 py-4">
                       {/* Arsip cepat untuk produk stok habis kini jadi ikon saja agar kolom tetap
                           sempit; labelnya lewat title. */}
@@ -1785,19 +1756,6 @@ function LockIcon() {
     <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <rect x="3" y="11" width="18" height="11" rx="2" />
       <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-    </svg>
-  )
-}
-
-// Ikon timbangan — penanda banner pengingat berat produk.
-function ScaleIcon() {
-  return (
-    <svg className="mt-0.5 h-4 w-4 flex-none text-orange-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M12 3v18" />
-      <path d="M7 21h10" />
-      <path d="M5 7h14" />
-      <path d="M5 7 2 13h6L5 7Z" />
-      <path d="m19 7-3 6h6l-3-6Z" />
     </svg>
   )
 }

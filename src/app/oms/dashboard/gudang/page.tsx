@@ -12,7 +12,7 @@
 // Semua endpoint itu ADMIN ONLY karena memuat origin id & koordinat gudang.
 
 import { useEffect, useState } from 'react'
-import { CheckCircle2, Info, MapPin, Pencil, Plus, Star, Trash2, Warehouse as WarehouseIcon } from 'lucide-react'
+import { CheckCircle2, MapPin, Pencil, Plus, Star, Trash2, Warehouse as WarehouseIcon } from 'lucide-react'
 import OmsHeader from '@/components/oms/OmsHeader'
 import GudangTabs from '@/components/oms/GudangTabs'
 import {
@@ -36,14 +36,9 @@ const EMPTY_FORM: WarehouseFormValues = {
 
 export default function GudangPage() {
   const [warehouses, setWarehouses] = useState<WarehouseRow[]>([])
-  const [mode, setMode] = useState<'single' | 'multi'>('single')
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [toast, setToast] = useState('')
-
-  // Toggle mode pergudangan (tersimpan di store_settings, bukan env)
-  const [modeSaving, setModeSaving] = useState(false)
-  const [modeError, setModeError] = useState('')
 
   // Modal form: null = tertutup, 'new' = tambah, string = id gudang yang diedit
   const [editing, setEditing] = useState<'new' | string | null>(null)
@@ -71,9 +66,11 @@ export default function GudangPage() {
     setLoading(true)
     try {
       const res = await fetch('/api/warehouses/list')
+      // `mode` dari endpoint sengaja diabaikan: sistem berjalan MULTI-GUDANG permanen, jadi tak ada
+      // lagi yang perlu ditampilkan atau diubah dari halaman ini. Lihat catatan di handleToggleMode
+      // yang dihapus bersama togglenya.
       const data = (await res.json().catch(() => ({}))) as {
         warehouses?: WarehouseRow[]
-        mode?: 'single' | 'multi'
         error?: string
       }
       if (!res.ok) {
@@ -81,7 +78,6 @@ export default function GudangPage() {
         return
       }
       setWarehouses(data.warehouses ?? [])
-      setMode(data.mode ?? 'single')
       setLoadError('')
     } catch {
       setLoadError('Gagal memuat daftar gudang. Periksa koneksi lalu muat ulang.')
@@ -90,33 +86,6 @@ export default function GudangPage() {
     }
   }
 
-  // Mengubah mode pergudangan. Berlaku seketika (baris DB) — tak perlu redeploy maupun ubah env.
-  async function handleToggleMode(next: 'single' | 'multi') {
-    setModeSaving(true)
-    setModeError('')
-    try {
-      const res = await fetch('/api/settings/warehouse-mode', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: next }),
-      })
-      const data = (await res.json().catch(() => ({}))) as { mode?: 'single' | 'multi'; error?: string }
-      if (!res.ok) {
-        setModeError(data.error ?? 'Gagal mengubah mode pergudangan.')
-        return
-      }
-      setMode(data.mode ?? next)
-      setToast(
-        next === 'multi'
-          ? 'Mode gudang cabang aktif.'
-          : 'Mode satu gudang aktif (rollback). Seluruh pesanan memakai gudang default.',
-      )
-    } catch {
-      setModeError('Gagal mengubah mode pergudangan. Periksa koneksi lalu coba lagi.')
-    } finally {
-      setModeSaving(false)
-    }
-  }
 
   function openNew() {
     setForm(EMPTY_FORM)
@@ -250,59 +219,6 @@ export default function GudangPage() {
 
       <div className="px-4 py-6 sm:px-6 lg:px-8">
         <GudangTabs />
-
-        {/* Toggle mode pergudangan — tersimpan di store_settings, berlaku SEKETIKA tanpa redeploy */}
-        <div className="mb-5 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0">
-              <h2 className="text-sm font-bold text-gray-900">Mode Pergudangan</h2>
-              <p className="mt-1 text-xs leading-relaxed text-gray-500">
-                {mode === 'multi'
-                  ? 'Gudang cabang aktif. Saat checkout, ongkir dari SETIAP gudang yang stoknya cukup dibandingkan lewat Mengantar, lalu pembeli memilih kurir termurah — gudang pemenuh mengikuti pilihan itu.'
-                  : 'Satu gudang. Seluruh pesanan & ongkir memakai gudang default; gudang lain tidak dipakai. Gunakan hanya sebagai rollback darurat.'}
-              </p>
-            </div>
-
-            {/* Switch: label di kiri, tombol di kanan. Perubahan langsung tersimpan ke DB. */}
-            <div className="flex shrink-0 items-center gap-2">
-              <span className={`text-xs font-semibold ${mode === 'single' ? 'text-gray-900' : 'text-gray-400'}`}>
-                Satu gudang
-              </span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={mode === 'multi'}
-                aria-label="Ganti mode pergudangan"
-                disabled={modeSaving}
-                onClick={() => handleToggleMode(mode === 'multi' ? 'single' : 'multi')}
-                className={`relative h-6 w-11 shrink-0 rounded-full transition disabled:opacity-60 ${
-                  mode === 'multi' ? 'bg-brand-primary' : 'bg-gray-300'
-                }`}
-              >
-                <span
-                  className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
-                    mode === 'multi' ? 'left-[1.375rem]' : 'left-0.5'
-                  }`}
-                />
-              </button>
-              <span className={`text-xs font-semibold ${mode === 'multi' ? 'text-gray-900' : 'text-gray-400'}`}>
-                Gudang cabang
-              </span>
-            </div>
-          </div>
-
-          {modeError && <p className="mt-2 text-xs font-medium text-red-600">{modeError}</p>}
-        </div>
-
-        <div className="mb-5 flex gap-2 rounded-xl bg-orange-50 px-3 py-2.5 text-xs leading-relaxed text-orange-700">
-          <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-          <p>
-            Koordinat gudang <strong>tidak dipakai</strong> untuk memilih gudang pemenuh pesanan —
-            keputusannya berdasarkan ongkir riil dari Mengantar, karena jarak lurus bukan ukuran biaya
-            kirim. Yang WAJIB terisi agar gudang ikut dibandingkan: <strong>Origin ID Mengantar</strong>{' '}
-            dan stok produk di gudang tersebut.
-          </p>
-        </div>
 
         <div className="mb-4 flex items-center justify-between gap-3">
           <p className="text-sm text-gray-500">
