@@ -1,9 +1,9 @@
 // src/components/track/ShippingStepper.tsx
-// Stepper horizontal 5 tahap status pengiriman (Pesanan Dibuat → ... → Sampai Tujuan).
+// Stepper horizontal 4 tahap status pengiriman: Pesanan Dibuat → Diproses → Dikirim → Sampai Tujuan.
 // Tahap sudah lewat: ikon centang hijau. Tahap saat ini: ikon tahap hijau. Tahap belum: abu-abu.
 // Warna mengikuti tema brand (brand-primary hijau). Server Component (murni tampilan).
 
-import { Check, ClipboardList, Package, Truck, Bike, MapPin, type LucideIcon } from 'lucide-react'
+import { Check, ClipboardList, Package, Truck, MapPin, type LucideIcon } from 'lucide-react'
 import { SHIPPING_STEPS, type ShippingStepKey } from '@/lib/tracking'
 
 // Ikon per tahap
@@ -11,11 +11,12 @@ const STEP_ICONS: Record<ShippingStepKey, LucideIcon> = {
   created: ClipboardList,
   processing: Package,
   shipped: Truck,
-  delivering: Bike,
   arrived: MapPin,
 }
 
-// Menampilkan stepper 5 tahap. currentIndex = tahap saat ini (0..4).
+// Menampilkan stepper. currentIndex = tahap saat ini (0..SHIPPING_STEPS.length-1).
+// Jumlah tahap & lebar kolom mengikuti SHIPPING_STEPS: tiap <li> memakai flex-1 sehingga garis
+// penghubung otomatis proporsional saat jumlah tahap berubah — tak ada lebar yang di-hardcode.
 export default function ShippingStepper({ currentIndex }: { currentIndex: number }) {
   return (
     <ol className="flex items-start">

@@ -529,6 +529,59 @@ export async function getOrderByOrderId(orderId: string): Promise<Order | null> 
   )
 }
 
+// === Sinkronisasi status dari kurir ===
+
+// Pesanan yang layak diperiksa ke API kurir. Sengaja RAMPING (tanpa item, tanpa alamat, tanpa nama
+// gudang): sinkronisasi hanya butuh status + resi, dan halaman Pesanan OMS memanggilnya untuk 20
+// baris sekaligus. Memakai getOrderByOrderId() di sini berarti 20× (query order + item + produk +
+// varian + gudang) hanya untuk membaca tiga kolom.
+export type TrackingSyncCandidate = {
+  orderId: string // nomor_invoice
+  status: OrderFulfillmentStatus
+  trackingNumber: string
+}
+
+// Menyaring daftar invoice → hanya yang benar-benar layak diperiksa ke kurir.
+//
+// Tiga syarat, semuanya dijalankan sebagai filter DB (bukan di JS) supaya baris yang tak relevan
+// tak pernah ikut terbaca:
+//   1. `status_pembayaran = PAID` — pesanan belum dibayar TIDAK boleh terdorong maju oleh peristiwa
+//      kurir apa pun. Ini pagar terpenting di sini.
+//   2. `order_status ∈ (PROCESSING, SHIPPED)` — hanya yang masih bisa maju. COMPLETED & CANCELLED
+//      sudah final; memeriksanya cuma membuang panggilan API.
+//   3. punya `no_tracking` — tanpa resi tak ada yang bisa dilacak.
+//
+// Array kosong bila `invoices` kosong (jangan kirim query `.in()` dengan daftar kosong).
+export async function readTrackingSyncCandidates(
+  invoices: string[],
+): Promise<TrackingSyncCandidate[]> {
+  if (invoices.length === 0) return []
+
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('orders')
+    .select('nomor_invoice, order_status, no_tracking')
+    .in('nomor_invoice', invoices)
+    .eq('status_pembayaran', PAYMENT_TO_DB['Lunas'])
+    .in('order_status', [STATUS_TO_DB['Diproses'], STATUS_TO_DB['Dikirim']])
+    .not('no_tracking', 'is', null)
+
+  if (error) {
+    console.error('Gagal membaca kandidat sinkronisasi tracking:', error.message)
+    return []
+  }
+
+  const rows = (data as Pick<OrderRow, 'nomor_invoice' | 'order_status' | 'no_tracking'>[]) ?? []
+  return rows.flatMap((row) => {
+    const status = DB_TO_STATUS[row.order_status]
+    const trackingNumber = row.no_tracking?.trim()
+    // Baris tanpa invoice tak bisa dirujuk oleh updateOrderStatus (yang mencocokkan nomor_invoice),
+    // dan status di luar peta = nilai DB yang tak dikenal app. Keduanya dilewati, bukan ditebak.
+    if (!row.nomor_invoice || !status || !trackingNumber) return []
+    return [{ orderId: row.nomor_invoice, status, trackingNumber }]
+  })
+}
+
 // Membaca SEMUA pesanan milik satu nomor telepon (untuk lacak/batalkan by no_telepon).
 // phone di-cocokkan APA ADANYA (pemanggil wajib menormalkan dulu via normalizePhone).
 // Terbaru dulu. Array kosong bila tak ada / error. Server-only.

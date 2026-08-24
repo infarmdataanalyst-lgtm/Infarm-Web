@@ -29,6 +29,12 @@ const DATE_SHORTCUTS: DateShortcut[] = [
   { label: 'Bulan Ini', days: 0, isMonthStart: true },
 ]
 
+// Jeda polling sinkronisasi status kurir selama tab OMS dibuka.
+// 90 detik: cukup rapat untuk terasa hidup bagi admin yang sedang memantau, cukup longgar untuk
+// tidak menghujani API kurir. Scan kurir sendiri tertunda menit-an, jadi memperkecil angka ini
+// tak membuat datanya lebih segar — hanya menambah panggilan.
+const SYNC_INTERVAL_MS = 90_000
+
 // === Konfigurasi Tab & Pagination ===
 
 // Tab filter; 'Semua' = tanpa filter, sisanya cocokkan dengan Order.status
@@ -74,6 +80,8 @@ function OrdersContent() {
   const [page, setPage] = useState(1)
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
   const [toast, setToast] = useState('')
+  // Waktu sinkronisasi terakhir dengan kurir. null = belum pernah (atau gagal terus).
+  const [syncedAt, setSyncedAt] = useState<Date | null>(null)
 
   // === Filter State (baca dari URL searchParams) ===
   const activeTab = (searchParams.get('status') as (typeof TABS)[number]) || 'Semua'
@@ -149,6 +157,69 @@ function OrdersContent() {
     (currentPage - 1) * PAGE_SIZE,
     currentPage * PAGE_SIZE,
   )
+
+  // === Sinkronisasi status dari kurir ===
+  //
+  // Dipicu otomatis saat baris yang tampil berubah (buka halaman, refresh, ganti halaman/filter) —
+  // TANPA tombol manual. Admin butuh data benar saat ia melihat layar, dan menyuruhnya mengklik
+  // untuk itu hanya memindahkan pekerjaan ke orangnya.
+  //
+  // Dependensi effect ini sengaja `pageInvoices` (string nomor invoice), BUKAN `pageOrders`:
+  // sinkronisasi mengubah `orders` → `pageOrders` jadi objek baru → effect jalan lagi → tak
+  // berujung. Nomor invoice tak berubah saat status naik, jadi rantai itu putus.
+  const pageInvoices = pageOrders.map((o) => o.orderId).join(',')
+
+  useEffect(() => {
+    if (!pageInvoices) return
+    let active = true
+
+    async function sync() {
+      try {
+        const res = await fetch('/api/orders/sync-tracking', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ invoices: pageInvoices.split(',') }),
+        })
+        if (!res.ok || !active) return
+        const data: { updated?: { orderId: string; status: OrderFulfillmentStatus }[] } =
+          await res.json()
+        if (!active) return
+
+        setSyncedAt(new Date())
+        const changes = data.updated ?? []
+        if (changes.length === 0) return
+
+        // Baris di-patch di tempat, bukan memuat ulang seluruh tabel: memuat ulang akan
+        // mengembalikan scroll & membuat layar berkedip untuk perubahan beberapa sel saja.
+        // Konsekuensi yang disengaja: baris yang naik status bisa jadi tak lagi cocok dengan tab
+        // filter aktif dan tetap tampil sampai muat ulang berikutnya — itu lebih jujur daripada
+        // membuatnya hilang tepat saat admin sedang melihatnya.
+        setOrders((prev) =>
+          prev.map((o) => {
+            const hit = changes.find((c) => c.orderId === o.orderId)
+            return hit ? { ...o, status: hit.status } : o
+          }),
+        )
+      } catch {
+        // Gangguan jaringan: biarkan tabel apa adanya. Data DB tetap tampil, cuma tak sesegar
+        // mungkin — jauh lebih baik daripada pesan error untuk sesuatu yang tak bisa
+        // ditindaklanjuti admin.
+      }
+    }
+
+    sync()
+
+    // Polling ringan selama tab dibuka, supaya admin yang sedang memantau tak perlu me-refresh.
+    // Dilewati saat tab tersembunyi: tak ada yang melihat = tak perlu memanggil kurir.
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') sync()
+    }, SYNC_INTERVAL_MS)
+
+    return () => {
+      active = false
+      clearInterval(timer)
+    }
+  }, [pageInvoices])
 
   // === Helper: Date Shortcuts ===
   function applyDateShortcut(days: number, isMonthStart: boolean = false) {
@@ -277,6 +348,13 @@ function OrdersContent() {
             <p className="mt-1 text-sm text-gray-500">
               Kelola seluruh alur pesanan masuk dari berbagai channel penjualan.
             </p>
+            {/* Penanda kesegaran data — menggantikan tombol "perbarui": admin cukup tahu data ini
+                sesegar apa, tak perlu disuruh mengkliknya. */}
+            {syncedAt && (
+              <p className="mt-1 text-xs text-gray-400">
+                Status kurir disinkronkan {formatClock(syncedAt)}
+              </p>
+            )}
           </div>
           <button
             type="button"
@@ -687,6 +765,16 @@ function StatusBadge({ status }: { status: OrderFulfillmentStatus }) {
   // Tampilkan "Menunggu" agar ringkas, sisanya apa adanya
   const label = status === 'Menunggu Pembayaran' ? 'Menunggu' : status
   return <span className={`text-sm font-semibold ${styles[status]}`}>{label}</span>
+}
+
+// Jam:menit saja, mis. "12.07" — untuk penanda "disinkronkan". Tanpa tanggal: sinkronisasi selalu
+// terjadi di sesi yang sedang berjalan, jadi tanggalnya tak menambah informasi.
+function formatClock(d: Date): string {
+  return new Intl.DateTimeFormat('id-ID', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(d)
 }
 
 // Format angka ke Rupiah

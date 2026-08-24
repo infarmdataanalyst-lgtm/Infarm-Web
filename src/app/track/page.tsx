@@ -1,26 +1,25 @@
 // src/app/track/page.tsx
 // Halaman Lacak Pesanan (guest checkout, publik). State berdasar query `?order=INV-...`:
 //   - Tanpa param        → form pencarian nomor invoice
-//   - Param ditemukan    → kartu status: nomor pesanan + stepper + riwayat + kurir + alamat
+//   - Param ditemukan    → kartu status: pesanan + produk + stepper + detail pelacakan + kurir + alamat
 //   - Param tak ditemukan → kartu peringatan + form
 // Server Component: order dibaca REAL dari Supabase (getOrderByOrderId).
-// Riwayat perjalanan & stepper di-generate dari status+created_at (lib/tracking.ts) — sementara,
-// sampai tracking asli Mengantar tersedia.
+//
+// "Detail Pelacakan" memakai peristiwa REAL dari Mengantar (lib/mengantar-tracking.ts), diambil di
+// SERVER karena API key-nya ada di dalam URL endpoint DAN karena stepper memakai peristiwa yang
+// sama — mengambilnya dari klien berarti dua panggilan untuk satu halaman.
 
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import Image from 'next/image'
 import { Phone, MapPin, Package } from 'lucide-react'
 import TrackSearchForm from '@/components/track/TrackSearchForm'
-import TrackingTimeline from '@/components/track/TrackingTimeline'
 import ShippingStepper from '@/components/track/ShippingStepper'
+import TrackingDetail from '@/components/track/TrackingDetail'
 import OrderItemsCard from '@/components/track/OrderItemsCard'
 import { getOrderByOrderId } from '@/lib/mock-db/orders'
-import {
-  generateTrackingHistory,
-  getCurrentStepIndex,
-  isOrderCancelled,
-} from '@/lib/tracking'
+import { displayStatus, isOrderCancelled, resolveStepIndex } from '@/lib/tracking'
+import { fetchTrackingDetail } from '@/lib/mengantar-tracking'
 import { toTitleCase } from '@/lib/mengantar'
 import { maskName, maskPhone, maskStreet } from '@/lib/mask'
 import type { Order } from '@/types/order'
@@ -73,11 +72,31 @@ export default async function TrackPage({ searchParams }: TrackPageProps) {
 
 // === Hasil pelacakan ===
 
-function TrackResult({ order }: { order: Order }) {
+async function TrackResult({ order }: { order: Order }) {
   const cancelled = isOrderCancelled(order)
-  const currentStep = getCurrentStepIndex(order.status)
-  const history = generateTrackingHistory(order)
   const invoiceLabel = order.orderId.startsWith('#') ? order.orderId : `#${order.orderId}`
+
+  // === Detail pelacakan dari kurir ===
+  //
+  // Diambil DI SERVER, bukan di komponen klien, karena dua alasan:
+  //   1. Stepper di atas juga memakai peristiwa ini (lihat resolveStepIndex) — mengambilnya dari
+  //      klien berarti dua panggilan Mengantar untuk satu halaman.
+  //   2. API key Mengantar berada di dalam URL endpoint; ia tak boleh pernah menyeberang ke browser.
+  //
+  // Pesanan yang belum punya resi TIDAK dipanggilkan sama sekali — tak ada yang bisa dilacak, dan
+  // memanggilnya hanya membuang kuota. Pesanan dibatalkan juga dilewati.
+  const trackingResult =
+    !cancelled && order.trackingNumber ? await fetchTrackingDetail(order.trackingNumber) : null
+  const trackingEvents = trackingResult?.ok ? trackingResult.events : []
+  const trackingFailure = trackingResult && !trackingResult.ok ? trackingResult.reason : undefined
+
+  // Stepper mengikuti yang TERTINGGI antara status DB dan peristiwa kurir — paket yang sudah
+  // bergerak tak boleh tampil "Diproses" hanya karena tak ada yang memperbarui status di OMS.
+  const eventLabels = trackingEvents.map((e) => e.label)
+  const currentStep = resolveStepIndex(order.status, eventLabels)
+  // Badge memakai sumber yang SAMA dengan stepper, bukan `order.status` mentah — kalau tidak,
+  // keduanya bisa saling bertentangan di layar yang sama.
+  const badgeStatus = displayStatus(order.status, eventLabels)
 
   return (
     <div className="space-y-4">
@@ -96,7 +115,7 @@ function TrackResult({ order }: { order: Order }) {
                 <p className="mt-1 text-lg font-bold text-gray-900">{invoiceLabel}</p>
                 <p className="mt-1 text-xs text-gray-400">Dibuat {formatOrderDate(order.date)}</p>
               </div>
-              <StatusBadge status={order.status ?? 'Diproses'} cancelled={cancelled} />
+              <StatusBadge status={badgeStatus} cancelled={cancelled} />
             </div>
           </section>
 
@@ -114,15 +133,15 @@ function TrackResult({ order }: { order: Order }) {
         </section>
       )}
 
-      {/* 4 — Riwayat perjalanan (timeline) */}
-      <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
-        <h2 className="mb-4 text-sm font-bold text-gray-900">Riwayat Perjalanan</h2>
-        {history.length > 0 ? (
-          <TrackingTimeline events={history} />
-        ) : (
-          <p className="text-sm text-gray-400">Belum ada riwayat perjalanan.</p>
-        )}
-      </section>
+      {/* 4 — Detail pelacakan (peristiwa REAL dari kurir, terbaru di atas).
+              Menggantikan "Riwayat Perjalanan" yang isinya dikarang dari order_status +
+              created_at — lihat catatan di lib/tracking.ts. */}
+      <TrackingDetail
+        events={trackingEvents}
+        failureReason={trackingFailure}
+        {...(order.trackingNumber ? { trackingNumber: order.trackingNumber } : {})}
+        {...(order.logistics?.courier ? { courierName: order.logistics.courier } : {})}
+      />
 
       {/* 5 — Info kurir */}
       <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
