@@ -26,18 +26,24 @@ export default function ShippingStepper({ currentIndex }: { currentIndex: number
         const active = done || current // hijau bila sudah/lagi berlangsung
         const Icon = STEP_ICONS[step.key]
         const isFirst = i === 0
+        const isLast = i === SHIPPING_STEPS.length - 1
 
         return (
           <li key={step.key} className="flex flex-1 flex-col items-center">
             {/* Baris ikon + garis penghubung ke tahap sebelumnya */}
             <div className="flex w-full items-center">
-              {/* Garis kiri (tersembunyi pada tahap pertama). Hijau bila tahap ini sudah/berlangsung. */}
-              {!isFirst && (
-                <span
-                  className={`h-0.5 flex-1 ${active ? 'bg-brand-primary' : 'bg-gray-200'}`}
-                  aria-hidden
-                />
-              )}
+              {/* Garis kiri. Hijau bila tahap ini sudah/berlangsung.
+                  Pada tahap PERTAMA garisnya tetap dirender tapi `invisible` — bukan dihilangkan.
+                  Kalau elemennya dibuang, ikon terdorong ke tepi kolom sementara labelnya tetap
+                  rata-tengah selebar kolom, sehingga teks tak lagi sejajar dengan ikonnya (paling
+                  kentara di tahap pertama & terakhir). Menyisakan ruangnya membuat ikon selalu
+                  berada di tengah kolom. */}
+              <span
+                className={`h-0.5 flex-1 ${
+                  isFirst ? 'invisible' : active ? 'bg-brand-primary' : 'bg-gray-200'
+                }`}
+                aria-hidden
+              />
 
               {/* Lingkaran ikon */}
               <span
@@ -49,13 +55,14 @@ export default function ShippingStepper({ currentIndex }: { currentIndex: number
                 {done ? <Check className="h-4 w-4" /> : <Icon className="h-4 w-4" />}
               </span>
 
-              {/* Garis kanan (tersembunyi pada tahap terakhir). Hijau bila tahap BERIKUTNYA sudah tercapai. */}
-              {i < SHIPPING_STEPS.length - 1 && (
-                <span
-                  className={`h-0.5 flex-1 ${i < currentIndex ? 'bg-brand-primary' : 'bg-gray-200'}`}
-                  aria-hidden
-                />
-              )}
+              {/* Garis kanan. Hijau bila tahap BERIKUTNYA sudah tercapai.
+                  Pada tahap TERAKHIR juga `invisible`, dengan alasan yang sama seperti garis kiri. */}
+              <span
+                className={`h-0.5 flex-1 ${
+                  isLast ? 'invisible' : i < currentIndex ? 'bg-brand-primary' : 'bg-gray-200'
+                }`}
+                aria-hidden
+              />
             </div>
 
             {/* Label tahap */}

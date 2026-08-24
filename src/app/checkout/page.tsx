@@ -13,11 +13,10 @@ import AddressForm, {
   type AddressFormState,
   type AddressFormHandle,
 } from '@/components/checkout/AddressForm'
-import OptionRow from '@/components/checkout/OptionRow'
 import OrderSummary from '@/components/checkout/OrderSummary'
 import CheckoutBottomBar from '@/components/checkout/CheckoutBottomBar'
 import ShippingOptions from '@/components/checkout/ShippingOptions'
-import PaymentModal from '@/components/checkout/PaymentModal'
+import PaymentMethodsInfo from '@/components/checkout/PaymentMethodsInfo'
 import PhoneConfirmModal from '@/components/checkout/PhoneConfirmModal'
 import { validateAddress } from '@/lib/checkout-validation'
 import { formatRupiah } from '@/lib/format'
@@ -32,11 +31,7 @@ import {
   clearCart,
 } from '@/lib/cart-client'
 import { setGuestPhone, incrementActiveOrderCount } from '@/lib/guest-phone'
-import {
-  DUMMY_ORDER_ITEMS,
-  PAYMENT_METHODS,
-  type CheckoutItem,
-} from '@/lib/data/dummy-checkout'
+import { DUMMY_ORDER_ITEMS, type CheckoutItem } from '@/lib/data/dummy-checkout'
 
 // Produk untuk kebutuhan halaman ini: Product + berat (gram) dari OMS. Produk dummy tak punya
 // berat → undefined, dan lib/shipping-weight memakai berat cadangan untuk item seperti itu.
@@ -46,7 +41,6 @@ export default function CheckoutPage() {
   const router = useRouter()
 
   // === State tampilan modal ===
-  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false)
   const [isPhoneConfirmOpen, setIsPhoneConfirmOpen] = useState(false) // popup konfirmasi no. telepon
   const [isPaying, setIsPaying] = useState(false) // mencegah double submit saat memproses bayar
 
@@ -80,9 +74,6 @@ export default function CheckoutPage() {
     if (next.destination_id !== address.destination_id) setSelectedCourier(null)
     setAddress(next)
   }
-
-  // === State pilihan user ===
-  const [selectedPaymentId, setSelectedPaymentId] = useState('mandiri')
 
   // === Item yang dibeli: dari pilihan keranjang (cookie checkout), reaktif & aman SSR ===
   const checkoutCookieItems = useSyncExternalStore(
@@ -226,10 +217,6 @@ export default function CheckoutPage() {
     }
   }, [])
 
-  // === Turunan pilihan ===
-  const selectedPayment =
-    PAYMENT_METHODS.find((m) => m.id === selectedPaymentId) ?? PAYMENT_METHODS[0]
-
   // === Kalkulasi biaya: ongkir dari kurir terpilih (null bila belum pilih) ===
   const shipping = selectedCourier ? selectedCourier.price : null
   const total = subtotal + (selectedCourier?.price ?? 0)
@@ -333,12 +320,11 @@ export default function CheckoutPage() {
         return
       }
 
-      // Order berhasil → simpan no_telepon ke cookie (auto-recognize di /track-order & /cancel-order),
-      // naikkan estimasi pesanan aktif (badge angka header; di-refresh akurat saat buka /pesanan-saya),
-      // kosongkan keranjang.
+      // Order berhasil → simpan no_telepon ke cookie (auto-recognize di /track-order & /cancel-order)
+      // dan naikkan estimasi pesanan aktif (badge angka header; di-refresh akurat saat buka
+      // /pesanan-saya). Keranjang BELUM dikosongkan di sini — lihat catatan di bawah.
       setGuestPhone(address.phone)
       incrementActiveOrderCount()
-      clearCart()
 
       // Terbitkan tagihan Xendit lalu bawa pembeli ke halaman pembayarannya.
       //
@@ -355,6 +341,14 @@ export default function CheckoutPage() {
         invoiceUrl?: string
         error?: string
       }
+
+      // Keranjang dikosongkan SETELAH penerbitan tagihan selesai, bukan sebelumnya.
+      //
+      // Dilakukan di kedua cabang (berhasil & gagal) karena PESANANNYA sudah tersimpan apa pun
+      // hasil penerbitan tagihan — membiarkan keranjang terisi berarti pembeli bisa memesan barang
+      // yang sama dua kali tanpa sadar. Yang dihindari hanyalah mengosongkannya sebelum kita tahu
+      // hasilnya.
+      clearCart()
 
       if (payRes.ok && payData.invoiceUrl) {
         // FULL redirect (bukan router.push): tujuannya domain Xendit, di luar aplikasi ini.
@@ -400,13 +394,8 @@ export default function CheckoutPage() {
           onSelect={setSelectedCourier}
         />
 
-        {/* 4 — Pilihan pembayaran (klik → buka modal) */}
-        <OptionRow
-          icon={<WalletIcon />}
-          title="Metode Pembayaran"
-          value={selectedPayment.name}
-          onClick={() => setIsPaymentModalOpen(true)}
-        />
+        {/* 4 — Metode pembayaran: INFORMASI saja. Pemilihannya terjadi di halaman Xendit. */}
+        <PaymentMethodsInfo />
 
         {/* 5 — Ringkasan pesanan (rincian harga) tepat sebelum tombol aksi */}
         <OrderSummary
@@ -435,15 +424,6 @@ export default function CheckoutPage() {
         minOrderShortfall={minOrderShortfall}
       />
 
-      {/* === Modal Pembayaran === */}
-      <PaymentModal
-        open={isPaymentModalOpen}
-        onClose={() => setIsPaymentModalOpen(false)}
-        methods={PAYMENT_METHODS}
-        selectedId={selectedPaymentId}
-        onSelect={setSelectedPaymentId}
-      />
-
       {/* === Popup konfirmasi nomor telepon (setelah validasi lolos, sebelum bayar) === */}
       {/* "Kembali" / klik luar / X → tutup + kembalikan fokus ke field telepon untuk dikoreksi */}
       <PhoneConfirmModal
@@ -455,18 +435,36 @@ export default function CheckoutPage() {
         }}
         onConfirm={proceedPayment}
       />
+
+      {/* === Tirai "mengalihkan ke pembayaran" ===
+          Menutup layar sejak tombol bayar ditekan sampai halaman berpindah ke Xendit.
+
+          KENAPA PERLU: setelah order tersimpan, clearCart() menghapus cookie `infarm_checkout` dan
+          halaman ini reaktif terhadapnya — render ulangnya jatuh ke DUMMY_ORDER_ITEMS (fallback
+          untuk orang yang membuka /checkout langsung), sehingga total sempat berkedip ke angka
+          dummy Rp225.000 + ongkir sepersekian detik sebelum redirect. Nominal yang DITAGIH tak
+          pernah terpengaruh — server menghitung ulang dari harga DB — tapi angka yang berubah tepat
+          sebelum membayar terbaca seperti tagihan yang diam-diam diganti.
+
+          Tirai ini menutup gejalanya di semua kasus, bukan hanya yang ini: apa pun yang membuat
+          halaman render ulang selama proses bayar tak akan terlihat lagi. */}
+      {isPaying && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed inset-0 z-[80] flex flex-col items-center justify-center gap-3 bg-brand-surface/95 backdrop-blur-sm"
+        >
+          <span
+            className="h-10 w-10 animate-spin rounded-full border-4 border-brand-primary/25 border-t-brand-primary"
+            aria-hidden
+          />
+          <p className="text-sm font-semibold text-brand-primary">Mengalihkan ke pembayaran…</p>
+          <p className="px-8 text-center text-xs text-gray-500">
+            Jangan tutup atau muat ulang halaman ini.
+          </p>
+        </div>
+      )}
     </div>
   )
 }
 
-// === Ikon inline ===
-
-function WalletIcon() {
-  return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M20 12V8H6a2 2 0 0 1 0-4h12v4" />
-      <path d="M4 6v12a2 2 0 0 0 2 2h14v-4" />
-      <path d="M18 12a2 2 0 0 0 0 4h4v-4z" />
-    </svg>
-  )
-}

@@ -18,6 +18,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 
 import OmsHeader from '@/components/oms/OmsHeader'
 import VariantManagerModal from '@/components/oms/VariantManagerModal'
+import ProductImagePreview from '@/components/oms/ProductImagePreview'
 import { PRODUCT_CATEGORIES, getCategoryLabel } from '@/lib/data/categories'
 import {
   validateName,
@@ -1459,10 +1460,14 @@ function ProductsContent() {
                     key={index}
                     className="group relative aspect-square overflow-hidden rounded-lg border border-gray-200 bg-gray-100"
                   >
-                    <Image src={src} alt={`Foto ${index + 1}`} fill unoptimized sizes="80px" className="object-cover" />
-                    {/* Penanda foto utama */}
+                    {/* Klik thumbnail → preview ukuran penuh. Lihat ProductImagePreview:
+                        state-nya lokal per sel supaya membuka preview tak me-render ulang tabel
+                        produk di belakang modal ini. */}
+                    <ProductImagePreview src={src} alt={`Foto ${index + 1}`} />
+                    {/* Penanda foto utama. `pointer-events-none` supaya badge tak menghalangi klik
+                        preview di pojok kiri atas thumbnail. */}
                     {index === 0 && (
-                      <span className="absolute left-1 top-1 rounded-full bg-emerald-600 px-1.5 py-0.5 text-[9px] font-semibold text-white">
+                      <span className="pointer-events-none absolute left-1 top-1 z-10 rounded-full bg-emerald-600 px-1.5 py-0.5 text-[9px] font-semibold text-white">
                         Utama
                       </span>
                     )}
@@ -1470,7 +1475,7 @@ function ProductsContent() {
                       type="button"
                       onClick={() => removeEditImage(index)}
                       aria-label={`Hapus foto ${index + 1}`}
-                      className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-gray-900/60 text-xs leading-none text-white opacity-0 transition group-hover:opacity-100"
+                      className="absolute right-1 top-1 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-gray-900/60 text-xs leading-none text-white opacity-0 transition group-hover:opacity-100"
                     >
                       ×
                     </button>
