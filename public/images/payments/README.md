@@ -16,9 +16,9 @@ ekstensi `.png`.
 | Virtual Account | `bca`, `mandiri`, `bri`, `bni` |
 | E-Wallet | `dana`, `ovo`, `shopeepay` |
 | QRIS | `qris` |
-| Direct Debit | `bri`, `mandiri` (berbagi file dengan VA) |
+| Debit | `bri`, `mandiri` (berbagi file dengan VA) |
 
-Satu file bisa dipakai beberapa kelompok — `bri.png` melayani Virtual Account maupun Direct Debit.
+Satu file bisa dipakai beberapa kelompok — `bri.png` melayani Virtual Account maupun Debit.
 
 ## Menambah atau mengganti logo
 

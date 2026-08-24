@@ -4,7 +4,7 @@
 // Halaman Checkout. Di luar route group (store) karena punya header hijau sendiri (CheckoutHeader).
 // Orchestrator: menyimpan semua state (modal, kurir, asuransi, pembayaran) & menghitung total reaktif.
 
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import type { Product } from '@/types/product'
 import CheckoutHeader from '@/components/checkout/CheckoutHeader'
@@ -36,6 +36,26 @@ import { DUMMY_ORDER_ITEMS, type CheckoutItem } from '@/lib/data/dummy-checkout'
 // Produk untuk kebutuhan halaman ini: Product + berat (gram) dari OMS. Produk dummy tak punya
 // berat → undefined, dan lib/shipping-weight memakai berat cadangan untuk item seperti itu.
 type CheckoutProduct = Product & { berat?: number }
+
+// Pembungkus satu section checkout.
+//
+// Di MOBILE tak menambahkan apa pun secara visual — section tetap menempel tepi layar seperti
+// sebelumnya. Di lg+ ia memberi bentuk kartu (border, sudut membulat, bayangan tipis).
+//
+// ⚠️ SENGAJA TANPA `overflow-hidden`, walau itu cara termudah membulatkan sudut isinya.
+// Daftar saran alamat di AddressSearchCombobox memakai `absolute` dan akan TERPOTONG oleh ancestor
+// ber-overflow-hidden — pencarian alamat jadi tak terpakai. Sebagai gantinya, sudut membulat
+// diteruskan ke anak langsung (`section` / `button`) lewat arbitrary variant, sehingga latar putih
+// anaknya tak menyembul di sudut. BottomSheet (root-nya `div`) tak ikut tersentuh.
+function CheckoutCard({ className = '', children }: { className?: string; children: ReactNode }) {
+  return (
+    <div
+      className={`lg:rounded-2xl lg:border lg:border-zinc-200 lg:bg-white lg:shadow-sm lg:[&>button]:rounded-2xl lg:[&>section]:rounded-2xl ${className}`}
+    >
+      {children}
+    </div>
+  )
+}
 
 export default function CheckoutPage() {
   const router = useRouter()
@@ -376,33 +396,68 @@ export default function CheckoutPage() {
       {/* Header sticky */}
       <CheckoutHeader />
 
-      {/* Konten — pb-32 agar tak tertutup bilah bayar bawah (bilah kini + teks persetujuan S&K) */}
-      <main className="flex-1 space-y-2 pb-32">
-        {/* 2 — Ringkasan produk yang dibeli (dari pilihan keranjang) */}
-        <CheckoutProductSummary items={summaryItems} />
+      {/* Konten.
+          MOBILE (< lg): satu kolom penuh, section menempel tepi layar — TIDAK BERUBAH.
+            pb-32 memberi ruang untuk bilah bayar yang melayang di dasar layar.
+          DESKTOP (lg+): dua kolom. Kiri = alamat pengiriman saja (porsi lebih besar, karena
+            fieldnya paling banyak), kanan = produk → pengiriman → pembayaran → total.
 
-        {/* 3 — Form input alamat pengiriman */}
-        <AddressForm ref={addressFormRef} onChange={handleAddressChange} />
+          Penempatan kolom memakai `col-start` per item, BUKAN dua div pembungkus. Alasannya:
+          urutan DOM harus tetap urutan mobile (produk → alamat → kirim → bayar → ringkasan),
+          sementara di desktop alamat pindah ke kolom kiri. Membungkus tiap kolom akan memaksa
+          urutan DOM mengikuti desktop dan merusak urutan mobile. */}
+      <main className="mx-auto w-full max-w-6xl flex-1 space-y-2 pb-32 lg:grid lg:grid-cols-[3fr_2fr] lg:grid-rows-[repeat(5,auto)] lg:items-start lg:gap-x-6 lg:gap-y-4 lg:space-y-0 lg:px-8 lg:pb-12 lg:pt-6">
+        {/* 1 — Ringkasan produk yang dibeli (dari pilihan keranjang) — KANAN di desktop */}
+        <CheckoutCard className="lg:col-start-2">
+          <CheckoutProductSummary items={summaryItems} />
+        </CheckoutCard>
 
-        {/* 4 — Pilihan kurir & ongkir (bottom sheet). Isi keranjang dikirim agar server bisa
-               membandingkan ongkir dari tiap gudang yang stoknya cukup. */}
-        <ShippingOptions
-          destinationId={address.destination_id}
-          weight={shippingWeight}
-          items={shippingItems}
-          selected={selectedCourier}
-          onSelect={setSelectedCourier}
-        />
+        {/* 2 — Form alamat pengiriman — KIRI di desktop, satu-satunya isi kolom itu.
+               `row-span-5` + `self-start` = resep sticky di dalam grid: kolomnya membentang
+               setinggi seluruh baris (supaya ada ruang untuk menempel), tapi kartunya sendiri
+               setinggi isinya. Tanpa row-span, area tempelnya cuma setinggi baris pertama dan
+               sticky-nya tak pernah terlihat bekerja. */}
+        <CheckoutCard className="lg:sticky lg:top-20 lg:col-start-1 lg:row-span-5 lg:row-start-1 lg:self-start">
+          <AddressForm ref={addressFormRef} onChange={handleAddressChange} />
+        </CheckoutCard>
+
+        {/* 3 — Pilihan kurir & ongkir (bottom sheet). Isi keranjang dikirim agar server bisa
+               membandingkan ongkir dari tiap gudang yang stoknya cukup.
+               WAJIB dibungkus: komponennya me-return fragment (tombol + bottom sheet), jadi tanpa
+               pembungkus ia menghasilkan DUA grid item dan sheet-nya ikut memakan satu baris. */}
+        <CheckoutCard className="lg:col-start-2">
+          <ShippingOptions
+            destinationId={address.destination_id}
+            weight={shippingWeight}
+            items={shippingItems}
+            selected={selectedCourier}
+            onSelect={setSelectedCourier}
+          />
+        </CheckoutCard>
 
         {/* 4 — Metode pembayaran: INFORMASI saja. Pemilihannya terjadi di halaman Xendit. */}
-        <PaymentMethodsInfo />
+        <CheckoutCard className="lg:col-start-2">
+          <PaymentMethodsInfo />
+        </CheckoutCard>
 
-        {/* 5 — Ringkasan pesanan (rincian harga) tepat sebelum tombol aksi */}
-        <OrderSummary
-          subtotal={subtotal}
-          shipping={shipping}
-          total={total}
-        />
+        {/* 5 — Ringkasan pesanan (rincian harga) */}
+        <CheckoutCard className="lg:col-start-2">
+          <OrderSummary subtotal={subtotal} shipping={shipping} total={total} />
+        </CheckoutCard>
+
+        {/* 6 — Total + tombol bayar sebagai kartu penutup kolom kanan. Hanya tampak di lg+;
+               di mobile perannya dipegang bilah melayang di bawah (varian 'sticky'). */}
+        <div className="lg:col-start-2">
+          <CheckoutBottomBar
+            variant="panel"
+            total={total}
+            onPay={handlePay}
+            isPaying={isPaying}
+            canPay={canPay}
+            minOrderAmount={minOrderAmount}
+            minOrderShortfall={minOrderShortfall}
+          />
+        </div>
       </main>
 
       {/* Toast singkat (mis. alamat belum lengkap saat menekan Bayar) */}

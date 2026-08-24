@@ -31,20 +31,18 @@ export default function PaymentMethodsInfo() {
 
       <ul className="mt-3 divide-y divide-zinc-100 border-t border-zinc-100">
         {PAYMENT_METHOD_GROUPS.map((group) => (
-          <li key={group.id} className="flex items-center gap-3 py-3">
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold text-zinc-800">{group.title}</p>
-              <p className="mt-0.5 text-xs leading-snug text-zinc-500">{group.description}</p>
-            </div>
+          <li key={group.id} className="py-3">
+            <p className="text-sm font-semibold text-zinc-800">{group.title}</p>
 
-            {/* Logo di kanan. `shrink-0` supaya deskripsi yang panjang membungkus ke bawah alih-alih
-                menghimpit logo sampai gepeng. */}
-            <div className="flex shrink-0 items-center gap-1.5">
+            {/* Logo langsung di bawah judulnya, bukan di kanan. `flex-wrap` supaya kelompok berlogo
+                banyak (Virtual Account) turun baris di kolom sempit alih-alih menggepengkan
+                logonya. */}
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
               {group.logos.map((logo) => (
                 <PaymentLogoBox key={`${group.id}-${logo.slug}`} logo={logo} />
               ))}
               {group.more && (
-                <span className="ml-0.5 text-[10px] leading-tight text-zinc-400">{group.more}</span>
+                <span className="ml-0.5 text-[11px] leading-tight text-zinc-400">{group.more}</span>
               )}
             </div>
           </li>

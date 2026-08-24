@@ -22,10 +22,12 @@ export type PaymentLogo = {
 }
 
 // Satu kelompok metode pembayaran.
+//
+// TANPA field deskripsi: logonya sudah menjelaskan isinya lebih cepat daripada kalimat, dan empat
+// paragraf berderet membuat seksi ini terbaca seperti dokumen alih-alih daftar.
 export type PaymentMethodGroup = {
   id: string
   title: string
-  description: string
   logos: PaymentLogo[]
   // Keterangan tambahan bila logonya sengaja tidak ditampilkan semua (mis. bank VA terlalu banyak).
   more?: string
@@ -35,7 +37,6 @@ export const PAYMENT_METHOD_GROUPS: PaymentMethodGroup[] = [
   {
     id: 'va',
     title: 'Virtual Account',
-    description: 'Transfer ke nomor VA dari semua bank yang tersedia di Xendit.',
     logos: [
       { slug: 'bca', label: 'BCA' },
       { slug: 'mandiri', label: 'Mandiri' },
@@ -47,7 +48,6 @@ export const PAYMENT_METHOD_GROUPS: PaymentMethodGroup[] = [
   {
     id: 'ewallet',
     title: 'E-Wallet',
-    description: 'Bayar langsung dari saldo dompet digital.',
     logos: [
       { slug: 'dana', label: 'DANA' },
       { slug: 'ovo', label: 'OVO' },
@@ -57,13 +57,11 @@ export const PAYMENT_METHOD_GROUPS: PaymentMethodGroup[] = [
   {
     id: 'qris',
     title: 'QRIS',
-    description: 'Pindai satu QR dari aplikasi bank atau e-wallet apa pun.',
     logos: [{ slug: 'qris', label: 'QRIS' }],
   },
   {
     id: 'direct-debit',
-    title: 'Direct Debit',
-    description: 'Debit langsung dari rekening bank.',
+    title: 'Debit',
     // TIDAK diberi `more`. Respons invoice akun ini hanya memuat DD_BRI & DD_MANDIRI, jadi
     // menulis "& bank lainnya" seperti pada Virtual Account akan menjanjikan yang tak ada.
     logos: [

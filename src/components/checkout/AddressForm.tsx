@@ -322,7 +322,9 @@ const AddressForm = forwardRef<AddressFormHandle, {
               placeholder="Jl. Contoh No. 12, RT/RW, patokan..."
               rows={3}
               aria-invalid={Boolean(errors.street)}
-              className={`${inputClass(Boolean(errors.street))} resize-none`}
+              // lg:min-h-28 — di desktop kolom kiri jauh lebih lega, dan textarea setinggi 3 baris
+              // terasa sempit dibanding field lain di sekitarnya. Mobile tetap 3 baris.
+              className={`${inputClass(Boolean(errors.street))} resize-none lg:min-h-28`}
             />
           </Field>
           <FieldError message={errors.street} />
