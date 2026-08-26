@@ -496,7 +496,7 @@ header `Retry-After`. Map disapu berkala tiap 500 penulisan agar tak bocor memor
 | `PHONE_LOOKUP_IP_PHONE_MISS` | 5 / 15 mnt / (IP+nomor) | idem — **hanya percobaan GAGAL** yang dihitung |
 | `PHONE_WRITE_IP` | 8 / 15 mnt / IP | `cancel-by-phone` |
 | `PHONE_WRITE_PHONE` | 5 / jam / nomor | `cancel-by-phone`, `create-by-phone` |
-| `MENGANTAR_IP` | 20 / menit / IP | proxy search alamat & cek ongkir |
+| `MENGANTAR_IP` | 40 / menit / IP | proxy search alamat & cek ongkir |
 | `ORDER_CREATE_IP` | 3 / menit / IP | `POST /api/orders/create` |
 | `REVIEW_CREATE_IP` | 3 / 10 mnt / IP | `reviews/create` **dan** `reviews/create-by-phone` (bucket sama) |
 

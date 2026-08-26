@@ -29,8 +29,18 @@ export const RATE_LIMITS = {
   PHONE_WRITE_IP: { max: 8, windowMs: 15 * MINUTE },
   PHONE_WRITE_PHONE: { max: 5, windowMs: 60 * MINUTE },
 
-  // Proxy Mengantar (search alamat & cek ongkir) — cegah dipakai bot sebagai relay gratis
-  MENGANTAR_IP: { max: 20, windowMs: 1 * MINUTE },
+  // Proxy Mengantar (search alamat & cek ongkir) — cegah dipakai bot sebagai relay gratis.
+  //
+  // Dinaikkan 20 → 40 (2026-08-24) setelah pengukuran langsung ke app.mengantar.com:
+  // 30 request beruntun berjeda 200ms (~167 req/menit dari satu IP) dijawab 200 semua, tanpa
+  // satu pun 429 dan tanpa pelambatan (132–172 ms stabil). Lihat scripts/mengantar-test/rate-limit.ts.
+  //
+  // Angka 20 membatasi PEMBELI, bukan Mengantar. Combobox alamat memakai debounce 500ms + minimal
+  // 3 karakter, jadi satu pencarian wajar = 3–6 request; pembeli yang salah ketik lalu mengoreksi
+  // alamat bisa menyentuh 20 dalam satu sesi checkout dan pencarian alamatnya mati semenit tepat
+  // saat hendak bayar. 40 memberi ruang itu dan tetap tak berguna bagi scraper (butuh ribuan),
+  // serta masih jauh di bawah ambang Mengantar yang terukur.
+  MENGANTAR_IP: { max: 40, windowMs: 1 * MINUTE },
 
   // Checkout / buat pesanan — cegah order spam
   ORDER_CREATE_IP: { max: 3, windowMs: 1 * MINUTE },
