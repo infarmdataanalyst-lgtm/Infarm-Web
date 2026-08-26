@@ -2,7 +2,7 @@
 
 // src/components/checkout/AddressSearchCombobox.tsx
 // Combobox pencarian alamat ke API Mengantar (lewat proxy /api/mengantar).
-// Perilaku: mulai fetch setelah ≥3 karakter, debounce 500ms, tampilkan loading/empty/error,
+// Perilaku: mulai fetch setelah ≥3 karakter, debounce 300ms, tampilkan loading/empty/error,
 // dan hasil dalam format "Kelurahan, Kecamatan, Kota, Provinsi". Memanggil onSelect saat dipilih.
 // Tanpa dependency eksternal — interaksi ditangani native React.
 
@@ -57,9 +57,14 @@ export default function AddressSearchCombobox({
 }) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<MengantarAddress[]>([])
-  const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [hasSearched, setHasSearched] = useState(false) // sudah pernah dapat respons untuk keyword aktif?
+  // Keyword yang hasilnya SUDAH selesai (berhasil maupun gagal). Dibanding dengan keyword aktif
+  // untuk tahu apakah panel sedang menunggu jawaban.
+  //
+  // Menyimpan keyword-nya, bukan sekadar penanda boolean seperti sebelumnya: `hasSearched` tak bisa
+  // membedakan "sudah dijawab untuk kata ini" dari "sudah dijawab untuk kata sebelumnya", dan
+  // itulah yang membuat panel sempat merender daftar KOSONG tanpa spinner selama jeda debounce.
+  const [resolvedKeyword, setResolvedKeyword] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -74,7 +79,7 @@ export default function AddressSearchCombobox({
     if (value.trim().length < MIN_CHARS) {
       setResults([])
       setError('')
-      setHasSearched(false)
+      setResolvedKeyword(null)
     }
   }
 
@@ -94,22 +99,22 @@ export default function AddressSearchCombobox({
     if (addressCache.has(keyword)) return
     const ctrl = new AbortController()
     const timer = setTimeout(async () => {
-      setLoading(true)
       setError('')
       try {
         const data = await searchAddress(keyword, ctrl.signal)
         if (ctrl.signal.aborted) return
         rememberAddresses(keyword, data)
         setResults(data)
-        setHasSearched(true)
+        setResolvedKeyword(keyword)
       } catch (err) {
         if (!ctrl.signal.aborted) {
           // Pesan dari server dipakai bila ada (mis. 429 "terlalu banyak percobaan")
           setError(err instanceof Error ? err.message : 'Gagal mencari alamat. Coba lagi.')
           setResults([])
+          // Ditandai selesai juga saat gagal — kalau tidak, panel terjebak menampilkan
+          // "Mencari alamat…" selamanya padahal pencariannya sudah berakhir.
+          setResolvedKeyword(keyword)
         }
-      } finally {
-        if (!ctrl.signal.aborted) setLoading(false)
       }
     }, DEBOUNCE_MS)
 
@@ -145,10 +150,16 @@ export default function AddressSearchCombobox({
   // selesai, jadi mendahulukannya akan menampilkan hasil yang tak cocok dengan yang diketik.
   const displayed = cached ?? results
 
-  // Cache hit = tak ada yang ditunggu, apa pun keadaan `loading` yang tertinggal dari keyword
-  // sebelumnya (request yang di-abort sengaja tak menurunkan flag itu).
-  const isLoading = loading && !cached
-  const answered = cached !== undefined || hasSearched
+  // Sudah ada jawaban untuk keyword INI (dari cache atau dari respons terakhir).
+  const answered = cached !== undefined || resolvedKeyword === keyword
+
+  // Sedang menunggu jawaban. Mencakup DUA fase yang sama-sama tak boleh terlihat kosong:
+  // jeda debounce (request belum dikirim) dan request yang sedang berjalan.
+  //
+  // `loading` saja tak cukup — ia baru menyala setelah debounce lewat, sehingga ada ~300ms di mana
+  // panel bukan loading, bukan punya hasil, dan bukan "tidak ditemukan". Dulu jendela itu terlihat
+  // sebagai kotak putih kosong tanpa penjelasan apa pun.
+  const isLoading = !tooShort && !answered
 
   // Menampilkan hasil lama yang MASIH RELEVAN sambil menunggu yang baru: hanya berlaku bila
   // keyword sekarang adalah perpanjangan keyword yang hasilnya sedang tampil. Kalau tidak, daftar
@@ -185,7 +196,19 @@ export default function AddressSearchCombobox({
               Mencari alamat…
             </p>
           ) : answered && displayed.length === 0 ? (
-            <p className="px-3 py-3 text-sm text-zinc-500">Alamat tidak ditemukan</p>
+            // Pesan kosong sengaja MENUNTUN, bukan sekadar memberi tahu.
+            //
+            // Indeks Mengantar hanya berisi nama kelurahan/kecamatan/kota — terverifikasi lewat uji
+            // E2E: "RT 05 RW 02 Kebayoran" tak menghasilkan apa pun, padahal "Kebayoran" saja
+            // menghasilkan. Tanpa petunjuk ini, pembeli yang menulis alamat lengkap gaya Indonesia
+            // menyimpulkan alamatnya tak dilayani, lalu meninggalkan checkout.
+            <div className="px-3 py-3">
+              <p className="text-sm text-zinc-600">Alamat tidak ditemukan</p>
+              <p className="mt-0.5 text-xs leading-snug text-zinc-400">
+                Coba ketik nama kelurahan, kecamatan, atau kota saja — tanpa RT/RW, nama jalan, atau
+                nomor rumah.
+              </p>
+            </div>
           ) : (
             <>
               {/* Pita tipis di atas daftar saat hasil lama masih ditampilkan sambil menunggu yang

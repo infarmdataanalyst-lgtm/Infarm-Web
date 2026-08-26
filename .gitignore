@@ -47,3 +47,9 @@ src/data/products.json
 # skill + setting lokal Claude Code (khusus mesin ini, tidak dibagikan ke repo)
 .claude/skills/
 .claude/settings.local.json
+
+# Playwright (E2E) — artefak hasil uji, jangan di-commit
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/

@@ -366,9 +366,13 @@ function FieldError({ message }: { message?: string }) {
 }
 
 // Field read-only untuk menampilkan hasil auto-fill wilayah (tidak bisa diedit manual)
+// `label`, bukan `div` seperti sebelumnya — sama dengan komponen `Field` di atas.
+// Tanpa pembungkus label, input read-only ini tak punya nama yang bisa diakses: pembaca layar
+// hanya membacakan nilainya ("Jakarta Pusat") tanpa menyebut itu kolom apa, dan pengujian tak bisa
+// menjangkaunya lewat label. Murni perubahan penanda; tampilan & perilakunya sama persis.
 function ReadOnlyField({ label, value }: { label: string; value: string }) {
   return (
-    <div>
+    <label className="block">
       <span className="mb-1 block text-xs font-medium text-zinc-600">{label}</span>
       <input
         type="text"
@@ -376,6 +380,6 @@ function ReadOnlyField({ label, value }: { label: string; value: string }) {
         readOnly
         className="w-full cursor-not-allowed rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-sm text-zinc-600"
       />
-    </div>
+    </label>
   )
 }
