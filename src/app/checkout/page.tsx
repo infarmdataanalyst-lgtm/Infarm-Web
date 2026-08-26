@@ -5,7 +5,9 @@
 // Orchestrator: menyimpan semua state (modal, kurir, asuransi, pembayaran) & menghitung total reaktif.
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { ShoppingBag } from 'lucide-react'
 import type { Product } from '@/types/product'
 import CheckoutHeader from '@/components/checkout/CheckoutHeader'
 import CheckoutProductSummary from '@/components/checkout/CheckoutProductSummary'
@@ -31,11 +33,21 @@ import {
   clearCart,
 } from '@/lib/cart-client'
 import { setGuestPhone, incrementActiveOrderCount } from '@/lib/guest-phone'
-import { DUMMY_ORDER_ITEMS, type CheckoutItem } from '@/lib/data/dummy-checkout'
+import type { CheckoutItem } from '@/lib/data/dummy-checkout'
 
 // Produk untuk kebutuhan halaman ini: Product + berat (gram) dari OMS. Produk dummy tak punya
 // berat → undefined, dan lib/shipping-weight memakai berat cadangan untuk item seperti itu.
 type CheckoutProduct = Product & { berat?: number }
+
+// Penanda "kode sudah berjalan di browser".
+//
+// Cookie hanya terbaca di klien, jadi render pertama SELALU melihat keranjang kosong. Tanpa
+// penanda ini, halaman berkedip ke keadaan "keranjang kosong" sepersekian detik setiap kali
+// checkout dibuka — jenis kedipan yang sama dengan yang baru saja kita hilangkan.
+//
+// Memakai useSyncExternalStore, bukan useState+useEffect: pola itu memanggil setState di dalam
+// effect, yang ditolak aturan lint proyek ini.
+const subscribeNothing = () => () => {}
 
 // Pembungkus satu section checkout.
 //
@@ -128,10 +140,15 @@ export default function CheckoutPage() {
     return map
   }, [omsProducts])
 
-  // Gabungkan item cookie dengan detail produk (nama, foto). Bila cookie kosong (mis. user
-  // membuka /checkout langsung), pakai data dummy agar halaman tetap terisi.
+  // Gabungkan item cookie dengan detail produk (nama, foto).
+  //
+  // Cookie kosong → array kosong, dan halaman menampilkan keadaan kosong (lihat `showEmptyState`).
+  // DULU di sini ada fallback ke DUMMY_ORDER_ITEMS "agar halaman tetap terisi"; itu dibuang karena
+  // mengisi halaman dengan produk & harga KARANGAN. Akibat nyatanya sudah dua kali muncul:
+  // total berkedip ke Rp229.000 sebelum redirect ke Xendit, dan pembeli yang menekan tombol Back
+  // dari halaman sukses melihat dua produk yang tak pernah ia pesan. Siapa pun yang mengetik
+  // /checkout langsung di address bar juga melihatnya.
   const orderItems: CheckoutItem[] = useMemo(() => {
-    if (checkoutCookieItems.length === 0) return DUMMY_ORDER_ITEMS
     return checkoutCookieItems.flatMap((ci) => {
       const product = productById.get(ci.productId)
       if (!product) return []
@@ -148,6 +165,14 @@ export default function CheckoutPage() {
       ]
     })
   }, [checkoutCookieItems, productById])
+
+  // Keranjang checkout benar-benar kosong (bukan sekadar "belum terbaca di render pertama").
+  const hydrated = useSyncExternalStore(
+    subscribeNothing,
+    () => true,
+    () => false,
+  )
+  const showEmptyState = hydrated && orderItems.length === 0
 
   // Subtotal dihitung dari item pesanan aktual (harga × kuantitas)
   const subtotal = useMemo(
@@ -381,14 +406,58 @@ export default function CheckoutPage() {
       // Gagal menerbitkan tagihan → JANGAN biarkan pembeli menyangka pesanannya batal.
       // Ke halaman sukses (yang menampilkan status sungguhan dari DB + tombol bayar ulang),
       // sambil membawa alasannya agar bisa ditampilkan di sana.
+      //
+      // `replace`, BUKAN `push` — alasannya sama dengan window.location.replace di jalur berhasil
+      // tepat di atas: keranjang sudah dikosongkan, jadi /checkout tak boleh tertinggal di riwayat
+      // browser. Dengan `push`, satu kali tombol Back memulangkan pembeli ke halaman checkout tanpa
+      // isi dan ia melihat keadaan kosong yang membingungkan padahal pesanannya sudah tersimpan.
       console.error('[checkout] gagal menerbitkan tagihan:', payData.error ?? payRes.status)
-      router.push(
+      router.replace(
         `/checkout/success?invoice=${encodeURIComponent(data.invoice)}&pay_error=1`,
       )
     } catch {
       setToast('Gagal memproses pesanan. Periksa koneksi lalu coba lagi.')
       setIsPaying(false)
     }
+  }
+
+  // Tak ada yang bisa dibayar → jangan tampilkan form, ongkir, apalagi tombol bayar.
+  //
+  // Keadaan ini muncul saat: cookie checkout kadaluwarsa, pembeli menekan Back setelah pesanan
+  // dibuat (keranjang sudah dikosongkan), atau /checkout dibuka langsung dari address bar.
+  // Ditempatkan SETELAH seluruh hook supaya urutan hook tetap sama di tiap render.
+  if (showEmptyState) {
+    return (
+      <div className="flex min-h-screen flex-col bg-brand-surface text-zinc-900">
+        <CheckoutHeader />
+        <main className="mx-auto flex w-full max-w-md flex-1 items-center justify-center px-4 py-10">
+          <div className="w-full rounded-2xl border border-zinc-200 bg-white p-6 text-center shadow-sm">
+            <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-brand-surface text-brand-primary">
+              <ShoppingBag className="h-6 w-6" />
+            </span>
+            <h1 className="mt-3 text-base font-bold text-zinc-800">Belum ada produk untuk dibayar</h1>
+            <p className="mx-auto mt-1.5 max-w-xs text-sm leading-relaxed text-zinc-500">
+              Pilih produk di keranjang lebih dulu, lalu tekan Checkout. Kalau kamu baru saja
+              menyelesaikan pesanan, pesanan itu sudah tersimpan dan bisa dilihat di Lacak Pesanan.
+            </p>
+            <div className="mt-5 space-y-2">
+              <Link
+                href="/keranjang"
+                className="block rounded-xl bg-brand-primary py-3 font-heading text-sm font-bold text-white shadow-sm transition hover:brightness-90 active:scale-[0.99]"
+              >
+                Ke Keranjang
+              </Link>
+              <Link
+                href="/track-order"
+                className="block rounded-xl border border-zinc-200 py-3 text-sm font-semibold text-zinc-600 transition hover:bg-zinc-50"
+              >
+                Lacak Pesanan
+              </Link>
+            </div>
+          </div>
+        </main>
+      </div>
+    )
   }
 
   return (
@@ -495,14 +564,14 @@ export default function CheckoutPage() {
           Menutup layar sejak tombol bayar ditekan sampai halaman berpindah ke Xendit.
 
           KENAPA PERLU: setelah order tersimpan, clearCart() menghapus cookie `infarm_checkout` dan
-          halaman ini reaktif terhadapnya — render ulangnya jatuh ke DUMMY_ORDER_ITEMS (fallback
-          untuk orang yang membuka /checkout langsung), sehingga total sempat berkedip ke angka
-          dummy Rp225.000 + ongkir sepersekian detik sebelum redirect. Nominal yang DITAGIH tak
-          pernah terpengaruh — server menghitung ulang dari harga DB — tapi angka yang berubah tepat
-          sebelum membayar terbaca seperti tagihan yang diam-diam diganti.
+          halaman ini reaktif terhadapnya — jadi ia pasti render ulang tepat sebelum berpindah.
+          Dulu render ulang itu jatuh ke fallback DUMMY_ORDER_ITEMS dan total berkedip ke angka
+          karangan; fallback-nya kini sudah dibuang, tapi tirai ini tetap dipertahankan karena
+          keadaan kosong yang menggantikannya juga tak boleh sempat terlihat sedetik pun sebelum
+          pembeli diarahkan ke Xendit.
 
-          Tirai ini menutup gejalanya di semua kasus, bukan hanya yang ini: apa pun yang membuat
-          halaman render ulang selama proses bayar tak akan terlihat lagi. */}
+          Berlaku untuk semua penyebab, bukan hanya yang ini: apa pun yang membuat halaman render
+          ulang selama proses bayar tak akan terlihat lagi. */}
       {isPaying && (
         <div
           role="status"
