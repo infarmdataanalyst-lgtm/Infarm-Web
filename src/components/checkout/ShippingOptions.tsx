@@ -138,8 +138,27 @@ export default function ShippingOptions({
   // Hanya berjalan saat `selected` masih null → tidak pernah menimpa pilihan buyer, dan tidak
   // menahannya kalau ia sengaja memilih opsi yang lebih mahal.
   useEffect(() => {
-    if (selected || supported.length === 0) return
-    onSelect(supported[0])
+    if (supported.length === 0) return
+
+    // Belum memilih apa pun → ambil yang termurah.
+    if (!selected) {
+      onSelect(supported[0])
+      return
+    }
+
+    // Sudah ada pilihan, TAPI ia tak ada di daftar tarif yang baru.
+    //
+    // Terjadi saat pilihan dipulihkan dari draf localStorage (refresh halaman): kurir & harganya
+    // berasal dari kutipan lama, sementara daftar ini baru saja ditarik untuk tujuan, berat, dan
+    // isi keranjang yang berlaku SEKARANG. Membiarkannya berarti pembeli melihat tarif basi, dan
+    // `POST /api/orders/create` menolaknya dengan 409 SHIPPING_MISMATCH tepat saat ia menekan
+    // bayar — kegagalan di titik paling mahal.
+    //
+    // Dicocokkan lewat optionKey (gudang + kurir + harga), jadi perubahan harga sekalipun
+    // terhitung "tak ada lagi" dan memicu penggantian.
+    const masihAda = supported.some((c) => optionKey(c) === optionKey(selected))
+    if (!masihAda) onSelect(supported[0])
+
     // onSelect sengaja tak masuk dependency: identitasnya bisa berubah tiap render induk
     // (fungsi inline), yang akan membuat efek ini berjalan berulang.
     // eslint-disable-next-line react-hooks/exhaustive-deps

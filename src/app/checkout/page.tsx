@@ -21,6 +21,13 @@ import ShippingOptions from '@/components/checkout/ShippingOptions'
 import PaymentMethodsInfo from '@/components/checkout/PaymentMethodsInfo'
 import PhoneConfirmModal from '@/components/checkout/PhoneConfirmModal'
 import CheckoutSkeleton from '@/components/checkout/CheckoutSkeleton'
+import {
+  readCheckoutDraft,
+  writeCheckoutDraft,
+  clearCheckoutDraft,
+  draftAdaIsinya,
+  emptyAddress,
+} from '@/lib/checkout-draft'
 import { validateAddress } from '@/lib/checkout-validation'
 import { formatRupiah } from '@/lib/format'
 import { shippingWeightKg, type WeighableItem } from '@/lib/shipping-weight'
@@ -77,19 +84,21 @@ export default function CheckoutPage() {
   const [isPhoneConfirmOpen, setIsPhoneConfirmOpen] = useState(false) // popup konfirmasi no. telepon
   const [isPaying, setIsPaying] = useState(false) // mencegah double submit saat memproses bayar
 
+  // === Draf isian yang tersimpan dari kunjungan sebelumnya (localStorage) ===
+  //
+  // Dibaca SEKALI saat mount. Aman terhadap hidrasi walau menyentuh localStorage: selama `hydrated`
+  // masih false halaman merender kerangka, jadi nilai ini belum memengaruhi keluaran apa pun saat
+  // React mencocokkan HTML server dengan render klien pertama.
+  //
+  // `useMemo` dengan dependency kosong, BUKAN useEffect+setState: pola itu ditolak aturan lint
+  // proyek ini, dan draf memang tak perlu jadi state — ia hanya benih nilai awal.
+  const draftTersimpan = useMemo(() => readCheckoutDraft(), [])
+
   // === Alamat pengiriman: diangkat dari AddressForm agar nama/telepon/alamat & destination_id dipakai saat order ===
-  // Seluruh field kosong di awal (tidak ada prefill default).
-  const [address, setAddress] = useState<AddressFormState>({
-    recipientName: '',
-    phone: '',
-    destination_id: '',
-    provinceName: '',
-    cityName: '',
-    districtName: '',
-    subdistrictName: '',
-    postalCode: '',
-    street: '',
-  })
+  // Kosong di awal, kecuali ada draf yang bisa dipulihkan.
+  const [address, setAddress] = useState<AddressFormState>(
+    () => draftTersimpan?.address ?? emptyAddress(),
+  )
 
   // Ref ke AddressForm untuk menampilkan error & scroll saat submit ditolak
   const addressFormRef = useRef<AddressFormHandle>(null)
@@ -100,7 +109,15 @@ export default function CheckoutPage() {
   const isAddressValid = useMemo(() => validateAddress(address).valid, [address])
 
   // === Kurir terpilih (selected_courier) hasil cek ongkir ===
-  const [selectedCourier, setSelectedCourier] = useState<WarehouseShippingOption | null>(null)
+  //
+  // Ikut dipulihkan dari draf supaya baris "Metode Pengiriman" & total langsung terisi setelah
+  // refresh. Harganya BELUM tentu masih berlaku — ShippingOptions menarik tarif baru untuk tujuan
+  // ini dan mengganti pilihan yang tak lagi ada di daftar (lihat rekonsiliasi di komponen itu).
+  // Tanpa penggantian tersebut, tarif basi akan lolos ke `POST /api/orders/create` dan ditolak
+  // `409 SHIPPING_MISMATCH` tepat saat pembeli menekan bayar — kegagalan paling mahal waktunya.
+  const [selectedCourier, setSelectedCourier] = useState<WarehouseShippingOption | null>(
+    () => draftTersimpan?.courier ?? null,
+  )
 
   // Saat alamat berubah/di-reset (destination_id berganti), reset pilihan kurir → cek ongkir ulang.
   function handleAddressChange(next: AddressFormState) {
@@ -347,6 +364,26 @@ export default function CheckoutPage() {
   const minOrderShortfall = Math.max(0, minOrderAmount - subtotal)
   const canPay = isAddressValid && selectedCourier !== null && minOrderShortfall === 0
 
+  // === Simpan draf isian (debounce 400ms) ===
+  //
+  // Debounce, bukan tulis per ketukan: mengetik alamat lengkap bisa 60+ karakter, dan
+  // `JSON.stringify` + `setItem` di tiap ketukan adalah kerja sinkron yang menahan thread UI.
+  // 400ms cukup singkat sehingga refresh yang tak disengaja hampir selalu jatuh setelah
+  // penyimpanan terakhir, dan cukup panjang untuk melewati satu kata yang diketik cepat.
+  //
+  // Timer di-reset tiap perubahan (cleanup `clearTimeout`), jadi yang tersimpan selalu keadaan
+  // TERAKHIR — bukan tumpukan penulisan tertunda.
+  //
+  // TIDAK menulis saat `isPaying`: pesanan sedang dibuat dan draf akan dihapus sebentar lagi;
+  // penulisan yang menyusul setelah penghapusan justru menghidupkan kembali draf yang baru dibuang.
+  useEffect(() => {
+    if (!hydrated || isPaying) return
+    if (!draftAdaIsinya(address, selectedCourier)) return
+
+    const timer = setTimeout(() => writeCheckoutDraft(address, selectedCourier), 400)
+    return () => clearTimeout(timer)
+  }, [hydrated, isPaying, address, selectedCourier])
+
   // Sembunyikan toast otomatis setelah beberapa detik
   useEffect(() => {
     if (!toast) return
@@ -440,6 +477,16 @@ export default function CheckoutPage() {
         setIsPaying(false)
         return
       }
+
+      // Pesanan SUDAH tersimpan → draf isian tak lagi punya alasan untuk ada.
+      //
+      // Dihapus DI SINI, bukan setelah tagihan terbit: pesanannya sudah nyata apa pun hasil
+      // penerbitan tagihan, jadi membiarkan draf hidup berarti belanja berikutnya dimulai dengan
+      // alamat pesanan ini sudah terisi — terlihat seperti sistem salah mengambil data.
+      //
+      // Berbeda dari `clearCart()` di bawah yang sengaja menunggu: mengosongkan keranjang lebih
+      // awal membuat halaman ini berkedip ke keadaan kosong sebelum berpindah ke Xendit.
+      clearCheckoutDraft()
 
       // Order berhasil → simpan no_telepon ke cookie (auto-recognize di /track-order & /cancel-order)
       // dan naikkan estimasi pesanan aktif (badge angka header; di-refresh akurat saat buka
@@ -594,7 +641,11 @@ export default function CheckoutPage() {
                setinggi isinya. Tanpa row-span, area tempelnya cuma setinggi baris pertama dan
                sticky-nya tak pernah terlihat bekerja. */}
         <CheckoutCard className="lg:sticky lg:top-20 lg:col-start-1 lg:row-span-5 lg:row-start-1 lg:self-start">
-          <AddressForm ref={addressFormRef} onChange={handleAddressChange} />
+          <AddressForm
+            ref={addressFormRef}
+            onChange={handleAddressChange}
+            initialValue={draftTersimpan?.address}
+          />
         </CheckoutCard>
 
         {/* 3 — Pilihan kurir & ongkir (bottom sheet). Isi keranjang dikirim agar server bisa

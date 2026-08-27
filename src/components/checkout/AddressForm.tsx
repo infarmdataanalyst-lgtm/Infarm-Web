@@ -72,13 +72,21 @@ function initialForm(): AddressFormState {
 // Menampilkan form pengisian alamat pengiriman.
 // onChange: mengabarkan nilai form terbaru ke parent setiap ada perubahan
 // (agar data alamat, telepon & destination_id siap dipakai saat membuat order / cek ongkir).
+// initialValue: isian awal untuk memulihkan draf yang tersimpan (lihat lib/checkout-draft.ts).
+// Dibaca SEKALI saat mount — komponen ini memegang state formnya sendiri, jadi perubahan prop
+// setelahnya sengaja diabaikan supaya ketikan pengguna tak pernah tertimpa dari luar.
 const AddressForm = forwardRef<AddressFormHandle, {
   onChange?: (address: AddressFormState) => void
-}>(function AddressForm({ onChange }, ref) {
-  const [form, setForm] = useState<AddressFormState>(initialForm)
+  initialValue?: AddressFormState
+}>(function AddressForm({ onChange, initialValue }, ref) {
+  const [form, setForm] = useState<AddressFormState>(() => initialValue ?? initialForm())
 
   // Teks yang ditampilkan untuk telepon (form.phone menyimpan hasil normalisasi).
-  const [phoneInput, setPhoneInput] = useState('')
+  //
+  // Ikut di-seed dari draf. Kalau tidak, nomor yang dipulihkan tersimpan di `form.phone` (dipakai
+  // validasi & pengiriman order) tapi kotaknya tampak KOSONG — pengguna mengetik ulang di atas
+  // nilai yang sebenarnya sudah ada.
+  const [phoneInput, setPhoneInput] = useState(() => initialValue?.phone ?? '')
 
   // Pesan error per field (kosong = tidak ada error). Mengatur juga border merah.
   const [errors, setErrors] = useState<AddressValidationResult['errors']>({})
