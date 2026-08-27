@@ -153,7 +153,7 @@ Butuh keputusan pemilik toko sebelum disentuh (semuanya hasil audit, bukan dugaa
 | `/checkout/success` & `/track` belum di-gate verifikasi no. telepon — `/track` kini juga menampilkan isi belanja & nominal (kartu Produk Dipesan), jadi gate-nya lebih berharga daripada sebelumnya | `docs/security/` |
 | `order_items` masih anon-readable di DB live (schema drift dari migration) | `docs/security/` |
 | No. telepon belum divalidasi ulang di server pada `orders/create` | `docs/security/` |
-| `shippingCost <= 0 → 0` (perlu ditinjau) | `docs/security/` |
+| ~~`shippingCost <= 0 → 0` (perlu ditinjau)~~ **selesai** — `orders/create` kini mencocokkan ongkir kiriman client dengan daftar tarif Mengantar yang dihitung server sendiri (cache 10 mnt, dihitung ulang saat miss); tak cocok → `409 SHIPPING_MISMATCH`. **Sisa**: bila Mengantar tak bisa dihubungi DAN cache kosong, nilai client tetap diterima dan hanya dicatat ke log — disengaja agar checkout tak mati total saat Mengantar down | `docs/security/` |
 | `mock-db/*` belum diberi `import 'server-only'` | `docs/security/` |
 | Duplikat React key pada pilihan kurir (`SAPLite` dst) saat multi-gudang: `courier.id` unik per gudang, bukan lintas gudang. Selain warning React, **kedua kartu kurir yang sama menyala bersamaan** dan `find()` mengambil kecocokan pertama. Perbaikan: identitas gabungan `${warehouseId}::${id}` di `ShippingOptions.tsx` (4 titik) | Dilaporkan 2026-08-14, menunggu keputusan |
 

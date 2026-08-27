@@ -1,6 +1,13 @@
 # E2E Test (Playwright)
 
-Berkas uji end-to-end. **Belum ada test case** — folder ini baru berisi kerangkanya.
+Berkas uji end-to-end.
+
+| Spec | Menulis data? | Jalan otomatis? |
+|---|---|---|
+| `checkout-address-fields.spec.ts` | tidak | ya |
+| `checkout-special-chars.spec.ts` | tidak | ya |
+| `checkout-ongkir-flow.spec.ts` | tidak | ya |
+| `checkout-full-payment-flow.spec.ts` | **YA — pesanan, invoice, resi** | **tidak** (lihat di bawah) |
 
 ## Menjalankan
 
@@ -43,3 +50,32 @@ sungguhan:
   uji semacam itu dengan kunci Xendit produksi.
 - Booking kurir (`POST /order` Mengantar) **memotong saldo dan menerbitkan resi nyata**. Aturan
   panggilan API berbayar di CLAUDE.md berlaku penuh di sini — jangan memicunya dari uji otomatis.
+
+## ⛔ `checkout-full-payment-flow.spec.ts`
+
+Satu-satunya uji yang menembus batas pembayaran. **Dilewati secara default** dan hanya berjalan
+bila sakelar izinnya dinyalakan sengaja:
+
+```bash
+E2E_ALLOW_PAID=1 npx playwright test checkout-full-payment-flow --headed
+```
+
+Sekali jalan ia meninggalkan: satu baris `orders` + `order_items`, stok berkurang, satu invoice di
+dashboard Xendit, dan — **bila webhook terjangkau** — satu resi Mengantar yang tak bisa dibatalkan
+dari sisi kita. Baca blok peringatan di kepala berkasnya sebelum menjalankan.
+
+**Di localhost, verifikasi status TIDAK akan berhasil.** Server Xendit tak bisa mengirim callback
+ke `http://localhost:3000`, jadi `status_pembayaran` tetap `Menunggu` dan `no_tracking` tetap
+kosong meski halaman sukses terbuka. Itu juga berarti booking kurir tak terpicu di lokal.
+Untuk memverifikasinya sungguhan: tunnel (`ngrok`) atau deployment preview dengan webhook
+terdaftar — dan sadari bahwa di situ resinya benar-benar terbit.
+
+**Tujuan wajib DKI Jakarta.** Sandbox Mengantar hanya melayani rute gudang Jakarta → tujuan
+Jakarta; tujuan luar Jakarta mengembalikan daftar kurir kosong dan uji gagal karena data pihak
+ketiga, bukan karena kode kita. Spec memeriksa kolom Provinsi tepat setelah alamat dipilih supaya
+penyebabnya kelihatan di situ, bukan menjelma jadi "tak ada opsi kurir" satu langkah kemudian.
+
+Selektor halaman Xendit di spec itu masih **tebakan berlapis kandidat**, bukan hasil pengamatan
+(halamannya tak bisa diintip tanpa menerbitkan invoice lebih dulu). Jalankan sekali, lihat
+`screenshots/xendit-1-metode.png`, `screenshots/xendit-2-va.png`, dan dump struktur di konsol,
+lalu kunci selektornya.

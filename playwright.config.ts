@@ -85,10 +85,16 @@ export default defineConfig({
   // tapi perilaku yang HANYA ada di production — ISR/`revalidate`, cache tag, header `x-vercel-cache`
   // — tak bisa diuji dari sini (lihat catatan caching di CLAUDE.md). Untuk itu jalankan uji terhadap
   // deployment preview lewat PLAYWRIGHT_BASE_URL.
-  webServer: {
-    command: 'npm run dev',
-    url: BASE_URL,
-    reuseExistingServer: !IS_CI,
-    timeout: 120_000,
-  },
+  // DILEWATI saat PLAYWRIGHT_BASE_URL di-set: targetnya deployment yang sudah menyala (preview /
+  // produksi), jadi tak ada gunanya menyalakan dev server lokal. Tanpa pengecualian ini Playwright
+  // tetap menyalakan `npm run dev` di latar — proses menganggur yang menahan port 3000 dan, kalau
+  // sudah ada dev server lain, gagal dengan "Another next dev server is already running".
+  webServer: process.env.PLAYWRIGHT_BASE_URL
+    ? undefined
+    : {
+        command: 'npm run dev',
+        url: BASE_URL,
+        reuseExistingServer: !IS_CI,
+        timeout: 120_000,
+      },
 })

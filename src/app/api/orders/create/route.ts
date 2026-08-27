@@ -15,7 +15,11 @@ import { getVariantsByIds } from '@/lib/mock-db/variants'
 import { getMinOrderAmount } from '@/lib/mock-db/settings'
 import { getEffectiveStock, resolveWarehouseForOrder, type StockRequirement } from '@/lib/warehouse'
 import { getWarehouseById } from '@/lib/mock-db/warehouses'
-import { getCachedShippingOptions, shippingOptionsKey } from '@/lib/warehouse-shipping'
+import {
+  getCachedShippingOptions,
+  resolveShippingOptions,
+  shippingOptionsKey,
+} from '@/lib/warehouse-shipping'
 import { shippingWeightKg } from '@/lib/shipping-weight'
 import type { Warehouse } from '@/types/warehouse'
 import { formatRupiah } from '@/lib/format'
@@ -24,6 +28,8 @@ import type { CreateOrderInput, OrderItem, OrderShippingAddress } from '@/types/
 
 // createAdminClient (Supabase) butuh runtime Node.js, bukan Edge
 export const runtime = 'nodejs'
+
+const LOG = '[orders-create]'
 
 // Validasi payload di server (jangan percaya input client mentah-mentah)
 function isValidPayload(body: unknown): body is CreateOrderInput {
@@ -238,10 +244,126 @@ export async function POST(request: Request) {
     })
   }
 
-  // Ongkir dari client (hasil cek ongkir Mengantar sisi-klien) — clamp ≥ 0.
-  // TODO: verifikasi ongkir server-side via Mengantar (origin+destination+weight) — roadmap.
-  const shippingCost =
-    typeof extra.shippingCost === 'number' && extra.shippingCost > 0 ? Math.round(extra.shippingCost) : 0
+  // === Kebutuhan stok & berat kirim — DIHITUNG DI SINI, sebelum ongkir ===
+  //
+  // Dulu dua nilai ini dihitung setelah blok ongkir. Dipindah ke atas karena keduanya adalah bahan
+  // KUNCI CACHE perbandingan ongkir, dan tanpa keduanya ongkir tak bisa diverifikasi.
+  //
+  // Berat diambil dari berat produk di DB, BUKAN dari `weight` yang dikirim client: berat palsu
+  // yang kecil menghasilkan ongkir murah sementara kurir tetap menagih tarif berat sebenarnya.
+  // Item hadiah promo ikut ditimbang — barangnya tetap dikirim fisik.
+  const requirements = pricedItems.map((it) => ({
+    productId: it.productId,
+    variantId: it.variantId ?? undefined,
+    quantity: it.quantity,
+  }))
+
+  const serverWeight = shippingWeightKg(
+    pricedItems.map((it) => ({ quantity: it.quantity, berat: byId.get(it.productId)?.berat })),
+  )
+
+  // === Ongkir: DIVERIFIKASI ke tarif Mengantar, bukan diterima apa adanya ===
+  //
+  // Sebelumnya nilai ini diambil mentah dari body dan hanya di-clamp ≥ 0. Itu satu-satunya angka
+  // berdampak-uang yang masih dipercaya dari client: `POST` dengan `shippingCost: 0` membuat
+  // `jumlah_total` ikut nol-ongkir, dan karena tagihan Xendit dibaca dari kolom itu, pembeli
+  // benar-benar membayar tanpa ongkir. Tarif kurirnya tetap ditagih ke toko.
+  //
+  // Cara verifikasi: cocokkan dengan daftar tarif yang server sendiri dapat dari Mengantar untuk
+  // (tujuan + berat + isi keranjang) yang sama. Client hanya boleh memilih dari daftar itu.
+  //
+  // Cache dipakai bila ada; kalau tidak, dihitung ulang. Menghitung ulang aman: cek ongkir adalah
+  // panggilan BACA yang gratis dan tanpa efek samping (CLAUDE.md → Panggilan API Berbayar).
+  // Cache MISS itu hal biasa di Vercel — cache-nya in-memory per instance, dan permintaan cek
+  // ongkir tadi bisa mendarat di instance yang berbeda. Jadi miss TIDAK boleh diperlakukan sebagai
+  // kecurigaan.
+  const clientShipping =
+    typeof extra.shippingCost === 'number' && extra.shippingCost > 0
+      ? Math.round(extra.shippingCost)
+      : 0
+
+  const optionsKey = shippingOptionsKey(body.address.destinationId, serverWeight, requirements)
+  let quoted = getCachedShippingOptions(optionsKey)
+
+  if (!quoted) {
+    try {
+      quoted = await resolveShippingOptions(requirements, body.address.destinationId, serverWeight)
+    } catch (err) {
+      console.error(`${LOG} gagal menghitung ulang ongkir untuk verifikasi:`, err)
+      quoted = null
+    }
+  }
+
+  const tarifSah = quoted ? quoted.options.map((o) => Math.round(o.price)) : []
+
+  // `const`: nilainya tak pernah ditimpa. Cabang "tak cocok" MENOLAK permintaan (return), bukan
+  // menimpa dengan tarif server — lihat alasannya di komentar cabang itu.
+  const shippingCost = clientShipping
+
+  // ⚠️ "Tak ada tarif" punya DUA sebab yang sama sekali berbeda, dan keduanya tak boleh
+  // diperlakukan sama:
+  //
+  //   (a) Mengantar tak menjawab   → `warehousesResponded === 0` (atau panggilannya melempar).
+  //       Kita tak tahu apa-apa tentang tujuannya. Menolak = checkout mati total tiap kali
+  //       Mengantar bermasalah.
+  //   (b) Mengantar MENJAWAB, tapi nol kurir → tujuannya memang tak terlayani: `destination_id`
+  //       ngawur/tak dikenal, atau seluruh kurir tersaring daftar putih. Ini BUKAN gangguan
+  //       sementara — pesanan ke alamat itu tak akan pernah bisa dikirim.
+  //
+  // Dulu keduanya jatuh ke satu cabang "terima saja, catat di log". Akibatnya `destination_id`
+  // karangan tetap menghasilkan baris `orders` berstatus Menunggu Pembayaran yang tak mungkin
+  // dipenuhi — pesanan hantu yang baru ketahuan saat admin mencoba membooking kurir.
+  const mengantarMenjawab = quoted !== null && quoted.warehousesResponded > 0
+
+  if (tarifSah.length === 0 && mengantarMenjawab) {
+    // (b) Tujuan tak terlayani → TOLAK. Jangan buat pesanan yang mustahil dikirim.
+    console.warn(
+      `${LOG} tujuan tak terlayani: destination=${body.address.destinationId} ` +
+        `weight=${serverWeight} gudangMenjawab=${quoted!.warehousesResponded}`,
+    )
+    return NextResponse.json(
+      {
+        error:
+          'Alamat tujuan belum terjangkau kurir kami. Silakan pilih ulang alamat pengiriman.',
+        code: 'DESTINATION_UNSERVICEABLE',
+      },
+      { status: 422 },
+    )
+  }
+
+  if (tarifSah.length === 0) {
+    // (a) Mengantar tak bisa dihubungi DAN cache kosong → tak ada dasar untuk membandingkan.
+    //
+    // Nilai client diterima, TAPI dicatat keras. Menolak di sini berarti seluruh checkout berhenti
+    // setiap kali Mengantar bermasalah — kerugian yang jauh lebih besar dan lebih sering daripada
+    // celah yang sedang ditutup. Ini satu-satunya jalan yang tersisa terbuka, dan ia butuh Mengantar
+    // sedang down untuk bisa dipakai.
+    console.error(
+      `${LOG} ONGKIR TAK TERVERIFIKASI (Mengantar tak menjawab) — memakai nilai client ` +
+        `Rp${clientShipping}. destination=${body.address.destinationId} weight=${serverWeight}`,
+    )
+  } else if (!tarifSah.includes(clientShipping)) {
+    // Angka yang dikirim client bukan salah satu tarif yang benar-benar ditawarkan.
+    //
+    // DITOLAK, bukan diam-diam ditimpa dengan tarif server. Menimpanya berarti pembeli ditagih
+    // angka yang berbeda dari yang ia lihat di layar — dan bila tarif server lebih mahal, ia
+    // membayar lebih tanpa pernah menyetujuinya. Lebih baik ia menghitung ulang ongkir.
+    //
+    // Tarif juga bisa berubah wajar antara buyer melihat harga dan menekan bayar (cache 10 menit).
+    // Karena itu pesannya diarahkan ke tindakan, bukan ke tuduhan.
+    console.warn(
+      `${LOG} ongkir ditolak: client=Rp${clientShipping} tak ada di tarif sah [${tarifSah.join(', ')}]`,
+    )
+    return NextResponse.json(
+      {
+        error:
+          'Ongkos kirim sudah berubah. Silakan pilih ulang kurir pengiriman lalu coba lagi.',
+        code: 'SHIPPING_MISMATCH',
+      },
+      { status: 409 },
+    )
+  }
+
   // Diskon (promo) — clamp 0..subtotal. Wiring promo→order masih roadmap; default 0.
   const discount =
     typeof extra.discount === 'number' && extra.discount > 0
@@ -257,48 +379,27 @@ export async function POST(request: Request) {
   //   2. bila tak lolos, jatuh ke opsi ongkir termurah BERIKUTNYA dari hasil perbandingan yang
   //      masih tersimpan di server (tanpa memanggil Mengantar lagi),
   //   3. bila itu pun tak ada, resolveWarehouseForOrder memilih gudang ber-stok cukup / default.
-  // Di-resolve SETELAH item final (termasuk produk hadiah promo) agar penilaian stoknya lengkap.
-  const requirements = pricedItems.map((it) => ({
-    productId: it.productId,
-    variantId: it.variantId ?? undefined,
-    quantity: it.quantity,
-  }))
-
-  // === Berat kirim: DIHITUNG ULANG DI SERVER ===
-  // Berat satuan diambil dari produk di DB (byId berasal dari readProducts(), bukan cache), bukan
-  // dari nilai `weight` yang dikirim client. Kalau client dipercaya, pembeli bisa mengirim berat
-  // kecil untuk mendapat ongkir murah sementara kurir menagih tarif berat sebenarnya — selisihnya
-  // ditanggung toko. Item hadiah promo ikut ditimbang karena barangnya tetap dikirim fisik.
   //
-  // Konsekuensi yang disengaja: bila client sebelumnya memakai berat lain, kunci cache perbandingan
-  // ongkir tak akan cocok sehingga jalur fallback di bawah tidak menemukan apa pun dan turun ke
-  // resolveWarehouseForOrder. Gagal ke jalur yang aman, bukan menerima berat palsu.
-  const serverWeight = shippingWeightKg(
-    pricedItems.map((it) => ({ quantity: it.quantity, berat: byId.get(it.productId)?.berat })),
-  )
-
+  // `requirements` & `serverWeight` sengaja TIDAK dihitung lagi di sini — keduanya sudah dibuat di
+  // atas untuk memverifikasi ongkir. Menghitungnya dua kali pernah membuat kunci cache di blok ini
+  // berbeda tipis dari kunci di blok ongkir, dan fallback gudang jadi selalu meleset tanpa gejala.
   const requestedWarehouseId =
     typeof extra.warehouseId === 'string' && extra.warehouseId ? extra.warehouseId : undefined
 
   let warehouse = await pickVerifiedWarehouse(requestedWarehouseId, requirements)
 
-  if (!warehouse) {
-    // Gudang pilihan buyer tak lolos verifikasi → coba opsi termurah berikutnya dari cache
-    // perbandingan ongkir (kunci: tujuan + berat + isi keranjang).
-    const cached = getCachedShippingOptions(
-      shippingOptionsKey(body.address.destinationId, serverWeight, requirements),
-    )
-    if (cached) {
-      // Urutan cache sudah termurah → termahal; ambil gudang pertama yang lolos verifikasi.
-      const tried = new Set<string>(requestedWarehouseId ? [requestedWarehouseId] : [])
-      for (const option of cached.options) {
-        if (tried.has(option.warehouseId)) continue
-        tried.add(option.warehouseId)
-        const candidate = await pickVerifiedWarehouse(option.warehouseId, requirements)
-        if (candidate) {
-          warehouse = candidate
-          break
-        }
+  if (!warehouse && quoted) {
+    // Gudang pilihan buyer tak lolos verifikasi → coba opsi termurah berikutnya dari daftar tarif
+    // yang SAMA dengan yang dipakai memverifikasi ongkir (`quoted`), bukan membaca cache ulang.
+    // Urutannya sudah termurah → termahal.
+    const tried = new Set<string>(requestedWarehouseId ? [requestedWarehouseId] : [])
+    for (const option of quoted.options) {
+      if (tried.has(option.warehouseId)) continue
+      tried.add(option.warehouseId)
+      const candidate = await pickVerifiedWarehouse(option.warehouseId, requirements)
+      if (candidate) {
+        warehouse = candidate
+        break
       }
     }
   }
