@@ -23,6 +23,11 @@ import {
   setCheckoutPromo,
 } from '@/lib/cart-client'
 import { computePromoProgress, computePromoRewards } from '@/lib/promo-cart'
+import CartItemsSkeleton from '@/components/cart/CartItemsSkeleton'
+
+// Store kosong untuk useSyncExternalStore — dipakai hanya sebagai penanda hidrasi (lihat
+// `cartHydrated`). Tak pernah memberi notifikasi karena nilainya memang tak pernah berubah.
+const subscribeNothing = () => () => {}
 import CartHeader from '@/components/cart/CartHeader'
 import CartPromoList from '@/components/cart/CartPromoList'
 import CartItemRow from '@/components/cart/CartItemRow'
@@ -42,30 +47,58 @@ export default function CartPage() {
   // === Baca cookie keranjang secara reaktif (tanpa setState di effect) ===
   const cookieCart = useSyncExternalStore(subscribeCart, getCartSnapshot, getServerCartSnapshot)
 
+  // Penanda "sudah berjalan di browser". Cookie hanya terbaca di klien, jadi render server SELALU
+  // melihat keranjang kosong — tanpa penanda ini, HTML dari server memuat pesan "keranjang kosong"
+  // yang langsung tergantikan begitu hidrasi selesai.
+  //
+  // useSyncExternalStore, bukan useState+useEffect: pola itu memanggil setState di dalam effect,
+  // yang ditolak aturan lint proyek ini.
+  const cartHydrated = useSyncExternalStore(
+    subscribeNothing,
+    () => true,
+    () => false,
+  )
+
   // Set ID produk yang TIDAK dicentang (default: semua tercentang). Hanya state UI, tak masuk cookie.
   const [excluded, setExcluded] = useState<Set<string>>(new Set())
 
   // Produk OMS dari Supabase (untuk me-resolve detail item keranjang yang ber-id UUID)
   const [omsProducts, setOmsProducts] = useState<StoredProduct[]>([])
 
+  // Kunci permintaan `by-ids` yang SUDAH dijawab server.
+  //
+  // Dipakai membedakan "keranjang memang kosong" dari "isinya belum bernama". Cookie keranjang
+  // hanya memuat { productId, quantity, price }; selama detail produk belum tiba, `items` di bawah
+  // membuang setiap baris dan halaman DULU langsung berkata "Keranjang kamu masih kosong" kepada
+  // orang yang jelas-jelas baru menaruh barang.
+  //
+  // Disimpan sebagai kunci (bukan boolean) karena `idsKey` ikut berubah saat riwayat lihat & promo
+  // tiba — boolean tak bisa membedakan jawaban untuk daftar yang mana.
+  const [answeredIdsKey, setAnsweredIdsKey] = useState<string | null>(null)
+
   // Promo aktif real dari Supabase (via API server-only)
   const [promos, setPromos] = useState<Promotion[]>([])
   const [loadingPromos, setLoadingPromos] = useState(true)
 
-  // Riwayat "pernah dilihat" (localStorage, sisi-klien). Kosong bila belum ada/disabled.
-  const [viewedIds, setViewedIds] = useState<string[]>([])
-  // Produk yang PERNAH dimasukkan keranjang → dikecualikan dari rekomendasi (baca localStorage).
-  const [addedIds, setAddedIds] = useState<string[]>([])
+  // Riwayat "pernah dilihat" & "pernah dimasukkan keranjang" — keduanya dari localStorage.
+  //
+  // Dibaca saat RENDER (setelah hidrasi), bukan lewat `useEffect` + `setState`. Pola lama melanggar
+  // `react-hooks/set-state-in-effect` dan sudah membuat `npm run lint` merah di berkas ini sebelum
+  // perubahan ini. Keduanya keadaan TURUNAN dari penyimpanan eksternal, jadi memang tak perlu
+  // melewati state sama sekali.
+  //
+  // `cartHydrated` jadi dependency: localStorage hanya ada di klien.
+  const viewedIds = useMemo(
+    () => (cartHydrated ? getRecentlyViewedIds() : []),
+    [cartHydrated],
+  )
 
-  // Baca riwayat lihat produk sekali saat mount (client only)
-  useEffect(() => {
-    setViewedIds(getRecentlyViewedIds())
-  }, [])
-
-  // Refresh set "pernah di-cart" tiap isi keranjang berubah (mis. setelah add/remove) → rekomendasi fresh
-  useEffect(() => {
-    setAddedIds(getAddedToCartIds())
-  }, [cookieCart])
+  // `cookieCart` SENGAJA jadi dependency meski tak dibaca di dalamnya — mempertahankan perilaku
+  // effect yang digantikan. `getAddedToCartIds()` membaca localStorage, saluran yang tak terlihat
+  // oleh linter; tanpa dependency ini daftar "pernah di-cart" membeku dan rekomendasi tetap
+  // menawarkan produk yang baru saja dimasukkan keranjang.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const addedIds = useMemo(() => (cartHydrated ? getAddedToCartIds() : []), [cartHydrated, cookieCart])
 
   // === Id produk yang perlu di-resolve dari server: item keranjang + riwayat lihat (gabung unik) ===
   // Key stabil (diurut) supaya effect hanya refetch saat kumpulan id benar-benar berubah.
@@ -81,16 +114,24 @@ export default function CartPage() {
   // === Resolve HANYA produk yang dibutuhkan (bukan seluruh katalog) lewat /api/products/by-ids ===
   // Endpoint ini ber-cache (revalidate 30s) → jauh lebih cepat dari menarik semua produk tiap buka.
   useEffect(() => {
-    if (!idsKey) {
-      setOmsProducts([])
-      return
-    }
+    // Tak ada id yang perlu di-resolve. Daftar produk sengaja TIDAK dikosongkan di sini: itu
+    // setState sinkron di dalam effect (ditolak lint), dan tak ada gunanya — tanpa item di
+    // keranjang, `omsProducts` memang tak dibaca siapa pun.
+    if (!idsKey) return
+
     const controller = new AbortController()
     fetch(`/api/products/by-ids?ids=${encodeURIComponent(idsKey)}`, { signal: controller.signal })
       .then((res) => res.json())
-      .then((data: { products?: StoredProduct[] }) => setOmsProducts(data.products ?? []))
+      .then((data: { products?: StoredProduct[] }) => {
+        setOmsProducts(data.products ?? [])
+        setAnsweredIdsKey(idsKey)
+      })
       .catch(() => {
-        // Abort (id berubah) diabaikan; error lain → biarkan daftar produk apa adanya
+        // Abort (id berubah) diabaikan; error lain → biarkan daftar produk apa adanya.
+        //
+        // Tetap ditandai terjawab: tanpa ini halaman terjebak menampilkan kerangka selamanya saat
+        // jaringan bermasalah, dan pembeli tak pernah tahu ada yang salah.
+        if (!controller.signal.aborted) setAnsweredIdsKey(idsKey)
       })
     return () => controller.abort()
   }, [idsKey])
@@ -157,6 +198,35 @@ export default function CartPage() {
       ]
     })
   }, [cookieCart, excluded, omsProducts])
+
+  // === Keadaan daftar keranjang: loading / empty / ready ===
+  //
+  // Sejalan dengan halaman checkout. Yang menentukan KOSONG adalah isi cookie, bukan hasil
+  // pemetaannya — cookie sudah terbaca utuh sejak render klien pertama, sedangkan detail produknya
+  // menyusul lewat jaringan. Menyimpulkan "kosong" dari hasil pemetaan berarti menyimpulkan dari
+  // data yang memang belum tiba.
+  //
+  // Setiap id keranjang diperiksa sudah pernah dijawab atau belum. Pemeriksaan per-id (bukan
+  // membandingkan `idsKey` utuh) penting karena `idsKey` ikut memuat riwayat lihat & produk hadiah
+  // promo yang datang belakangan — membandingkan utuh akan menjatuhkan halaman kembali ke keadaan
+  // memuat setiap kali promo tiba, padahal item keranjangnya sudah lama bernama.
+  const idSudahDijawab = useMemo(
+    () => new Set(answeredIdsKey ? answeredIdsKey.split(',') : []),
+    [answeredIdsKey],
+  )
+  const semuaItemSudahDijawab = cookieCart.every((c) => idSudahDijawab.has(c.productId))
+
+  const cartView: 'loading' | 'empty' | 'ready' = !cartHydrated
+    ? 'loading'
+    : cookieCart.length === 0
+      ? 'empty' // cookie memang kosong — diputuskan seketika, tak perlu menunggu jaringan
+      : items.length === cookieCart.length
+        ? 'ready' // semua baris sudah punya detail
+        : !semuaItemSudahDijawab
+          ? 'loading' // masih ada id yang belum dijawab server
+          : items.length > 0
+            ? 'ready' // sebagian produk hilang, sisanya tetap bisa ditampilkan
+            : 'empty' // sudah dijawab & tak satu pun produk ketemu (mis. semuanya diarsipkan)
 
   // === Kalkulasi dinamis (item tercentang) ===
   const selectedItems = useMemo(() => items.filter((i) => i.selected), [items])
@@ -313,7 +383,11 @@ export default function CartPage() {
           {/* === Kolom kiri: konten transaksi utama === */}
           <div className="lg:col-span-8">
             {/* 3 — Daftar item keranjang */}
-            {items.length > 0 ? (
+            {/* Tiga keadaan, bukan dua. Pesan "masih kosong" HANYA setelah dipastikan kosong —
+                sebelumnya ia juga muncul selama detail produk masih dalam perjalanan. */}
+            {cartView === 'loading' ? (
+              <CartItemsSkeleton rows={cookieCart.length || 1} />
+            ) : cartView === 'ready' ? (
               <div className="mt-3 divide-y divide-zinc-100 lg:mt-0 lg:overflow-hidden lg:rounded-2xl lg:border lg:border-zinc-100">
                 {items.map((item) => (
                   <CartItemRow

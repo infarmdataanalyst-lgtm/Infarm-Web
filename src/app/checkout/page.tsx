@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ShoppingBag } from 'lucide-react'
+import { ShoppingBag, PackageX } from 'lucide-react'
 import type { Product } from '@/types/product'
 import CheckoutHeader from '@/components/checkout/CheckoutHeader'
 import CheckoutProductSummary from '@/components/checkout/CheckoutProductSummary'
@@ -20,6 +20,7 @@ import CheckoutBottomBar from '@/components/checkout/CheckoutBottomBar'
 import ShippingOptions from '@/components/checkout/ShippingOptions'
 import PaymentMethodsInfo from '@/components/checkout/PaymentMethodsInfo'
 import PhoneConfirmModal from '@/components/checkout/PhoneConfirmModal'
+import CheckoutSkeleton from '@/components/checkout/CheckoutSkeleton'
 import { validateAddress } from '@/lib/checkout-validation'
 import { formatRupiah } from '@/lib/format'
 import { shippingWeightKg, type WeighableItem } from '@/lib/shipping-weight'
@@ -114,23 +115,54 @@ export default function CheckoutPage() {
     getServerCheckoutSnapshot,
   )
 
-  // === Produk OMS (mock DB) diambil via API agar item dari OMS ikut ter-resolve, bukan hanya dummy ===
-  // TODO: ganti dengan query Supabase setelah OMS selesai
+  // Daftar id produk yang perlu di-resolve, sebagai satu string stabil.
+  //
+  // Dipakai sebagai dependency efek DAN sebagai penanda "jawaban ini untuk permintaan yang mana".
+  // Di-dedup & diurutkan supaya urutan item di keranjang tak memicu tarikan ulang yang percuma.
+  const productIdsKey = useMemo(
+    () => [...new Set(checkoutCookieItems.map((ci) => ci.productId))].sort().join(','),
+    [checkoutCookieItems],
+  )
+
+  // === Produk OMS diambil via API agar item dari cookie ikut ter-resolve (nama, foto, berat) ===
+  //
+  // Memakai `by-ids`, BUKAN `products/list`. `list` menarik SELURUH katalog tanpa cache
+  // (`readProducts()` langsung) hanya untuk me-resolve satu-dua produk — makin besar katalog, makin
+  // lama pembeli menatap kerangka. `by-ids` dibaca dari cache (30 detik, tag `products`) dan hanya
+  // mengembalikan id yang diminta. Bentuk datanya identik, `berat` ikut terbawa sehingga hitung
+  // ongkir tak berubah.
   const [omsProducts, setOmsProducts] = useState<CheckoutProduct[]>([])
+
+  // Kunci permintaan yang SUDAH dijawab. Dibandingkan dengan `productIdsKey`, bukan boolean:
+  // boolean tak bisa membedakan "sudah dijawab untuk daftar ini" dari "sudah dijawab untuk daftar
+  // sebelumnya", dan isi keranjang bisa berubah selagi halaman terbuka.
+  const [resolvedFor, setResolvedFor] = useState<string | null>(null)
+
   useEffect(() => {
+    if (!productIdsKey) return // tak ada yang perlu di-resolve
+
     let active = true
-    fetch('/api/products/list')
+    const ctrl = new AbortController()
+
+    fetch(`/api/products/by-ids?ids=${encodeURIComponent(productIdsKey)}`, { signal: ctrl.signal })
       .then((res) => res.json())
       .then((data) => {
-        if (active && Array.isArray(data.products)) setOmsProducts(data.products as CheckoutProduct[])
+        if (!active) return
+        if (Array.isArray(data.products)) setOmsProducts(data.products as CheckoutProduct[])
+        setResolvedFor(productIdsKey)
       })
       .catch(() => {
-        // Mode prototipe: bila gagal, fallback ke produk dummy saja
+        // Gagal pun HARUS menandai selesai — kalau tidak, halaman terjebak menampilkan kerangka
+        // selamanya dan pembeli tak pernah tahu ada yang salah. Item yang tak ter-resolve akan
+        // jatuh ke keadaan "produk tak tersedia lagi", yang setidaknya bisa ditindaklanjuti.
+        if (active) setResolvedFor(productIdsKey)
       })
+
     return () => {
       active = false
+      ctrl.abort()
     }
-  }, [])
+  }, [productIdsKey])
 
   // Lookup produk gabungan (OMS + dummy). Produk OMS menimpa dummy bila id sama.
   const productById = useMemo(() => {
@@ -166,13 +198,49 @@ export default function CheckoutPage() {
     })
   }, [checkoutCookieItems, productById])
 
-  // Keranjang checkout benar-benar kosong (bukan sekadar "belum terbaca di render pertama").
+  // Kode sudah berjalan di browser (cookie hanya terbaca di klien).
   const hydrated = useSyncExternalStore(
     subscribeNothing,
     () => true,
     () => false,
   )
-  const showEmptyState = hydrated && orderItems.length === 0
+
+  // === Keadaan halaman ===
+  //
+  // DULU cuma ada satu penilaian: `hydrated && orderItems.length === 0` → tampilkan "Belum ada
+  // produk untuk dibayar". Itu menyamakan dua hal yang sangat berbeda, dan salah pada kasus yang
+  // paling sering terjadi:
+  //
+  //   Pembeli menekan "Beli Langsung" → cookie DITULIS lengkap sebelum pindah halaman → checkout
+  //   membacanya utuh di render pertama. Tapi cookie hanya memuat { productId, quantity, price };
+  //   nama & foto baru datang dari API. Selama tarikan itu berjalan, `productById` belum mengenal
+  //   produk OMS → `flatMap` membuang SETIAP item → orderItems kosong → `hydrated` sudah true →
+  //   dan pembeli yang baru saja memilih produk dibilang belum memilih apa pun.
+  //
+  // Racenya bukan di cookie (itu sinkron), melainkan di tarikan detail produk. Karena itu keadaan
+  // halaman dipisah jadi empat, dan yang menentukan EMPTY adalah ISI COOKIE — bukan hasil
+  // pemetaannya:
+  //
+  //   loading      — belum terhidrasi, atau cookie berisi tapi detail produk belum lengkap
+  //   empty        — cookie memang kosong (buka /checkout langsung, atau keranjang kosong).
+  //                  Diputuskan SEKETIKA, tanpa menunggu API: tak ada yang perlu di-resolve.
+  //   unavailable  — cookie berisi, tarikan sudah selesai, tapi tak satu pun produk ketemu.
+  //                  Nyata terjadi bila admin mengarsipkan produk setelah pembeli menaruhnya.
+  //   ready        — detail produk tersedia
+  const productsResolved = resolvedFor === productIdsKey
+  const semuaItemTerpetakan = orderItems.length === checkoutCookieItems.length
+
+  const viewState: 'loading' | 'empty' | 'unavailable' | 'ready' = !hydrated
+    ? 'loading'
+    : checkoutCookieItems.length === 0
+      ? 'empty'
+      : semuaItemTerpetakan
+        ? 'ready' // semua item punya detail (mis. produk dummy, atau API sudah menjawab)
+        : !productsResolved
+          ? 'loading'
+          : orderItems.length > 0
+            ? 'ready' // sebagian hilang, tapi masih ada yang bisa dibayar
+            : 'unavailable'
 
   // Subtotal dihitung dari item pesanan aktual (harga × kuantitas)
   const subtotal = useMemo(
@@ -182,11 +250,19 @@ export default function CheckoutPage() {
 
   // Id produk gratis promo (dari snapshot keranjang). Server tetap otoritatif saat create order;
   // ini hanya untuk TAMPILAN ringkasan & perhitungan berat kirim.
-  const [freeProductIds, setFreeProductIds] = useState<string[]>([])
-  useEffect(() => {
-    const snap = getCheckoutPromo()
-    setFreeProductIds(snap?.freeProductIds ?? [])
-  }, [])
+  //
+  // Dibaca saat RENDER (setelah hidrasi), bukan lewat `useEffect` + `setState`. Pola lama melanggar
+  // aturan lint proyek ini (`react-hooks/set-state-in-effect`) dan sudah membuat `npm run lint`
+  // merah di berkas ini sebelum perubahan ini — cocok dibereskan sekarang karena penyebab & obatnya
+  // sama persis dengan race yang sedang diperbaiki: keadaan turunan dari cookie tak perlu melewati
+  // state sama sekali.
+  //
+  // `hydrated` jadi dependency-nya: cookie hanya terbaca di klien, jadi nilainya kosong di render
+  // server lalu terisi sekali begitu berjalan di browser.
+  const freeProductIds = useMemo(
+    () => (hydrated ? (getCheckoutPromo()?.freeProductIds ?? []) : []),
+    [hydrated],
+  )
 
   // Item hadiah promo untuk DITAMPILKAN di ringkasan (harga 0, isPromoItem). Detail dari produk resolved.
   // TIDAK dikirim ke API create (server evaluasi & inject sendiri) → cegah duplikasi/manipulasi.
@@ -421,37 +497,68 @@ export default function CheckoutPage() {
     }
   }
 
-  // Tak ada yang bisa dibayar → jangan tampilkan form, ongkir, apalagi tombol bayar.
-  //
-  // Keadaan ini muncul saat: cookie checkout kadaluwarsa, pembeli menekan Back setelah pesanan
-  // dibuat (keranjang sudah dikosongkan), atau /checkout dibuka langsung dari address bar.
+  // === Cabang tampilan ===
   // Ditempatkan SETELAH seluruh hook supaya urutan hook tetap sama di tiap render.
-  if (showEmptyState) {
+  //
+  // ⚠️ Ketiganya dilewati saat `isPaying`. Setelah pesanan tersimpan, `clearCart()` mengosongkan
+  // cookie checkout dan halaman ini reaktif terhadapnya — tanpa pengecualian ini, keadaan halaman
+  // berubah jadi `empty` tepat sebelum berpindah ke Xendit, dan pembeli sekilas melihat "Belum ada
+  // produk untuk dibayar" persis setelah menekan bayar. Dengan dilewati, tirai "Mengalihkan ke
+  // pembayaran…" di bawah tetap yang menutupi layar.
+
+  // LOADING — detail produk belum lengkap. Kerangka, BUKAN keadaan kosong.
+  if (viewState === 'loading' && !isPaying) {
+    return (
+      <div className="flex min-h-screen flex-col bg-brand-surface text-zinc-900">
+        <CheckoutHeader />
+        <CheckoutSkeleton />
+      </div>
+    )
+  }
+
+  // EMPTY & UNAVAILABLE — tak ada yang bisa dibayar. Jangan tampilkan form, ongkir, apalagi
+  // tombol bayar. Dua keadaan, dua pesan: pembeli yang belum memilih apa pun butuh diarahkan ke
+  // keranjang, sedangkan pembeli yang produknya baru ditarik admin butuh tahu ITU yang terjadi —
+  // dibilang "belum memilih" setelah ia jelas-jelas menekan Beli Langsung hanya membuatnya
+  // mengira sistemnya rusak.
+  if ((viewState === 'empty' || viewState === 'unavailable') && !isPaying) {
+    const tidakTersedia = viewState === 'unavailable'
     return (
       <div className="flex min-h-screen flex-col bg-brand-surface text-zinc-900">
         <CheckoutHeader />
         <main className="mx-auto flex w-full max-w-md flex-1 items-center justify-center px-4 py-10">
           <div className="w-full rounded-2xl border border-zinc-200 bg-white p-6 text-center shadow-sm">
-            <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-brand-surface text-brand-primary">
-              <ShoppingBag className="h-6 w-6" />
+            <span
+              className={`mx-auto flex h-12 w-12 items-center justify-center rounded-full ${
+                tidakTersedia ? 'bg-orange-50 text-orange-500' : 'bg-brand-surface text-brand-primary'
+              }`}
+            >
+              {tidakTersedia ? (
+                <PackageX className="h-6 w-6" />
+              ) : (
+                <ShoppingBag className="h-6 w-6" />
+              )}
             </span>
-            <h1 className="mt-3 text-base font-bold text-zinc-800">Belum ada produk untuk dibayar</h1>
+            <h1 className="mt-3 text-base font-bold text-zinc-800">
+              {tidakTersedia ? 'Produk sudah tidak tersedia' : 'Belum ada produk untuk dibayar'}
+            </h1>
             <p className="mx-auto mt-1.5 max-w-xs text-sm leading-relaxed text-zinc-500">
-              Pilih produk di keranjang lebih dulu, lalu tekan Checkout. Kalau kamu baru saja
-              menyelesaikan pesanan, pesanan itu sudah tersimpan dan bisa dilihat di Lacak Pesanan.
+              {tidakTersedia
+                ? 'Produk yang kamu pilih sudah ditarik dari katalog, jadi pesanannya tidak bisa dilanjutkan. Silakan pilih produk lain.'
+                : 'Pilih produk di keranjang lebih dulu, lalu tekan Checkout. Kalau kamu baru saja menyelesaikan pesanan, pesanan itu sudah tersimpan dan bisa dilihat di Lacak Pesanan.'}
             </p>
             <div className="mt-5 space-y-2">
               <Link
-                href="/keranjang"
+                href={tidakTersedia ? '/products' : '/keranjang'}
                 className="block rounded-xl bg-brand-primary py-3 font-heading text-sm font-bold text-white shadow-sm transition hover:brightness-90 active:scale-[0.99]"
               >
-                Ke Keranjang
+                {tidakTersedia ? 'Lihat Produk Lain' : 'Ke Keranjang'}
               </Link>
               <Link
-                href="/track-order"
+                href={tidakTersedia ? '/keranjang' : '/track-order'}
                 className="block rounded-xl border border-zinc-200 py-3 text-sm font-semibold text-zinc-600 transition hover:bg-zinc-50"
               >
-                Lacak Pesanan
+                {tidakTersedia ? 'Ke Keranjang' : 'Lacak Pesanan'}
               </Link>
             </div>
           </div>
