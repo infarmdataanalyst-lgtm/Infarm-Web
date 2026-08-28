@@ -22,9 +22,15 @@
 // hanya berupa "assertion merah", ia harus memberitahu apa yang tertinggal di database.
 //
 // ── Perilaku yang diharapkan ──
-// `destination_id` karangan → Mengantar MENJAWAB tapi tak menawarkan satu kurir pun → server
-// membalas `422 DESTINATION_UNSERVICEABLE`. Dibedakan dari "Mengantar tak menjawab" (yang tetap
-// diloloskan agar checkout tak mati saat Mengantar bermasalah) lewat `warehousesResponded`.
+// `destination_id` karangan ditolak `422 DESTINATION_INVALID` oleh pemeriksaan BENTUK di awal
+// route — id Mengantar selalu ObjectId 24 hex, jadi teks sembarang gugur tanpa menyentuh jaringan.
+//
+// Itu berbeda dari `422 DESTINATION_UNSERVICEABLE`, yang menangani id BERBENTUK BENAR tapi tak ada
+// di indeks Mengantar. Penjaga kedua itu bergantung pada `warehousesResponded > 0`, dan justru di
+// situ celahnya dulu: saat cek ongkir habis waktu, "tujuan ngawur" tak bisa dibedakan dari
+// "Mengantar sedang down", lalu permintaannya diloloskan. Nyata terjadi — INV-20260827-PR6TP0T6
+// tersimpan dengan destination_id "invalid-destination-xyz" dan stok terpotong 67 unit. Pemeriksaan
+// bentuk menutupnya tanpa bergantung pada jaringan sama sekali.
 
 import { readFileSync } from 'node:fs'
 import { test, expect, type APIRequestContext } from '@playwright/test'
@@ -74,7 +80,15 @@ type BarisOrder = {
 
 // Mencari pesanan yang dibuat oleh uji ini (dikenali dari nama pembeli).
 // Membaca saja — memakai service_role karena tabel `orders` dikunci dari publik oleh RLS.
-async function cariOrderUji(request: APIRequestContext): Promise<BarisOrder[] | null> {
+// `sejak` = waktu tepat sebelum permintaan dikirim.
+//
+// WAJIB dibatasi waktu. Tanpa ini, satu pesanan sampah dari jalan sebelumnya membuat uji ini merah
+// SELAMANYA — persis yang terjadi pada INV-20260827-PR6TP0T6: perbaikannya sudah benar dan tak ada
+// baris baru tercipta, tapi residu lama tetap terhitung dan menuduh kode yang sudah sehat.
+async function cariOrderUji(
+  request: APIRequestContext,
+  sejak: string,
+): Promise<BarisOrder[] | null> {
   const url = envLocal('NEXT_PUBLIC_SUPABASE_URL')
   const key = envLocal('SUPABASE_SERVICE_ROLE_KEY')
   if (!url || !key) return null
@@ -84,6 +98,7 @@ async function cariOrderUji(request: APIRequestContext): Promise<BarisOrder[] | 
     `${url}/rest/v1/orders?select=${kolom}` +
       // Kolomnya `nama_customer` (bukan `nama_pelanggan`) — lihat rowToOrder di mock-db/orders.ts.
       `&nama_customer=eq.${encodeURIComponent(NAMA_PENGUJI)}` +
+      `&created_at=gte.${encodeURIComponent(sejak)}` +
       `&order=created_at.desc&limit=5`,
     { headers: { apikey: key, Authorization: `Bearer ${key}` } },
   )
@@ -150,6 +165,10 @@ test.describe('Checkout — destination_id tidak valid', () => {
     }
 
     // === Kirim ===
+    // Penanda waktu diambil SEBELUM permintaan, dengan mundur 5 detik sebagai bantalan selisih jam
+    // antara mesin ini dan server Supabase.
+    const sejak = new Date(Date.now() - 5_000).toISOString()
+
     const res = await request.post(`${baseURL}/api/orders/create`, {
       data: payload,
       failOnStatusCode: false, // penolakan adalah hasil yang DIHARAPKAN, bukan kegagalan transport
@@ -200,7 +219,7 @@ test.describe('Checkout — destination_id tidak valid', () => {
     console.log(`  pesan   : ${body.error}`)
 
     // === Assert 3: tak ada pesanan yang tertinggal ===
-    const baris = await cariOrderUji(request)
+    const baris = await cariOrderUji(request, sejak)
 
     if (baris === null) {
       console.log(

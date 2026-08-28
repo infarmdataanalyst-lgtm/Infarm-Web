@@ -15,6 +15,7 @@ import { getVariantsByIds } from '@/lib/mock-db/variants'
 import { getMinOrderAmount } from '@/lib/mock-db/settings'
 import { getEffectiveStock, resolveWarehouseForOrder, type StockRequirement } from '@/lib/warehouse'
 import { getWarehouseById } from '@/lib/mock-db/warehouses'
+import { MENGANTAR_ORIGIN_ID_REGEX } from '@/lib/warehouse-validation'
 import {
   getCachedShippingOptions,
   resolveShippingOptions,
@@ -115,6 +116,35 @@ export async function POST(request: Request) {
   if (!isValidPayload(body)) {
     return NextResponse.json(
       { error: 'Data pesanan tidak lengkap atau tipe data salah.' },
+      { status: 422 },
+    )
+  }
+
+  // === Bentuk destination_id diperiksa SEBELUM menyentuh apa pun ===
+  //
+  // `isValidPayload` hanya memastikan field ini string tak kosong, jadi teks sembarang lolos dan
+  // baru ketahuan jauh di bawah — itu pun HANYA bila Mengantar sempat menjawab. Penjaga
+  // DESTINATION_UNSERVICEABLE bergantung pada `warehousesResponded > 0`; saat panggilan cek ongkir
+  // habis waktu (4,5 dtk/origin) kita tak bisa membedakan "tujuan ngawur" dari "Mengantar sedang
+  // down", lalu memilih meneruskan supaya checkout tak mati total. Akibatnya nyata dan sudah
+  // terjadi: pesanan INV-20260827-PR6TP0T6 tersimpan dengan destination_id
+  // "invalid-destination-xyz" dan stok terpotong 67 unit.
+  //
+  // Pemeriksaan bentuk menutup lubang itu tanpa bergantung pada jaringan sama sekali. Id Mengantar
+  // selalu ObjectId 24 hex — pola yang sama dengan origin id gudang, karena keduanya memang jenis
+  // id yang sama di sisi mereka.
+  //
+  // Yang TIDAK ditangkap di sini: id berbentuk benar tapi tak ada di indeks Mengantar. Itu tetap
+  // urusan penjaga DESTINATION_UNSERVICEABLE di bawah.
+  if (!MENGANTAR_ORIGIN_ID_REGEX.test(body.address.destinationId)) {
+    console.warn(
+      `${LOG} destination_id ditolak (bentuk tak sah): ${JSON.stringify(body.address.destinationId).slice(0, 80)}`,
+    )
+    return NextResponse.json(
+      {
+        error: 'Alamat pengiriman tidak valid. Silakan pilih ulang alamat dari hasil pencarian.',
+        code: 'DESTINATION_INVALID',
+      },
       { status: 422 },
     )
   }
