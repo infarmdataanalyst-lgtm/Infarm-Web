@@ -84,6 +84,26 @@ export default function ShippingOptions({
         })
       : []
 
+    // === Batas waktu sisi KLIEN ===
+    //
+    // Server sudah membatasi panggilannya sendiri ke Mengantar (ESTIMATE_TIMEOUT_MS 4,5 dtk per
+    // origin di warehouse-shipping.ts), tapi TARIKAN INI — browser ke proxy kita — tak punya batas
+    // apa pun. Akibatnya, apa pun yang membuat proxy menggantung (instance serverless tersendat,
+    // jaringan pembeli mati separuh, Mengantar hidup-tapi-diam) meninggalkan pembeli menatap
+    // kerangka "Menghitung ongkos kirim…" SELAMANYA: tak ada pesan, tak ada tombol coba lagi, dan
+    // tombol bayar tetap terkunci. Terbukti lewat uji kondisi tepi yang menahan proxy 60 detik.
+    //
+    // 10 detik = jauh di atas jalur normal (server memanggil seluruh gudang PARALEL, masing-masing
+    // maksimal 4,5 detik, ditambah beberapa query Supabase) tapi masih di dalam rentang kesabaran
+    // manusia. Lebih panjang dari ini hanya memperlama penantian tanpa menaikkan peluang berhasil:
+    // kalau 10 detik belum menjawab, tarikan itu memang sudah tersesat.
+    const BATAS_KLIEN_MS = 10_000
+    let kehabisanWaktu = false
+    const timer = setTimeout(() => {
+      kehabisanWaktu = true
+      ctrl.abort()
+    }, BATAS_KLIEN_MS)
+
     async function load() {
       setLoading(true)
       setError('')
@@ -110,17 +130,32 @@ export default function ShippingOptions({
           }
         }
       } catch (err) {
-        if (!ctrl.signal.aborted) {
+        // `kehabisanWaktu` diperiksa LEBIH DULU daripada `aborted`.
+        //
+        // Kedua keadaan sama-sama membuat signal ter-abort, tapi maknanya berlawanan: abort dari
+        // cleanup berarti komponennya sudah tak peduli lagi (alamat berganti / unmount), sedangkan
+        // abort dari batas waktu berarti pembeli MASIH MENUNGGU dan berhak diberi tahu. Memeriksa
+        // `aborted` saja menelan keduanya dan mengembalikan kerangka tak berujung.
+        if (kehabisanWaktu) {
+          setError('Gagal memuat ongkos kirim, silakan coba lagi')
+          setCouriers([])
+        } else if (!ctrl.signal.aborted) {
           // Pesan dari server dipakai bila ada (mis. 429 "terlalu banyak percobaan")
           setError(err instanceof Error ? err.message : 'Gagal memuat ongkos kirim, silakan coba lagi')
           setCouriers([])
         }
       } finally {
-        if (!ctrl.signal.aborted) setLoading(false)
+        clearTimeout(timer)
+        // Idem: pada kehabisan waktu, `loading` WAJIB dimatikan walau signal ter-abort — kalau
+        // tidak, pesan galat sudah ada tapi tertutup kerangka yang tak pernah berhenti berdenyut.
+        if (kehabisanWaktu || !ctrl.signal.aborted) setLoading(false)
       }
     }
     load()
-    return () => ctrl.abort()
+    return () => {
+      clearTimeout(timer)
+      ctrl.abort()
+    }
   }, [destinationId, weight, itemsKey, retry])
 
   // Server sudah memfilter kurir (daftar putih J&T + yang benar-benar melayani) dan mengurutkan
