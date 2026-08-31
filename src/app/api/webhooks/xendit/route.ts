@@ -104,7 +104,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ received: true, handled: false, reason: 'AMOUNT_MISMATCH' })
 
     case 'paid':
-      return handlePaid(order, parsed.invoice, parsed.transactionId)
+      return handlePaid(order, parsed.invoice, parsed.transactionId, parsed.paymentMethod)
 
     case 'failed':
       return handleFailed(order, parsed.invoice, parsed.transactionId)
@@ -113,7 +113,16 @@ export async function POST(request: Request) {
 
 // === Pembayaran berhasil ===
 
-async function handlePaid(order: Order, invoice: string, transactionId?: string) {
+// `paymentMethod` HANYA ada di jalur ini — inilah satu-satunya titik di mana metode bayar bisa
+// tercatat. Pembeli memilihnya di halaman Xendit, jadi saat tagihan diterbitkan kita belum tahu
+// apa pun (lihat api/payments/invoice/route.ts), dan callback gagal/kedaluwarsa tak membawanya
+// karena tak pernah ada yang dibayar.
+async function handlePaid(
+  order: Order,
+  invoice: string,
+  transactionId?: string,
+  paymentMethod?: string,
+) {
   // Idempoten: Xendit mengulang kirim callback yang sama. Kalau sudah Lunas, jangan sentuh apa pun —
   // menimpanya berpotensi menarik kembali status alur yang sudah maju (mis. sudah Dikirim → Diproses).
   if (order.paymentStatus === 'Lunas') {
@@ -133,6 +142,7 @@ async function handlePaid(order: Order, invoice: string, transactionId?: string)
     // Pembayaran terkonfirmasi → pesanan masuk antrean proses.
     orderStatus: 'Diproses',
     ...(transactionId ? { transactionId } : {}),
+    ...(paymentMethod ? { paymentMethod } : {}),
   })
   if (!updated) {
     // Gagal tulis DB LAYAK diulang → balas 500 supaya Xendit kirim lagi.
@@ -145,7 +155,9 @@ async function handlePaid(order: Order, invoice: string, transactionId?: string)
   revalidateTag('sales', 'max')
   revalidatePath('/oms/dashboard')
 
-  console.log(`${LOG} invoice=${invoice} → Lunas / Diproses`)
+  console.log(
+    `${LOG} invoice=${invoice} → Lunas / Diproses metode=${paymentMethod ?? 'tak disebut callback'}`,
+  )
 
   // Booking kurir dipicu di sini — inilah titik "pembayaran sukses".
   // `updated` (bukan `order`) yang dipakai: ia hasil baca ulang setelah status berubah, jadi

@@ -443,6 +443,11 @@ export async function POST(request: Request) {
       ...body,
       items: pricedItems,
       totalAmount,
+      // Ongkir yang SUDAH lolos verifikasi ke tarif Mengantar (lihat blok verifikasi di atas),
+      // bukan `extra.shippingCost` mentah dari client. Disimpan ke kolomnya sendiri supaya
+      // `jumlah_total` tak lagi jadi satu-satunya jejak — tanpa itu, begitu diskon aktif, ongkir
+      // tak bisa dipisahkan lagi dari total.
+      shippingCost,
       warehouseId: warehouse?.id,
     })
 

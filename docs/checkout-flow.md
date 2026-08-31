@@ -501,6 +501,14 @@ tidak perlu berubah saat skema DB berganti.
   `jumlah_total`, `shipping_address`, `provinsi`/`kota`/`kecamatan`/`kelurahan`/`kodepos`,
   `nama_ekspedisi`, `jenis_layanan`, `no_tracking`, `id_transaksi`, `destination_id`,
   `status_pembayaran`, `order_status`, `created_at`.
+- **`orders.metode_pembayaran`** (migration `20260828120000_add_orders_metode_pembayaran.sql`) —
+  metode/channel yang BENAR-BENAR dipakai pembeli, apa adanya dari callback Xendit (`BCA`, `OVO`,
+  `QRIS`, `ALFAMART`, …). Sebelum kolom ini, pilihan pembeli di halaman Xendit tak pernah kembali ke
+  kita; `id_transaksi` tak memberi tahu cara bayarnya. **Diisi HANYA oleh webhook pembayaran**
+  (`handlePaid`) — saat tagihan diterbitkan pembeli belum memilih apa pun. Jadi NULL = belum
+  dibayar / kedaluwarsa / pesanan sebelum migration, **bukan** "datanya hilang". Tanpa CHECK daftar
+  nilai: Xendit menambah channel kapan saja, dan constraint yang ketinggalan akan menggagalkan
+  penyimpanan status LUNAS pesanan yang uangnya sudah masuk. **Tanpa backfill.**
 - **`order_items`**: `order_id` → `orders.id`, `product_id` (nullable — dummy non-UUID → null),
   `quantity`, `price_at_purchase` (**snapshot harga saat beli**, bukan harga produk sekarang).
 - **Enum ↔ label**:
@@ -679,6 +687,13 @@ bisa menerbitkan VA Rp1.000 untuk pesanan Rp1.000.000.
 | Status | `status` | `data.status`, cadangan dari `event` |
 | Nominal | `paid_amount` \|\| `amount` | `data.amount` \|\| `captured_amount` \|\| `request_amount` |
 | id transaksi | `id` | `data.payment_request_id` (didahulukan) \|\| `data.id` |
+| Metode bayar | `payment_channel` (didahulukan) \|\| `payment_method` | `…virtual_account.channel_code` \|\| `channel_code` \|\| `payment_method.type` |
+
+Baris **metode bayar** → `orders.metode_pembayaran`. Yang SPESIFIK didahulukan di kedua bentuk:
+kolom itu menjawab "dibayar pakai apa" (`BCA`), bukan "lewat mekanisme apa" (`BANK_TRANSFER` /
+`VIRTUAL_ACCOUNT`). Hanya `handlePaid()` yang menyimpannya — callback gagal/kedaluwarsa tak
+membawanya karena tak pernah ada yang dibayar, dan `updatePaymentStatus()` **tak menulis null** untuk
+field kosong (urutan callback tak dijamin; null akan menghapus metode yang sudah tercatat).
 
 Keduanya dipertahankan supaya jalur pembayaran bisa dipindah tanpa mematikan callback yang sudah
 beredar. `ParsedCallback.source` mencatat bentuk mana yang cocok (muncul di log sebagai `bentuk=`).

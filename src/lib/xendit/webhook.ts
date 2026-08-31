@@ -45,8 +45,8 @@ type XenditInvoiceCallback = {
   status?: unknown // PENDING | PAID | SETTLED | EXPIRED | FAILED
   paid_amount?: unknown
   amount?: unknown
-  payment_method?: unknown
-  payment_channel?: unknown
+  payment_method?: unknown // KATEGORI: 'BANK_TRANSFER', 'EWALLET', 'RETAIL_OUTLET', 'QR_CODE'
+  payment_channel?: unknown // CHANNEL spesifik: 'BCA', 'OVO', 'ALFAMART' — ⚠️ UNVERIFIED
 }
 
 // Hasil pemetaan: apa yang harus dilakukan pada pesanan.
@@ -69,6 +69,8 @@ export type ParsedCallback = {
   transactionId?: string
   rawStatus: string
   paidAmount: number
+  // Metode/channel yang dipakai pembeli → orders.metode_pembayaran. Kosong bila callback tak
+  // menyebutkannya (mis. EXPIRED — tak pernah ada yang dibayar).
   paymentMethod?: string
   // Bentuk payload yang cocok — hanya untuk log. Berguna saat dua jalur pembayaran hidup
   // berdampingan dan perlu tahu callback mana yang datang.
@@ -113,8 +115,12 @@ export function parseInvoiceCallback(body: unknown): ParsedCallback | null {
     rawStatus: rawStatus.toUpperCase(),
     // Sebagian channel hanya mengirim `amount` saat lunas; pakai itu bila paid_amount kosong.
     paidAmount: asNumber(raw.paid_amount) || asNumber(raw.amount),
-    ...(asString(raw.payment_method) || asString(raw.payment_channel)
-      ? { paymentMethod: asString(raw.payment_method) ?? asString(raw.payment_channel)! }
+    // `payment_channel` DIDAHULUKAN atas `payment_method`: pertanyaan yang dijawab kolom
+    // metode_pembayaran adalah "dibayar pakai apa", dan 'BCA' menjawabnya sementara
+    // 'BANK_TRANSFER' cuma menyebut kategorinya. Kategori jadi cadangan supaya tetap ada isi bila
+    // Xendit tak mengirim channel-nya.
+    ...(asString(raw.payment_channel) ?? asString(raw.payment_method)
+      ? { paymentMethod: (asString(raw.payment_channel) ?? asString(raw.payment_method))! }
       : {}),
     source: 'invoice',
   }
@@ -160,10 +166,21 @@ export function parsePaymentRequestCallback(body: unknown): ParsedCallback | nul
   // orders.id_transaksi harus memuat id yang sama dengan yang disimpan saat VA dibuat.
   const transactionId = asString(data.payment_request_id) ?? asString(data.id)
 
-  const paymentMethodType =
+  // Metode pembayaran. `channel_code` (mis. 'BNI') DIDAHULUKAN atas `type` (selalu
+  // 'VIRTUAL_ACCOUNT' di jalur ini) dengan alasan yang sama seperti di parseInvoiceCallback:
+  // kolom metode_pembayaran menjawab "dibayar pakai apa", bukan "lewat mekanisme apa".
+  const paymentMethod =
     typeof data.payment_method === 'object' && data.payment_method !== null
-      ? asString((data.payment_method as Record<string, unknown>).type)
-      : undefined
+      ? (data.payment_method as Record<string, unknown>)
+      : {}
+  const va =
+    typeof paymentMethod.virtual_account === 'object' && paymentMethod.virtual_account !== null
+      ? (paymentMethod.virtual_account as Record<string, unknown>)
+      : {}
+  const paymentMethodType =
+    asString(va.channel_code) ??
+    asString(paymentMethod.channel_code) ??
+    asString(paymentMethod.type)
 
   return {
     invoice,

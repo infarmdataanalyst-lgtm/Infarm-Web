@@ -94,6 +94,11 @@ type OrderRow = {
   no_tracking: string | null
   status_pembayaran: string
   id_transaksi: string | null
+  // Kolom baru (migration 20260827120000). Optional di tipe ini supaya kode tetap jalan bila
+  // migration belum di-apply — PostgREST tak mengembalikan kolom yang belum ada.
+  ongkos_kirim?: number | null
+  // Metode pembayaran dari callback Xendit (migration 20260828120000) — optional, alasan sama.
+  metode_pembayaran?: string | null
   order_status: string
   destination_id: string | null
   warehouse_id?: string | null // gudang pemenuh (kolom baru; null untuk pesanan lama)
@@ -264,6 +269,10 @@ function rowToOrder(row: OrderRow, items: OrderItem[], warehouseNames?: Map<stri
   if (row.shipment_error) order.shipmentError = row.shipment_error
   if (row.shipment_booked_at) order.shipmentBookedAt = row.shipment_booked_at
   if (row.id_transaksi) order.transactionId = row.id_transaksi
+  if (row.metode_pembayaran) order.paymentMethod = row.metode_pembayaran
+  // `typeof number`, bukan truthy: ongkir 0 (promo gratis ongkir) sah dan harus tetap terbawa.
+  // `if (row.ongkos_kirim)` akan membuangnya dan menyamakannya dengan "tak pernah dicatat".
+  if (typeof row.ongkos_kirim === 'number') order.shippingCost = row.ongkos_kirim
   // Gudang pemenuh — dipakai saat pembatalan untuk mengembalikan stok ke gudang yang benar
   if (row.warehouse_id) {
     order.warehouseId = row.warehouse_id
@@ -685,6 +694,11 @@ export async function saveOrder(input: CreateOrderInput): Promise<Order> {
       // Gudang pemenuh pesanan (hasil resolveWarehouseForOrder). null → RPC memakai gudang default,
       // jadi pesanan tetap tercatat walau tabel warehouses belum di-seed.
       ...(sendWarehouseParam ? { p_warehouse_id: input.warehouseId ?? null } : {}),
+      // Ongkir hasil verifikasi server → kolom orders.ongkos_kirim (migration 20260827120000).
+      // Dibuang bersama param gudang saat RPC di DB masih versi lama: keduanya sama-sama membuat
+      // signature tak cocok, dan lebih baik pesanan tersimpan tanpa rincian ongkir daripada
+      // checkout gagal total karena migration belum sempat di-apply.
+      ...(sendWarehouseParam ? { p_ongkos_kirim: input.shippingCost ?? null } : {}),
     })
 
     if (!error) {
@@ -728,7 +742,11 @@ export async function saveOrder(input: CreateOrderInput): Promise<Order> {
       lastError = error
       continue
     }
-    // RPC versi lama (migration gudang belum di-apply) → ulangi tanpa param gudang.
+    // RPC versi lama → ulangi tanpa param gudang DAN tanpa param ongkir.
+    //
+    // Terjadi bila migration gudang (20260811120100) atau ongkir (20260827120000) belum di-apply.
+    // Keduanya menambah parameter, jadi gejalanya identik dan penanganannya sama: buang keduanya,
+    // pesanan tetap tersimpan dengan kolom yang memang belum ada dibiarkan kosong.
     // PGRST202 = fungsi dengan signature itu tak ditemukan; 42883 = undefined_function.
     if (sendWarehouseParam && (error.code === 'PGRST202' || error.code === '42883')) {
       sendWarehouseParam = false
@@ -796,19 +814,40 @@ export async function updateOrderStatus(
 export async function updatePaymentStatus(
   orderId: string,
   paymentStatus: OrderPaymentStatus,
-  opts?: { orderStatus?: OrderFulfillmentStatus; transactionId?: string },
+  opts?: {
+    orderStatus?: OrderFulfillmentStatus
+    transactionId?: string
+    // Metode/channel yang dipakai pembeli menurut callback Xendit → orders.metode_pembayaran.
+    paymentMethod?: string
+  },
 ): Promise<Order | null> {
   const supabase = createAdminClient()
   const patch: Record<string, string> = { status_pembayaran: PAYMENT_TO_DB[paymentStatus] }
   if (opts?.orderStatus) patch.order_status = STATUS_TO_DB[opts.orderStatus]
   if (opts?.transactionId) patch.id_transaksi = opts.transactionId
+  // Hanya ditulis bila callback menyebutkannya. Callback EXPIRED/FAILED tak membawa metode apa pun
+  // (tak ada yang pernah dibayar), dan urutan callback tak dijamin — menulis null akan menghapus
+  // metode yang sudah tercatat dari callback sebelumnya.
+  if (opts?.paymentMethod) patch.metode_pembayaran = opts.paymentMethod
 
-  const { data, error } = await supabase
-    .from('orders')
-    .update(patch)
-    .eq('nomor_invoice', orderId)
-    .select('id')
-    .maybeSingle()
+  const attempt = (body: Record<string, string>) =>
+    supabase.from('orders').update(body).eq('nomor_invoice', orderId).select('id').maybeSingle()
+
+  let { data, error } = await attempt(patch)
+
+  // Cadangan bila migration 20260828120000 belum di-apply. Migration dijalankan MANUAL lewat
+  // Dashboard (CLI Supabase belum dipasang), jadi selalu ada jendela waktu kode-sudah/DB-belum.
+  //
+  // Tanpa cadangan ini satu kolom yang belum ada menggagalkan SELURUH update — termasuk
+  // `status_pembayaran`. Webhook lalu membalas 500 dan pembeli yang SUDAH BAYAR tetap tercatat
+  // Menunggu. Itu jauh lebih mahal daripada kehilangan catatan metode bayarnya.
+  if (error && 'metode_pembayaran' in patch && isUnknownColumnError(error)) {
+    console.warn(
+      `Kolom metode_pembayaran belum di-migrate (${error.message}) — status disimpan tanpa metode bayar`,
+    )
+    delete patch.metode_pembayaran
+    ;({ data, error } = await attempt(patch))
+  }
 
   if (error) {
     console.error('Gagal memperbarui status pembayaran di Supabase:', error.message)
@@ -817,6 +856,15 @@ export async function updatePaymentStatus(
   if (!data) return null
 
   return getOrderByOrderId(orderId)
+}
+
+// true bila galat ini berarti "kolomnya tidak ada".
+//   PGRST204 — kolom tak ada di schema cache PostgREST (bentuk yang biasa muncul dari supabase-js)
+//   42703    — undefined_column dari Postgres sendiri
+function isUnknownColumnError(error: { code?: string; message?: string }): boolean {
+  if (error.code === 'PGRST204' || error.code === '42703') return true
+  const message = error.message ?? ''
+  return /column/i.test(message) && /(does not exist|could not find)/i.test(message)
 }
 
 // Menyimpan id transaksi pembayaran (Xendit) TANPA menyentuh status pembayaran.

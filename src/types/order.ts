@@ -56,11 +56,20 @@ export type Order = {
   date: string // ISO date = created_at
   items: OrderItem[]
   totalAmount: number // = jumlah_total (subtotal + ongkir - diskon)
+  // = ongkos_kirim. Bagian ongkir DARI totalAmount, disimpan terpisah supaya bisa direkonsiliasi
+  // dengan tagihan Mengantar. `undefined` untuk pesanan yang dibuat sebelum kolomnya ada — itu
+  // BUKAN berarti gratis ongkir (nilai 0 yang berarti gratis).
+  shippingCost?: number
   paymentStatus: OrderPaymentStatus
   status?: OrderFulfillmentStatus
   logistics?: OrderLogistics
   trackingNumber?: string // no_tracking (diisi setelah kurir pickup)
   transactionId?: string // id_transaksi (dari Xendit setelah pembayaran)
+  // = metode_pembayaran. Metode/channel yang BENAR-BENAR dipakai pembeli menurut Xendit
+  // (mis. 'BCA', 'OVO', 'QRIS', 'ALFAMART'). Hanya diketahui setelah callback pembayaran masuk —
+  // di jalur invoice pembeli memilih metodenya sendiri di halaman Xendit, jadi `undefined` selama
+  // tagihan belum dibayar, dan juga untuk pesanan yang dibuat sebelum kolomnya ada.
+  paymentMethod?: string
   address?: OrderShippingAddress
   warehouseId?: string // gudang pemenuh pesanan (orders.warehouse_id); undefined untuk pesanan lama
   // Nama gudang pemenuh, di-resolve saat baca (join ke tabel warehouses). Hanya untuk TAMPILAN OMS —
@@ -83,6 +92,9 @@ export type CreateOrderInput = {
   customerEmail?: string
   items: OrderItem[]
   totalAmount: number
+  // Ongkir hasil verifikasi SERVER terhadap tarif Mengantar — bukan angka mentah dari client.
+  // Diteruskan ke RPC agar tersimpan di kolomnya sendiri, bukan hanya melebur ke totalAmount.
+  shippingCost?: number
   logistics?: OrderLogistics
   address: OrderShippingAddress
   paymentStatus?: OrderPaymentStatus
