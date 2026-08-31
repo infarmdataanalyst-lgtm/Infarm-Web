@@ -45,6 +45,7 @@ const ALLOW_PAID = process.env.E2E_ALLOW_PAID === '1'
 const BUYER = {
   name: 'E2E Data Integrity',
   phone: '081234567890', // 08xx, 12 digit (src/lib/phone.ts)
+  email: 'e2e.integrity@contoh.test', // WAJIB sejak email dikembalikan ke form (src/lib/email.ts)
   street: 'Jl. Uji Integritas No. 1',
   addressKeyword: 'jakarta pusat', // WAJIB DKI Jakarta — sandbox Mengantar hanya Jakarta→Jakarta
 }
@@ -254,6 +255,7 @@ test.describe('Checkout — integritas data UI vs database', () => {
     // ================================================================
     await isiTeguh(page, 'Nama Lengkap Penerima', BUYER.name)
     await isiTeguh(page, 'Nomor Telepon Aktif', BUYER.phone)
+    await isiTeguh(page, 'Email Aktif', BUYER.email)
 
     // ⚠️ TIDAK ADA FIELD EMAIL di form checkout. Sudah dihapus (CLAUDE.md → Guest Checkout):
     // identitas guest kini murni nomor telepon, selaras dengan lacak/batalkan/review by phone.

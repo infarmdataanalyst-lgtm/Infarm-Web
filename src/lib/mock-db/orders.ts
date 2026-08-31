@@ -595,15 +595,41 @@ export async function readTrackingSyncCandidates(
 // phone di-cocokkan APA ADANYA (pemanggil wajib menormalkan dulu via normalizePhone).
 // Terbaru dulu. Array kosong bila tak ada / error. Server-only.
 export async function getOrdersByPhone(phone: string): Promise<Order[]> {
+  return readOrdersByColumn('no_telepon', phone, 'by phone')
+}
+
+// Semua pesanan milik satu EMAIL, terbaru dulu. Dipakai Lacak Pesanan (/track-order).
+//
+// Kolomnya bernama `email`, BUKAN `customer_email`. Migration
+// 20260624120000_add_orders_customer_email.sql menyebut nama yang kedua, tapi kolom itu tak pernah
+// ada di database — `customer_email` membuat PostgREST membalas 42703 (undefined_column). Kolom
+// `email` sudah ada sejak tabel dibuat dan itulah yang diisi RPC create_order_with_items lewat
+// parameter p_email. Jangan "memperbaiki" nama ini mengikuti file migration tersebut.
+//
+// `email` yang masuk WAJIB sudah dinormalisasi (huruf kecil) oleh pemanggil — lihat lib/email.ts.
+// Pencocokan di sini persis (case-sensitive), jadi email yang disimpan dan yang dicari harus
+// melewati normalisasi yang sama.
+export async function getOrdersByEmail(email: string): Promise<Order[]> {
+  return readOrdersByColumn('email', email, 'by email')
+}
+
+// Inti bersama getOrdersByPhone & getOrdersByEmail: baca pesanan yang cocok pada satu kolom,
+// lalu lengkapi itemnya. Dipisah agar kedua jalur pencarian tak pernah menyimpang perilakunya —
+// satu memuat nama varian dan yang lain tidak, misalnya.
+async function readOrdersByColumn(
+  column: 'no_telepon' | 'email',
+  value: string,
+  labelForLog: string,
+): Promise<Order[]> {
   const supabase = createAdminClient()
   const { data, error } = await supabase
     .from('orders')
     .select('*')
-    .eq('no_telepon', phone)
+    .eq(column, value)
     .order('created_at', { ascending: false })
 
   if (error) {
-    console.error('Gagal membaca pesanan (by phone) dari Supabase:', error.message)
+    console.error(`Gagal membaca pesanan (${labelForLog}) dari Supabase:`, error.message)
     return []
   }
   const rows = (data as OrderRow[]) ?? []

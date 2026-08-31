@@ -41,6 +41,7 @@ import {
   clearCart,
 } from '@/lib/cart-client'
 import { setGuestPhone, incrementActiveOrderCount } from '@/lib/guest-phone'
+import { setGuestEmail } from '@/lib/guest-email'
 import type { CheckoutItem } from '@/lib/data/dummy-checkout'
 
 // Produk untuk kebutuhan halaman ini: Product + berat (gram) dari OMS. Produk dummy tak punya
@@ -434,9 +435,13 @@ export default function CheckoutPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          // Nilai sudah divalidasi (telepon = angka bersih 08xx)
+          // Nilai sudah divalidasi (telepon = angka bersih 08xx, email sudah huruf kecil)
           customerName: address.recipientName.trim(),
           customerPhone: address.phone,
+          // Disimpan ke orders.email. Inilah kunci yang dipakai pembeli untuk melacak pesanannya
+          // di /track-order, jadi ia harus tersimpan persis seperti yang divalidasi di form —
+          // jangan diubah bentuknya lagi di sini.
+          customerEmail: address.email,
           items: orderItems.map((item) => ({
             productId: item.id,
             name: item.name,
@@ -488,10 +493,15 @@ export default function CheckoutPage() {
       // awal membuat halaman ini berkedip ke keadaan kosong sebelum berpindah ke Xendit.
       clearCheckoutDraft()
 
-      // Order berhasil → simpan no_telepon ke cookie (auto-recognize di /track-order & /cancel-order)
-      // dan naikkan estimasi pesanan aktif (badge angka header; di-refresh akurat saat buka
+      // Order berhasil → simpan identitas guest ke cookie untuk auto-recognize berikutnya, dan
+      // naikkan estimasi pesanan aktif (badge angka header; di-refresh akurat saat buka
       // /pesanan-saya). Keranjang BELUM dikosongkan di sini — lihat catatan di bawah.
+      //
+      // DUA cookie, bukan satu, karena halamannya memakai identitas berbeda:
+      //   infarm_phone → /cancel-order, /review, badge pesanan aktif
+      //   infarm_email → /track-order
       setGuestPhone(address.phone)
+      setGuestEmail(address.email)
       incrementActiveOrderCount()
 
       // Terbitkan tagihan Xendit lalu bawa pembeli ke halaman pembayarannya.

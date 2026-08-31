@@ -31,6 +31,7 @@ const TUJUAN = 'jakarta pusat'
 
 const NAMA = 'E2E Berat Kirim'
 const TELEPON = '081234567890'
+const EMAIL = 'weight.shipping@contoh.test' // WAJIB sejak email dikembalikan ke form
 
 // Ambang "1 kg" dari src/lib/shipping-weight.ts. Ditulis ulang di sini HANYA sebagai nilai yang
 // diharapkan pada assertion, bukan sebagai perhitungan.
@@ -159,6 +160,7 @@ async function ukurOngkir(
   await bukaDengan(page, baseURL, k)
   await isiTeguh(page, 'Nama Lengkap Penerima', NAMA)
   await isiTeguh(page, 'Nomor Telepon Aktif', TELEPON)
+  await isiTeguh(page, 'Email Aktif', EMAIL)
 
   await fillAddressSearch(page, TUJUAN)
   const opsi = page.getByRole('listbox').getByRole('option').first()

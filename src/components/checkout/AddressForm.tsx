@@ -14,6 +14,7 @@ import { MapPin, CheckCircle2 } from 'lucide-react'
 import AddressSearchCombobox from '@/components/checkout/AddressSearchCombobox'
 import { toTitleCase, type MengantarAddress } from '@/lib/mengantar'
 import { normalizePhone, isValidPhone, getPhoneError, sanitizePhoneInput } from '@/lib/phone'
+import { isValidEmail, getEmailError, normalizeEmail, EMAIL_MAX_LENGTH } from '@/lib/email'
 import {
   validateAddress,
   type AddressFieldKey,
@@ -24,6 +25,10 @@ import {
 export type AddressFormState = {
   recipientName: string
   phone: string
+  // Disimpan SUDAH ternormalisasi (huruf kecil, tanpa spasi ujung) — lihat handleEmailChange.
+  // Nilai inilah yang dikirim ke orders.email dan yang nanti dipakai mencari di Lacak Pesanan,
+  // jadi bentuknya harus sama persis di kedua sisi.
+  email: string
   destination_id: string
   provinceName: string
   cityName: string
@@ -59,6 +64,7 @@ function initialForm(): AddressFormState {
   return {
     recipientName: '',
     phone: '',
+    email: '',
     destination_id: '',
     provinceName: '',
     cityName: '',
@@ -79,7 +85,13 @@ const AddressForm = forwardRef<AddressFormHandle, {
   onChange?: (address: AddressFormState) => void
   initialValue?: AddressFormState
 }>(function AddressForm({ onChange, initialValue }, ref) {
-  const [form, setForm] = useState<AddressFormState>(() => initialValue ?? initialForm())
+  // Draf digabung DI ATAS nilai kosong, bukan dipakai apa adanya. Draf yang tersimpan sebelum
+  // field email ada tidak punya kunci `email`; memakainya langsung membuat `form.email`
+  // undefined — validasi crash saat memanggil .trim(), dan React menganggap input-nya tak
+  // terkendali. Penggabungan ini membuat draf lama tetap bisa dipulihkan dengan email kosong.
+  const [form, setForm] = useState<AddressFormState>(() =>
+    initialValue ? { ...initialForm(), ...initialValue } : initialForm(),
+  )
 
   // Teks yang ditampilkan untuk telepon (form.phone menyimpan hasil normalisasi).
   //
@@ -88,6 +100,12 @@ const AddressForm = forwardRef<AddressFormHandle, {
   // nilai yang sebenarnya sudah ada.
   const [phoneInput, setPhoneInput] = useState(() => initialValue?.phone ?? '')
 
+  // Teks yang ditampilkan untuk email. Dipisah dari `form.email` dengan alasan sama seperti
+  // telepon: yang disimpan sudah ternormalisasi (huruf kecil), sementara yang diketik dibiarkan
+  // apa adanya selama mengetik supaya kursor & kapitalisasi tak melompat-lompat. Keduanya
+  // disamakan saat onBlur, jadi yang dilihat pembeli = yang benar-benar tersimpan.
+  const [emailInput, setEmailInput] = useState(() => initialValue?.email ?? '')
+
   // Pesan error per field (kosong = tidak ada error). Mengatur juga border merah.
   const [errors, setErrors] = useState<AddressValidationResult['errors']>({})
 
@@ -95,11 +113,13 @@ const AddressForm = forwardRef<AddressFormHandle, {
   const recipientNameRef = useRef<HTMLDivElement>(null)
   const phoneRef = useRef<HTMLDivElement>(null)
   const phoneInputRef = useRef<HTMLInputElement>(null)
+  const emailRef = useRef<HTMLDivElement>(null)
   const addressRef = useRef<HTMLDivElement>(null)
   const streetRef = useRef<HTMLDivElement>(null)
   const fieldRefs: Record<AddressFieldKey, RefObject<HTMLDivElement | null>> = {
     recipientName: recipientNameRef,
     phone: phoneRef,
+    email: emailRef,
     destination_id: addressRef,
     street: streetRef,
   }
@@ -174,6 +194,29 @@ const AddressForm = forwardRef<AddressFormHandle, {
   }
 
   const phoneValid = isValidPhone(form.phone)
+
+  // === Email ===
+  // Dinormalisasi setiap ketikan agar `form.email` (yang dikirim ke server) selalu sudah bersih,
+  // tanpa menunggu blur — pembeli yang langsung menekan "Bayar Sekarang" tetap mengirim nilai
+  // yang benar.
+  function handleEmailChange(raw: string) {
+    const trimmed = raw.slice(0, EMAIL_MAX_LENGTH)
+    setEmailInput(trimmed)
+    updateForm({ email: normalizeEmail(trimmed) })
+    // Hapus pesan error begitu isinya menjadi sah — pola sama dengan nama & alamat lengkap.
+    if (errors.email && isValidEmail(trimmed)) setFieldError('email', '')
+  }
+
+  function handleEmailBlur() {
+    // Samakan tampilan dengan yang tersimpan supaya pembeli melihat persis alamat yang dipakai
+    // sistem (mis. mengetik "Budi@Gmail.com" → tampil "budi@gmail.com").
+    const normalized = normalizeEmail(emailInput)
+    setEmailInput(normalized)
+    updateForm({ email: normalized })
+    setFieldError('email', getEmailError(normalized))
+  }
+
+  const emailValid = isValidEmail(form.email)
 
   // === Alamat (combobox Mengantar) ===
   const hasSelectedAddress = form.destination_id !== ''
@@ -275,6 +318,36 @@ const AddressForm = forwardRef<AddressFormHandle, {
             </div>
           </Field>
           <FieldError message={errors.phone} />
+        </div>
+
+        {/* Email — WAJIB. Dipakai untuk konfirmasi pesanan DAN sebagai kunci Lacak Pesanan
+            (lihat /track-order), jadi pesanan tanpa email tak bisa ditemukan pembelinya. */}
+        <div ref={emailRef}>
+          <Field label="Email Aktif">
+            <div className="relative">
+              <input
+                type="email"
+                inputMode="email"
+                autoComplete="email"
+                spellCheck={false}
+                maxLength={EMAIL_MAX_LENGTH}
+                value={emailInput}
+                onChange={(e) => handleEmailChange(e.target.value)}
+                onBlur={handleEmailBlur}
+                placeholder="Contoh: nama@gmail.com"
+                aria-invalid={Boolean(errors.email)}
+                className={`${inputClass(Boolean(errors.email))} ${emailValid ? 'pr-10' : ''}`}
+              />
+              {/* Indikator hijau saat email valid — pola sama dengan nomor telepon */}
+              {emailValid && (
+                <CheckCircle2 className="absolute right-3 top-1/2 h-5 w-5 -translate-y-1/2 text-brand-primary" />
+              )}
+            </div>
+          </Field>
+          <FieldError message={errors.email} />
+          <p className="mt-1 text-xs text-zinc-500">
+            Dipakai untuk melacak pesananmu nanti. Pastikan alamatnya benar.
+          </p>
         </div>
 
         {/* === Wilayah: mode pencarian ATAU ringkasan alamat terpilih === */}

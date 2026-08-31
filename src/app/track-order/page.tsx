@@ -1,17 +1,28 @@
 'use client'
 
 // src/app/track-order/page.tsx
-// Lacak Pesanan by NO. TELEPON (guest). Berbeda dari /track (yang by nomor invoice).
-// User cukup masukkan no_telepon → tampil daftar pesanan (bisa >1) dengan info NON-SENSITIF saja.
-// Auto-fill no_telepon dari cookie (infarm_phone) bila pernah checkout di device ini.
-// Honeypot field tersembunyi mencegah bot. (Rate-limit menyusul — lihat catatan di API.)
+// Lacak Pesanan by EMAIL (guest). Berbeda dari /track (yang by nomor invoice).
+// User cukup masukkan email → tampil daftar pesanan (bisa >1) dengan info NON-SENSITIF saja.
+// Auto-fill email dari cookie (infarm_email) bila pernah checkout di device ini.
+// Honeypot field tersembunyi + rate limit 3 lapis di API mencegah penyalahgunaan.
+//
+// ── Kenapa email, sementara halaman lain masih no_telepon ──
+// HANYA halaman ini yang berpindah ke email. /cancel-order dan /review tetap memakai no_telepon
+// karena keduanya menulis/mengubah data dan alur verifikasinya sudah dibangun di atas nomor.
+// Konsekuensinya ada DUA cookie identitas guest yang hidup berdampingan: `infarm_email` dibaca di
+// sini, `infarm_phone` dibaca di halaman-halaman itu. Jangan menyatukannya tanpa memindahkan
+// seluruh alur sekaligus.
+//
+// ── Pesanan lama tidak akan ditemukan ──
+// Kolom orders.email baru diisi sejak field email dikembalikan ke form checkout. Pesanan yang
+// dibuat saat field itu absen ber-email NULL dan TIDAK bisa dilacak dari sini sama sekali.
 
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { Package, Search } from 'lucide-react'
-import { getGuestPhone } from '@/lib/guest-phone'
-import { isValidPhone } from '@/lib/phone'
+import { getGuestEmail } from '@/lib/guest-email'
+import { isValidEmail, normalizeEmail } from '@/lib/email'
 
 // Bentuk pesanan aman-publik dari API (tanpa alamat/nama penuh)
 type PublicTrackOrder = {
@@ -26,24 +37,24 @@ type PublicTrackOrder = {
 }
 
 export default function TrackOrderPage() {
-  const [phone, setPhone] = useState('')
+  const [email, setEmail] = useState('')
   const [honeypot, setHoneypot] = useState('') // field jebakan bot (tersembunyi dari user)
   const [orders, setOrders] = useState<PublicTrackOrder[] | null>(null) // null = belum cari
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  // true = nomor dikenali dari cookie → sembunyikan form & nomor, langsung tampilkan hasil.
-  // User tetap bisa membuka form manual lewat link "Cari nomor lain" (lihat handleUseOtherNumber).
+  // true = email dikenali dari cookie → sembunyikan form & email, langsung tampilkan hasil.
+  // User tetap bisa membuka form manual lewat link "Cari email lain" (lihat handleUseOtherEmail).
   const [recognized, setRecognized] = useState(false)
 
-  // Jalankan pencarian ke server untuk sebuah no_telepon. `hp` = nilai honeypot (kosong saat auto).
-  const runSearch = useCallback(async (searchPhone: string, hp: string) => {
+  // Jalankan pencarian ke server untuk sebuah email. `hp` = nilai honeypot (kosong saat auto).
+  const runSearch = useCallback(async (searchEmail: string, hp: string) => {
     setLoading(true)
     setError('')
     try {
-      const res = await fetch('/api/orders/track-by-phone', {
+      const res = await fetch('/api/orders/track-by-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: searchPhone, website: hp }),
+        body: JSON.stringify({ email: searchEmail, website: hp }),
       })
       const data = await res.json()
       if (!res.ok) {
@@ -60,38 +71,39 @@ export default function TrackOrderPage() {
     }
   }, [])
 
-  // Opsi A: auto-recognize. Bila cookie no_telepon ada & valid (pernah checkout di device ini) →
+  // Opsi A: auto-recognize. Bila cookie email ada & valid (pernah checkout di device ini) →
   // isi form + LANGSUNG cari (user tak perlu ketik/klik). Cookie kedaluwarsa/tak ada → input manual.
   useEffect(() => {
-    const saved = getGuestPhone()
-    if (saved && isValidPhone(saved)) {
-      setPhone(saved)
-      setRecognized(true) // sembunyikan nomor & form — langsung tampilkan hasil
-      runSearch(saved, '') // honeypot kosong pada pencarian otomatis
+    const saved = getGuestEmail()
+    if (saved && isValidEmail(saved)) {
+      setEmail(saved)
+      setRecognized(true) // sembunyikan email & form — langsung tampilkan hasil
+      runSearch(normalizeEmail(saved), '') // honeypot kosong pada pencarian otomatis
     }
   }, [runSearch])
 
-  // Klik "Cari nomor lain": tampilkan kembali form kosong (nomor cookie TIDAK ditampilkan/di-prefill)
-  function handleUseOtherNumber() {
+  // Klik "Cari email lain": tampilkan kembali form kosong (email cookie TIDAK ditampilkan/di-prefill)
+  function handleUseOtherEmail() {
     setRecognized(false)
-    setPhone('')
+    setEmail('')
     setOrders(null)
     setError('')
   }
 
-  // Hanya izinkan angka saat mengetik (konsisten dengan validasi checkout)
-  function handlePhoneChange(e: React.ChangeEvent<HTMLInputElement>) {
-    setPhone(e.target.value.replace(/\D/g, '').slice(0, 12))
+  function handleEmailChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setEmail(e.target.value)
     setError('')
   }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!isValidPhone(phone)) {
-      setError('Nomor telepon tidak valid. Gunakan format 08xxxxxxxxxx.')
+    if (!isValidEmail(email)) {
+      setError('Email tidak valid. Contoh: nama@gmail.com')
       return
     }
-    runSearch(phone, honeypot)
+    // Dinormalisasi sebelum dikirim supaya cocok dengan bentuk yang tersimpan di orders.email.
+    // Server menormalkannya lagi — sengaja, agar pemanggil lain pun tak bisa lolos tanpa itu.
+    runSearch(normalizeEmail(email), honeypot)
   }
 
   return (
@@ -115,22 +127,22 @@ export default function TrackOrderPage() {
         {recognized ? (
           <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
             <p className="text-sm text-gray-600">
-              Menampilkan pesanan untuk nomor Anda ·{' '}
+              Menampilkan pesanan untuk email Anda ·{' '}
               <button
                 type="button"
-                onClick={handleUseOtherNumber}
+                onClick={handleUseOtherEmail}
                 className="font-semibold text-brand-primary underline transition hover:no-underline"
               >
-                Cari nomor lain
+                Cari email lain
               </button>
             </p>
           </div>
         ) : (
           /* === Form pencarian manual === */
           <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
-            <h1 className="text-xl font-bold text-gray-900">Lacak dengan Nomor Telepon</h1>
+            <h1 className="text-xl font-bold text-gray-900">Lacak dengan Email</h1>
             <p className="mt-2 text-sm text-gray-500">
-              Masukkan nomor telepon yang Anda gunakan saat checkout untuk melihat status pesanan.
+              Masukkan email yang Anda gunakan saat checkout untuk melihat status pesanan.
             </p>
 
             <form onSubmit={handleSubmit} className="mt-5 space-y-3">
@@ -149,16 +161,18 @@ export default function TrackOrderPage() {
               </div>
 
               <div>
-                <label htmlFor="phone" className="mb-1 block text-sm font-medium text-gray-700">
-                  Nomor Telepon
+                <label htmlFor="email" className="mb-1 block text-sm font-medium text-gray-700">
+                  Email
                 </label>
                 <input
-                  id="phone"
-                  type="tel"
-                  inputMode="numeric"
-                  placeholder="08xxxxxxxxxx"
-                  value={phone}
-                  onChange={handlePhoneChange}
+                  id="email"
+                  type="email"
+                  inputMode="email"
+                  autoComplete="email"
+                  spellCheck={false}
+                  placeholder="nama@gmail.com"
+                  value={email}
+                  onChange={handleEmailChange}
                   className="w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm text-gray-900 focus:border-brand-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
                 />
                 {error && <p className="mt-1.5 text-sm text-rose-600">{error}</p>}
@@ -180,13 +194,26 @@ export default function TrackOrderPage() {
         {orders !== null && (
           <div className="mt-5 space-y-3">
             {orders.length === 0 ? (
-              <p className="rounded-2xl border border-gray-100 bg-white px-4 py-8 text-center text-sm text-gray-400 shadow-sm">
-                Tidak ada pesanan untuk nomor ini.
-              </p>
+              <div className="rounded-2xl border border-gray-100 bg-white px-4 py-8 text-center shadow-sm">
+                <p className="text-sm text-gray-400">Tidak ada pesanan untuk email ini.</p>
+                {/* Pesanan yang dibuat sebelum field email dikembalikan ke checkout ber-email
+                    NULL, jadi tak akan pernah muncul di sini. Arahkan ke jalur no. telepon yang
+                    masih ada alih-alih membiarkan pembeli mengira pesanannya hilang. */}
+                <p className="mt-2 text-xs text-gray-400">
+                  Pesanan lama mungkin dibuat tanpa email. Coba{' '}
+                  <Link
+                    href="/cancel-order"
+                    className="font-semibold text-brand-primary underline transition hover:no-underline"
+                  >
+                    cari dengan nomor telepon
+                  </Link>
+                  .
+                </p>
+              </div>
             ) : (
               <>
                 <p className="px-1 text-sm text-gray-500">
-                  {orders.length} pesanan ditemukan untuk nomor ini
+                  {orders.length} pesanan ditemukan untuk email ini
                 </p>
                 {orders.map((o) => (
                   <TrackOrderCard key={o.orderId} order={o} />

@@ -334,7 +334,10 @@ test('EDGE: pesan teknis Xendit TIDAK bocor ke pembeli', async () => {
     expect(ada).toBe(true)
   }
   // `result.detail` (memuat pesan mentah Xendit) hanya boleh masuk console, bukan NextResponse
-  const detailKeUser = /NextResponse\.json\([^)]*result\.detail/s.test(inv) || /NextResponse\.json\([^)]*result\.detail/s.test(va)
+  // `[^)]*` sudah ikut mencocokkan baris baru, jadi flag `s` tak diperlukan (dan butuh target
+  // ES2018 yang tidak dipakai tsconfig project ini).
+  const pola = /NextResponse\.json\([^)]*result\.detail/
+  const detailKeUser = pola.test(inv) || pola.test(va)
   console.log(`\n  detail mentah Xendit ikut dikirim ke pembeli? ${detailKeUser}`)
   expect(detailKeUser).toBe(false)
 })

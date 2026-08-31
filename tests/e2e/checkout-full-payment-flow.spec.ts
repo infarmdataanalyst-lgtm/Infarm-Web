@@ -83,6 +83,7 @@ const ALLOW_PAID = process.env.E2E_ALLOW_PAID === '1'
 const BUYER = {
   name: 'E2E Playwright Test',
   phone: '081234567890', // 12 digit
+  email: 'e2e.payment@contoh.test', // WAJIB sejak email dikembalikan ke form (src/lib/email.ts)
   street: 'Jl. Uji Otomatis No. 1, Blok E2E',
 
   // ⚠️ WAJIB tujuan DKI JAKARTA. Sandbox Mengantar yang dipakai sekarang hanya melayani rute
@@ -315,6 +316,7 @@ test.describe('Checkout — alur penuh sampai pembayaran selesai', () => {
 
     await isiTeguh('Nama Lengkap Penerima', BUYER.name)
     await isiTeguh('Nomor Telepon Aktif', BUYER.phone)
+    await isiTeguh('Email Aktif', BUYER.email)
 
     // Pencarian alamat sungguhan ke API Mengantar (BACA, gratis).
     await isiTeguh('Cari Alamat (Kelurahan / Kecamatan / Kota)', BUYER.addressKeyword)

@@ -41,6 +41,7 @@ export function emptyAddress(): AddressFormState {
   return {
     recipientName: '',
     phone: '',
+    email: '',
     destination_id: '',
     provinceName: '',
     cityName: '',
@@ -71,6 +72,11 @@ function alamatValid(nilai: unknown): nilai is AddressFormState {
     'street',
   ]
   const obj = nilai as Record<string, unknown>
+  // `email` SENGAJA tidak masuk daftar wajib di atas. Draf yang tersimpan sebelum field email ada
+  // tidak punya kunci itu; mewajibkannya berarti seluruh draf dibuang — pembeli kehilangan nama
+  // dan alamat yang sudah diketik hanya karena satu field baru. AddressForm menambal kekurangan
+  // ini dengan menggabungkan draf di atas nilai kosong, jadi `form.email` tetap berupa string.
+  if (obj.email !== undefined && typeof obj.email !== 'string') return false
   return kunci.every((k) => typeof obj[k] === 'string')
 }
 
@@ -108,7 +114,13 @@ export function readCheckoutDraft(): CheckoutDraft | null {
     }
 
     return {
-      address: parsed.address,
+      // Digabung DI ATAS alamat kosong, bukan dikembalikan mentah. Draf yang tersimpan sebelum
+      // sebuah field ditambahkan (mis. `email`) tidak punya kuncinya, dan SETIAP pemanggil
+      // readCheckoutDraft() akan menerima objek yang tak lengkap — halaman checkout menyeed
+      // state-nya dari sini lalu memanggil validateAddress(), yang langsung melempar
+      // "Cannot read properties of undefined (reading 'trim')" dan memutihkan seluruh halaman.
+      // Menambalnya di sini menutup semua pemanggil sekaligus, bukan satu per satu.
+      address: { ...emptyAddress(), ...parsed.address },
       // Alamat sah tapi kurir busuk → alamatnya tetap dipulihkan, kurirnya dibuang.
       // Membuang keduanya menghukum pengguna atas kerusakan di bagian yang bisa dipilih ulang
       // dalam satu ketukan.
@@ -159,5 +171,8 @@ export function draftAdaIsinya(
   courier: WarehouseShippingOption | null,
 ): boolean {
   if (courier) return true
-  return Object.values(address).some((v) => v.trim() !== '')
+  // `typeof v === 'string'` bukan kerapian: draf dari versi lama bisa kehilangan sebuah field
+  // (mis. `email`), dan memanggil .trim() pada undefined akan melempar tepat di jalur penyimpanan
+  // draf — checkout mati hanya karena fitur kenyamanan.
+  return Object.values(address).some((v) => typeof v === 'string' && v.trim() !== '')
 }

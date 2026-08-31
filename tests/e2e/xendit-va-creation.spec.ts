@@ -88,6 +88,7 @@ const ALLOW_PAID = process.env.E2E_ALLOW_PAID === '1'
 const BUYER = {
   name: 'E2E Xendit VA',
   phone: '081234567890', // 08xx, 12 digit (src/lib/phone.ts)
+  email: 'e2e.xendit.va@contoh.test', // WAJIB sejak email dikembalikan ke form (src/lib/email.ts)
   street: 'Jl. Uji Xendit No. 1',
   addressKeyword: 'jakarta pusat', // WAJIB DKI Jakarta — sandbox Mengantar hanya Jakarta→Jakarta
 }
@@ -432,6 +433,7 @@ test.describe('Xendit — nominal tagihan & jejaknya di tabel orders', () => {
     // ================================================================
     await isiTeguh(page, 'Nama Lengkap Penerima', BUYER.name)
     await isiTeguh(page, 'Nomor Telepon Aktif', BUYER.phone)
+    await isiTeguh(page, 'Email Aktif', BUYER.email)
 
     // ⚠️ TIDAK ADA FIELD EMAIL di form checkout — sudah dihapus (CLAUDE.md → Guest Checkout).
     // Identitas guest murni nomor telepon; order baru selalu mengirim `customerEmail: undefined`.

@@ -25,6 +25,19 @@ export const RATE_LIMITS = {
   // yang dihitung → user normal yang mengulang pencarian nomornya sendiri tidak pernah kena.
   PHONE_LOOKUP_IP_PHONE_MISS: { max: 5, windowMs: 15 * MINUTE },
 
+  // Endpoint BACA by email (track-by-email). Ambangnya SENGAJA sama persis dengan PHONE_LOOKUP_*
+  // karena ancamannya identik: menebak identitas orang lain untuk mengintip pesanannya. Dibuat
+  // sebagai konstanta terpisah, bukan memakai ulang yang di atas, supaya keduanya bisa disetel
+  // sendiri-sendiri nanti — email jauh lebih mudah ditebak daripada nomor telepon (alamat kerja
+  // berpola nama@perusahaan.com), jadi bila ada penyalahgunaan, angka di sinilah yang diturunkan
+  // tanpa ikut memperketat jalur telepon.
+  EMAIL_LOOKUP_IP: { max: 20, windowMs: 15 * MINUTE }, // throttle umum per sumber
+  EMAIL_LOOKUP_EMAIL: { max: 15, windowMs: 60 * MINUTE }, // anti brute-force tertarget 1 email
+  // Kombinasi IP + email yang dicoba. Sama seperti versi telepon: HANYA percobaan GAGAL (email
+  // tanpa pesanan) yang dihitung, sehingga pemilik email yang me-reload halamannya sendiri tidak
+  // pernah tersentuh limit ini, sementara penebak berhenti di 5 percobaan meleset.
+  EMAIL_LOOKUP_IP_EMAIL_MISS: { max: 5, windowMs: 15 * MINUTE },
+
   // Endpoint TULIS/destruktif by no_telepon (cancel-by-phone)
   PHONE_WRITE_IP: { max: 8, windowMs: 15 * MINUTE },
   PHONE_WRITE_PHONE: { max: 5, windowMs: 60 * MINUTE },

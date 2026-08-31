@@ -19,18 +19,41 @@
     `Diproses`. Status `Dikirim`/`Selesai` ditolak (terkunci)
 - Halaman `src/app/order-cancellation/page.tsx` (server tipis) → `OrderCancellationView` (client)
 
-## Layanan Pesanan Guest by No. Telepon (lacak / batalkan / review) — sudah terpasang
+## Layanan Pesanan Guest (lacak / batalkan / review) — sudah terpasang
 
-Keluarga fitur guest yang mengidentifikasi pesanan lewat **no_telepon** (bukan login). Entry lewat
-**hub `/pesanan-saya`** (ikon profil header → hub; badge dot merah bila cookie `infarm_phone` ada).
-Semua berbagi pola: input phone → `getOrdersByPhone` (`mock-db/orders.ts`, `.eq('no_telepon')`) →
-output NON-SENSITIF; **honeypot** field `website`; **auto-recognize** cookie `infarm_phone` (Opsi A:
-auto-cari tanpa ketik). **Rate-limit sudah terpasang** — lihat "Rate Limiting" di
-[CLAUDE.md](../CLAUDE.md) (section itu tetap di root, tidak ikut dipecah ke sini).
+Keluarga fitur guest yang menemukan pesanan **tanpa login**. Entry lewat **hub `/pesanan-saya`**
+(ikon profil header → hub; badge dot merah bila cookie `infarm_phone` ada).
+
+> ⚠️ **Kuncinya TIDAK seragam sejak 2026-08-31.** Baca tabel ini sebelum menyentuh salah satunya —
+> mengubah satu jalur ke identitas yang lain akan mematikan jalur lainnya.
+
+| Layanan | Halaman | Kunci | Endpoint | Query | Cookie |
+|---|---|---|---|---|---|
+| **Lacak** | `/track-order` | **email** | `track-by-email` | `getOrdersByEmail` → `.eq('email')` | `infarm_email` |
+| **Batalkan** | `/cancel-order` | no_telepon | `track-by-phone` → `verify-cancel` → `cancel-by-phone` | `getOrdersByPhone` → `.eq('no_telepon')` | `infarm_phone` |
+| **Review** | `/review` | no_telepon | `reviewable-by-phone` → `create-by-phone` | idem | `infarm_phone` |
+| **Badge pesanan aktif** | header | no_telepon | `track-by-phone` | idem | `infarm_phone` |
+
+**Kenapa hanya Lacak yang pindah ke email**: Lacak murni membaca, jadi memindahkannya tak menyentuh
+alur verifikasi mana pun. Batalkan & Review **menulis/mengubah** data dan verifikasinya sudah
+dibangun di atas nomor telepon — memindahkannya butuh pekerjaan tersendiri, bukan sekadar mengganti
+kolom. Karena itu `track-by-phone` **tetap hidup** (dipakai `/cancel-order` dan badge); jangan
+di-rename atau dihapus.
+
+Semua berbagi pola yang sama: input identitas → query → output NON-SENSITIF; **honeypot** field
+`website`; **auto-recognize** cookie (Opsi A: auto-cari tanpa ketik). **Rate-limit sudah terpasang**
+— jalur telepon memakai `PHONE_LOOKUP_*`, jalur email memakai `EMAIL_LOOKUP_*` (ambang sama,
+konstanta terpisah). Lihat "Rate Limiting" di [CLAUDE.md](../CLAUDE.md) (section itu tetap di root,
+tidak ikut dipecah ke sini).
 
 ### Lacak — `/track-order` (berdampingan dengan `/track` by invoice)
-- `POST /api/orders/track-by-phone`: kembalikan info non-sensitif (invoice, status, resi, kurir, tanggal,
-  item nama+qty+foto), nama **di-mask** (`lib/mask.ts`). Detail timeline lengkap tetap via `/track?order=INV-…`.
+- **Kunci = email**, bukan no_telepon. `POST /api/orders/track-by-email`: kembalikan info
+  non-sensitif (invoice, status, resi, kurir, tanggal, item nama+qty+foto), nama **di-mask**
+  (`lib/mask.ts`). Detail timeline lengkap tetap via `/track?order=INV-…`.
+- Email dinormalisasi (`normalizeEmail`) di client **dan** di server — pencocokan `.eq('email')`
+  peka huruf besar/kecil, jadi bentuk yang disimpan dan yang dicari harus melewati helper yang sama.
+- **Pesanan lama ber-email NULL tak akan muncul di sini.** Saat hasilnya kosong, halaman menampilkan
+  arahan ke pencarian by no. telepon agar pembeli tak mengira pesanannya hilang.
 
 #### `/track?order=INV-…` — tata letak & kartu produk
 - **Tak ada verifikasi kepemilikan**: nomor invoice adalah satu-satunya kunci. Karena itu nama,
@@ -417,8 +440,15 @@ Section Alamat Pengiriman divalidasi di client sebelum request order dikirim. Lo
 - **Nama**: min 3 karakter. **Alamat lengkap**: min 10 karakter.
 - **Telepon** (`phone.ts`): hanya angka (non-digit diblok saat mengetik via onKeyDown/onChange),
   wajib diawali `08`, panjang 10–12 digit. Disimpan sebagai angka bersih `08xxxxxxxxx`.
-- **Email**: field ini **sudah dihapus dari form checkout** (`src/lib/email.ts` ikut dihapus, dead code).
-  `AddressFieldKey`/`AddressValidationInput` (`checkout-validation.ts`) tidak lagi punya `email`.
+- **Email** (`email.ts`): **WAJIB**, dikembalikan ke form pada 2026-08-31. Regex sengaja sederhana
+  (ada `@`, domain bertitik, TLD ≥ 2 huruf, tanpa spasi, maks 254 karakter) — bukan RFC 5322 penuh,
+  karena format seketat apa pun tak bisa membuktikan kotak suratnya ada; tugasnya hanya menolak yang
+  jelas salah ketik. **Dinormalisasi ke huruf kecil + trim** (`normalizeEmail`) sebelum disimpan
+  DAN sebelum dipakai mencari; tanpa itu `Budi@Gmail.com` saat checkout dan `budi@gmail.com` saat
+  melacak menjadi dua identitas berbeda. Di UI, kotaknya menampilkan teks apa adanya saat mengetik
+  lalu disamakan ke bentuk ternormalisasi saat `onBlur`.
+  `getEmailError` mengembalikan pesan spesifik per jenis kesalahan ("Email harus mengandung tanda @",
+  "Domain email harus mengandung titik…"), bukan satu pesan generik.
 - **Alamat**: wajib dipilih dari search Mengantar (`destination_id` tidak boleh kosong).
 - **Kurir**: wajib dipilih (`selected_courier`).
 - Tombol "Bayar Sekarang": disabled-visual + **guard di handler** (bukan hanya atribut `disabled`).
@@ -426,11 +456,19 @@ Section Alamat Pengiriman divalidasi di client sebelum request order dikirim. Lo
 
 ## Email Konfirmasi Pesanan
 
-> **Update**: form checkout **tidak lagi mengumpulkan email pembeli** (dihapus dari `AddressForm`;
-> fokus identitas guest = no_telepon). Order baru selalu mengirim `customerEmail: undefined` ke
-> `/api/orders/create`, jadi kolom `customer_email` akan **selalu NULL** untuk order baru. Fitur
-> kirim email otomatis di bawah ini masih roadmap dan sekarang **tidak punya alamat tujuan** kecuali
-> flow pengumpulan email dihidupkan kembali di kanal lain — tandai ini saat mengerjakan integrasi Xendit.
+> **Update 2026-08-31**: form checkout **mengumpulkan email lagi** dan field itu WAJIB. Order baru
+> mengirim `customerEmail` berisi nilai asli ke `/api/orders/create` → tersimpan di kolom
+> `orders.email`. Fitur kirim email otomatis di bawah ini **masih roadmap**, tapi kini sudah punya
+> alamat tujuan. Email juga menjadi kunci Lacak Pesanan — lihat "Layanan Pesanan Guest".
+>
+> ⚠️ **Nama kolomnya `email`, BUKAN `customer_email`.** Migration
+> `20260624120000_add_orders_customer_email.sql` menyebut `customer_email`, tapi kolom itu **tak
+> pernah ada** di database (`.eq('customer_email')` → `42703 undefined_column`). Kolom `email` sudah
+> ada sejak tabel dibuat dan itulah yang diisi RPC `create_order_with_items` lewat `p_email`. File
+> migration itu mendeskripsikan kolom yang tak pernah dibuat — jangan dijadikan acuan.
+>
+> **Pesanan lama ber-email NULL** (dibuat selama field email absen) tidak bisa dilacak lewat
+> `/track-order`; halaman itu mengarahkan pembelinya ke pencarian by no. telepon.
 
 - Template HTML: **`src/emails/order-confirmation.html`** — table-based + inline CSS (kompatibel
   Gmail/Outlook/Mail iOS), fluid `max-width:600px; margin:0 auto`, palet brand (`#46b33c`).
@@ -439,10 +477,9 @@ Section Alamat Pengiriman divalidasi di client sebelum request order dikirim. Lo
 - Aset gambar email di **`public/images/email/`** (mis. `logo-infarm.png`; lihat README folder tsb).
 - Preview lokal: **`/dev/email-preview`** (route handler membaca file template + isi placeholder
   dengan data contoh). Hanya untuk development.
-- Kolom **`customer_email`** (TEXT, nullable) masih ada di tabel `orders`
-  (migration `supabase/migrations/20260624120000_add_orders_customer_email.sql`) untuk data lama —
-  **tidak perlu dihapus manual** (nullable, semua kode sudah memperlakukannya opsional). `saveOrder`
-  punya fallback aman bila kolom belum di-migrate (cek kode error `PGRST204`/`42703`).
+- Kolom **`email`** (TEXT, nullable) di tabel `orders` — nullable dipertahankan karena pesanan lama
+  memang tak punya nilainya; order baru selalu mengisinya. `saveOrder` punya fallback aman bila
+  kolom belum di-migrate (cek kode error `PGRST204`/`42703`).
 
 ## Paket & Combo dan Promosi (OMS + Storefront)
 
@@ -616,9 +653,13 @@ QRIS, retail) tanpa kita membangun UI apa pun.
 
 ### Notifikasi lewat WhatsApp, bukan email
 
-`orders.email` NULL untuk semua pesanan baru (field email sudah dihapus dari checkout), jadi
-`payer_email` tak dikirim. Sebagai gantinya `customer.mobile_number` + `customer_notification_preference`
-diisi dengan saluran `whatsapp` untuk keempat peristiwa (created/reminder/paid/expired).
+`payer_email` tetap **tidak** dikirim ke Xendit meski `orders.email` kini selalu terisi sejak
+2026-08-31. Notifikasi pembayaran sengaja lewat WhatsApp: nomor telepon adalah kanal yang sudah
+terbukti dipakai pembeli (lacak/batalkan/review), sementara email baru dikumpulkan lagi dan belum
+punya pengirim apa pun (`src/emails/` masih template + preview saja). Jadi
+`customer.mobile_number` + `customer_notification_preference` diisi saluran `whatsapp` untuk keempat
+peristiwa (created/reminder/paid/expired). Menambahkan `payer_email` bisa dipertimbangkan setelah
+pengirim email benar-benar ada.
 
 - Nomor dikonversi ke E.164 oleh **`toE164Phone()`** di `src/lib/phone.ts` (`08…` → `+628…`).
   Xendit menolak format lokal. Nomor tak valid → blok `customer` **tak dikirim sama sekali**
@@ -751,10 +792,10 @@ resi masih roadmap (dijalankan dengan mock).
 ### Alur Checkout & Pembayaran
 7. User klik "Checkout" / "Beli Langsung" → item terpilih disimpan ke cookie `infarm_checkout`
    (keduanya WAJIB `setCheckoutItems`); snapshot promo/combo tercapai → `infarm_checkout_promo`
-8. Halaman `/checkout`: form Nama, No. HP, Alamat (search Mengantar → `destination_id`),
+8. Halaman `/checkout`: form Nama, No. HP, **Email**, Alamat (search Mengantar → `destination_id`),
    lalu **cek ongkir otomatis** (pilih kurir → `selected_courier`, ongkir masuk total), Metode
    Pembayaran. Semua field & kurir divalidasi client; tombol "Bayar Sekarang" aktif hanya bila valid.
-   (Field email sudah dihapus dari form — lihat "Email Konfirmasi Pesanan".)
+   (Email WAJIB dan menjadi kunci Lacak Pesanan — lihat "Validasi Form Checkout" & "Layanan Pesanan Guest".)
 9. User isi form → klik "Bayar Sekarang" → `POST /api/orders/create` → RPC atomik `create_order_with_items`
    (insert `orders` + `order_items` + kurangi stok; rollback bila stok kurang; nomor invoice `INV-…`)
 10. Backend **buat Virtual Account** → `POST /api/payments/create` → Xendit Payment Request v3 *(sudah ada, BELUM disambung ke halaman checkout)*

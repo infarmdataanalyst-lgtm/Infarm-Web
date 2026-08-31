@@ -39,6 +39,7 @@ const PROXY_ONGKIR = '**/api/mengantar/shipping/options**'
 const API_BUAT_ORDER = '**/api/orders/create'
 
 const TELEPON = '081234567890' // 08xx, 12 digit — konvensi src/lib/phone.ts
+const EMAIL = 'edge.case@contoh.test' // WAJIB sejak email dikembalikan ke form (src/lib/email.ts)
 const NAMA = 'E2E Edge Case'
 const JALAN = 'Jl. Uji Kondisi Tepi No. 3'
 
@@ -161,6 +162,7 @@ test.describe('Checkout — kondisi tepi', () => {
     await bukaCheckout(page, baseURL!)
     await isiTeguh(page, 'Nama Lengkap Penerima', NAMA)
     await isiTeguh(page, 'Nomor Telepon Aktif', TELEPON)
+    await isiTeguh(page, 'Email Aktif', EMAIL)
     await pilihAlamat(page, 'jakarta pusat')
 
     // Sheet kurir dibuka SENGAJA.
@@ -245,6 +247,7 @@ test.describe('Checkout — kondisi tepi', () => {
     await bukaCheckout(page, baseURL!)
     await isiTeguh(page, 'Nama Lengkap Penerima', NAMA)
     await isiTeguh(page, 'Nomor Telepon Aktif', TELEPON)
+    await isiTeguh(page, 'Email Aktif', EMAIL)
     await pilihAlamat(page, 'jakarta pusat')
     await isiTeguh(page, 'Alamat Lengkap (Nama Jalan & Nomor Rumah)', JALAN)
 
@@ -315,6 +318,7 @@ test.describe('Checkout — kondisi tepi', () => {
 
     await isiTeguh(page, 'Nama Lengkap Penerima', NAMA)
     await isiTeguh(page, 'Nomor Telepon Aktif', TELEPON)
+    await isiTeguh(page, 'Email Aktif', EMAIL)
 
     // Denpasar — luar Jawa. Dipakai agar alamat yang tampil konsisten dengan skenarionya.
     await pilihAlamat(page, 'denpasar')
@@ -402,6 +406,7 @@ test.describe('Checkout — kondisi tepi', () => {
 
           await isiTeguh(page, 'Nama Lengkap Penerima', `${NAMA} ${sesi.label}`)
           await isiTeguh(page, 'Nomor Telepon Aktif', TELEPON)
+          await isiTeguh(page, 'Email Aktif', EMAIL)
           await pilihAlamat(page, sesi.keyword)
 
           const kota = await page.getByLabel('Kota/Kabupaten').inputValue()
@@ -488,6 +493,7 @@ test.describe('Checkout — kondisi tepi', () => {
     await bukaCheckout(page, baseURL!)
     await isiTeguh(page, 'Nama Lengkap Penerima', NAMA)
     await isiTeguh(page, 'Nomor Telepon Aktif', TELEPON)
+    await isiTeguh(page, 'Email Aktif', EMAIL)
     await pilihAlamat(page, 'jakarta pusat')
     await isiTeguh(page, 'Alamat Lengkap (Nama Jalan & Nomor Rumah)', JALAN)
 

@@ -20,6 +20,7 @@ const KEY_DRAF = 'checkout_draft'
 const ISIAN = {
   nama: 'Budi Draf Uji',
   telepon: '081234567890', // 08xx, 12 digit — konvensi src/lib/phone.ts
+  email: 'budi.draf@contoh.test', // WAJIB sejak email dikembalikan ke form (src/lib/email.ts)
   jalan: 'Jl. Draf Persist No. 7, Blok C',
   alamat: 'jakarta pusat', // WAJIB DKI Jakarta — sandbox Mengantar hanya Jakarta→Jakarta
 }
@@ -59,6 +60,7 @@ test.describe('Checkout — draf isian bertahan melewati refresh', () => {
     // Hanya nama & telepon. Alamat sengaja DIBIARKAN kosong.
     await isiTeguh(page, 'Nama Lengkap Penerima', ISIAN.nama)
     await isiTeguh(page, 'Nomor Telepon Aktif', ISIAN.telepon)
+    await isiTeguh(page, 'Email Aktif', ISIAN.email)
     await tungguDrafTersimpan(page)
 
     await page.reload()
@@ -103,6 +105,7 @@ test.describe('Checkout — draf isian bertahan melewati refresh', () => {
 
     await isiTeguh(page, 'Nama Lengkap Penerima', ISIAN.nama)
     await isiTeguh(page, 'Nomor Telepon Aktif', ISIAN.telepon)
+    await isiTeguh(page, 'Email Aktif', ISIAN.email)
     await fillAddressSearch(page, ISIAN.alamat)
 
     const opsi = page.getByRole('listbox').getByRole('option').first()
@@ -172,6 +175,7 @@ test.describe('Checkout — draf isian bertahan melewati refresh', () => {
 
     await isiTeguh(page, 'Nama Lengkap Penerima', ISIAN.nama)
     await isiTeguh(page, 'Nomor Telepon Aktif', ISIAN.telepon)
+    await isiTeguh(page, 'Email Aktif', ISIAN.email)
     await tungguDrafTersimpan(page)
 
     // Meniru langkah `clearCheckoutDraft()` yang dijalankan proceedPayment() tepat setelah pesanan
