@@ -197,17 +197,20 @@ export default function TrackOrderPage() {
               <div className="rounded-2xl border border-gray-100 bg-white px-4 py-8 text-center shadow-sm">
                 <p className="text-sm text-gray-400">Tidak ada pesanan untuk email ini.</p>
                 {/* Pesanan yang dibuat sebelum field email dikembalikan ke checkout ber-email
-                    NULL, jadi tak akan pernah muncul di sini. Arahkan ke jalur no. telepon yang
-                    masih ada alih-alih membiarkan pembeli mengira pesanannya hilang. */}
+                    NULL, jadi tak akan pernah muncul di sini. Arahkan ke /track (pencarian by
+                    NOMOR INVOICE) alih-alih membiarkan pembeli mengira pesanannya hilang.
+                    Sebelumnya tautan ini menawarkan "cari dengan nomor telepon" dan menunjuk ke
+                    /cancel-order — sejak halaman itu ikut pindah ke email, janjinya tak bisa
+                    ditepati. Nomor invoice satu-satunya jalan yang tersisa untuk pesanan lama. */}
                 <p className="mt-2 text-xs text-gray-400">
                   Pesanan lama mungkin dibuat tanpa email. Coba{' '}
                   <Link
-                    href="/cancel-order"
+                    href="/track"
                     className="font-semibold text-brand-primary underline transition hover:no-underline"
                   >
-                    cari dengan nomor telepon
+                    cari dengan nomor pesanan
                   </Link>
-                  .
+                  {' '}yang ada di bukti checkout.
                 </p>
               </div>
             ) : (

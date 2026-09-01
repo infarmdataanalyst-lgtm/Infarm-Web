@@ -1,17 +1,36 @@
 'use client'
 
 // src/app/cancel-order/page.tsx
-// Batalkan Pesanan by NO. TELEPON — 2 LANGKAH.
-//   LANGKAH 1: cari pesanan by no_telepon (auto-recognize cookie), tampil RINGKAS → pilih satu.
-//   LANGKAH 2: KETIK ULANG no_telepon (konfirmasi kepemilikan, TIDAK di-prefill) → verifikasi ke DB
-//              (server query ulang) → bila cocok & masih boleh dibatalkan → tombol "Ya, Batalkan Pesanan".
-// Honeypot mencegah bot. (Rate-limit menyusul — lihat catatan di API.)
+// Batalkan Pesanan — 2 LANGKAH, DUA IDENTITAS BERBEDA.
+//   LANGKAH 1: cari pesanan by EMAIL (auto-recognize cookie), tampil RINGKAS → pilih satu.
+//   LANGKAH 2: KETIK no_telepon pesanan itu (konfirmasi kepemilikan, TIDAK di-prefill) → verifikasi
+//              ke DB (server query ulang) → bila cocok & masih boleh dibatalkan → tombol
+//              "Ya, Batalkan Pesanan".
+// Honeypot mencegah bot; rate limit ada di tiap endpoint (lihat @/lib/rate-limit).
+//
+// ── Kenapa langkah 1 pindah dari no_telepon ke email ──
+// Menyamakan mekanisme pencarian dengan /track-order supaya pembeli tak perlu mengingat identitas
+// mana yang dipakai halaman mana. Pola pencariannya disalin persis dari halaman itu, termasuk
+// endpoint yang dipakai: /api/orders/track-by-email.
+//
+// ── Kenapa langkah 2 TETAP no_telepon, bukan ikut jadi email ──
+// Justru karena langkah 1 sudah email. Kalau keduanya email, konfirmasi kedua tak menambah apa pun
+// — orang yang lolos langkah 1 otomatis lolos langkah 2. Dengan telepon, pembatalan menuntut DUA
+// data berbeda dari pesanan yang sama, dan itulah yang membuat langkah ini berarti untuk aksi yang
+// tak bisa dibatalkan. Pencocokannya dilakukan SERVER (query ulang ke DB), dua kali dan saling
+// bebas: sekali di /api/orders/verify-cancel, sekali lagi di /api/orders/cancel-by-phone yang
+// tidak mempercayai hasil verifikasi sebelumnya.
+//
+// ── Pesanan tanpa email tak akan muncul ──
+// orders.email baru terisi sejak field email kembali ke checkout. Pesanan lama ber-email NULL
+// tidak bisa ditemukan dari sini sama sekali, dan itu memang disengaja.
 
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { Search, Ban, CheckCircle2, AlertTriangle } from 'lucide-react'
-import { getGuestPhone } from '@/lib/guest-phone'
+import { getGuestEmail } from '@/lib/guest-email'
+import { isValidEmail, normalizeEmail } from '@/lib/email'
 import { isValidPhone } from '@/lib/phone'
 
 type PublicTrackOrder = {
@@ -31,17 +50,17 @@ export default function CancelOrderPage() {
   const [step, setStep] = useState<Step>('search')
 
   // Langkah 1
-  const [phone, setPhone] = useState('')
+  const [email, setEmail] = useState('')
   const [honeypot, setHoneypot] = useState('')
   const [orders, setOrders] = useState<PublicTrackOrder[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  // true = nomor dikenali dari cookie → sembunyikan form & nomor di langkah 1, langsung tampilkan hasil.
+  // true = email dikenali dari cookie → sembunyikan form & email di langkah 1, langsung tampilkan hasil.
   const [recognized, setRecognized] = useState(false)
 
   // Langkah 2
   const [selected, setSelected] = useState<PublicTrackOrder | null>(null)
-  const [confirmPhone, setConfirmPhone] = useState('') // WAJIB diketik ulang (tak di-prefill)
+  const [confirmPhone, setConfirmPhone] = useState('') // identitas kedua, TIDAK pernah di-prefill
   const [confirmHoneypot, setConfirmHoneypot] = useState('')
   const [verifying, setVerifying] = useState(false)
   const [verifyError, setVerifyError] = useState('')
@@ -49,14 +68,14 @@ export default function CancelOrderPage() {
   const [cancelling, setCancelling] = useState(false)
 
   // === LANGKAH 1: cari pesanan ===
-  const runSearch = useCallback(async (searchPhone: string, hp: string) => {
+  const runSearch = useCallback(async (searchEmail: string, hp: string) => {
     setLoading(true)
     setError('')
     try {
-      const res = await fetch('/api/orders/track-by-phone', {
+      const res = await fetch('/api/orders/track-by-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: searchPhone, website: hp }),
+        body: JSON.stringify({ email: searchEmail, website: hp }),
       })
       const data = await res.json()
       if (!res.ok) {
@@ -73,36 +92,39 @@ export default function CancelOrderPage() {
     }
   }, [])
 
-  // Auto-recognize: cookie ada & valid → isi + auto-cari (langkah 1 saja)
+  // Auto-recognize: cookie `infarm_email` ada & sah → isi + auto-cari (langkah 1 saja).
+  // Cookie ini TIDAK berlaku untuk langkah 2 — konfirmasi telepon harus selalu diketik manual.
   useEffect(() => {
-    const saved = getGuestPhone()
-    if (saved && isValidPhone(saved)) {
-      setPhone(saved)
-      setRecognized(true) // sembunyikan nomor & form langkah 1 — langsung tampilkan hasil
-      runSearch(saved, '')
+    const saved = getGuestEmail()
+    if (saved && isValidEmail(saved)) {
+      setEmail(saved)
+      setRecognized(true) // sembunyikan email & form langkah 1 — langsung tampilkan hasil
+      runSearch(normalizeEmail(saved), '')
     }
   }, [runSearch])
 
-  // Klik "Cari nomor lain": tampilkan kembali form kosong (nomor cookie TIDAK ditampilkan/di-prefill)
-  function handleUseOtherNumber() {
+  // Klik "Cari email lain": tampilkan kembali form kosong (email cookie TIDAK ditampilkan/di-prefill)
+  function handleUseOtherEmail() {
     setRecognized(false)
-    setPhone('')
+    setEmail('')
     setOrders(null)
     setError('')
   }
 
-  function handlePhoneChange(e: React.ChangeEvent<HTMLInputElement>) {
-    setPhone(e.target.value.replace(/\D/g, '').slice(0, 12))
+  function handleEmailChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setEmail(e.target.value)
     setError('')
   }
 
   function handleSearch(e: React.FormEvent) {
     e.preventDefault()
-    if (!isValidPhone(phone)) {
-      setError('Nomor telepon tidak valid. Gunakan format 08xxxxxxxxxx.')
+    if (!isValidEmail(email)) {
+      setError('Email tidak valid. Contoh: nama@gmail.com')
       return
     }
-    runSearch(phone, honeypot)
+    // Dinormalisasi sebelum dikirim supaya cocok dengan bentuk yang tersimpan di orders.email.
+    // Server menormalkannya lagi — sengaja, agar pemanggil lain pun tak bisa lolos tanpa itu.
+    runSearch(normalizeEmail(email), honeypot)
   }
 
   // Pilih satu pesanan → ke langkah 2 (reset state konfirmasi)
@@ -193,17 +215,17 @@ export default function CancelOrderPage() {
         {/* === LANGKAH 1: cari === */}
         {step === 'search' && (
           <>
-            {/* === Nomor dikenali dari cookie: sembunyikan form & nomor, langsung tampilkan hasil === */}
+            {/* === Email dikenali dari cookie: sembunyikan form & email, langsung tampilkan hasil === */}
             {recognized ? (
               <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
                 <p className="text-sm text-gray-600">
-                  Menampilkan pesanan untuk nomor Anda ·{' '}
+                  Menampilkan pesanan untuk email Anda ·{' '}
                   <button
                     type="button"
-                    onClick={handleUseOtherNumber}
+                    onClick={handleUseOtherEmail}
                     className="font-semibold text-brand-primary underline transition hover:no-underline"
                   >
-                    Cari nomor lain
+                    Cari email lain
                   </button>
                 </p>
               </div>
@@ -211,19 +233,21 @@ export default function CancelOrderPage() {
               <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
                 <h1 className="text-xl font-bold text-gray-900">Cari Pesanan</h1>
                 <p className="mt-2 text-sm text-gray-500">
-                  Masukkan nomor telepon yang Anda gunakan saat checkout untuk menemukan pesanan yang ingin dibatalkan.
+                  Masukkan email yang Anda gunakan saat checkout untuk menemukan pesanan yang ingin dibatalkan.
                 </p>
                 <form onSubmit={handleSearch} className="mt-5 space-y-3">
                   <Honeypot value={honeypot} onChange={setHoneypot} />
                   <div>
-                    <label htmlFor="phone" className="mb-1 block text-sm font-medium text-gray-700">Nomor Telepon</label>
+                    <label htmlFor="email" className="mb-1 block text-sm font-medium text-gray-700">Email</label>
                     <input
-                      id="phone"
-                      type="tel"
-                      inputMode="numeric"
-                      placeholder="08xxxxxxxxxx"
-                      value={phone}
-                      onChange={handlePhoneChange}
+                      id="email"
+                      type="email"
+                      inputMode="email"
+                      autoComplete="email"
+                      spellCheck={false}
+                      placeholder="nama@gmail.com"
+                      value={email}
+                      onChange={handleEmailChange}
                       className="w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm text-gray-900 focus:border-brand-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
                     />
                     {error && <p className="mt-1.5 text-sm text-rose-600">{error}</p>}
@@ -243,9 +267,16 @@ export default function CancelOrderPage() {
             {orders !== null && (
               <div className="mt-5 space-y-3">
                 {orders.length === 0 ? (
-                  <p className="rounded-2xl border border-gray-100 bg-white px-4 py-8 text-center text-sm text-gray-400 shadow-sm">
-                    Tidak ada pesanan untuk nomor ini.
-                  </p>
+                  <div className="rounded-2xl border border-gray-100 bg-white px-4 py-8 text-center shadow-sm">
+                    <p className="text-sm text-gray-400">Tidak ada pesanan untuk email ini.</p>
+                    {/* Pesanan sebelum field email kembali ke checkout ber-email NULL dan tak akan
+                        pernah muncul di sini. Untuk pesanan itu satu-satunya jalur pembatalan
+                        mandiri adalah tautan bertoken yang dikirim saat checkout. */}
+                    <p className="mt-2 text-xs text-gray-400">
+                      Pesanan lama mungkin dibuat tanpa email. Pakai tautan pembatalan pada bukti
+                      pesanan Anda, atau hubungi kami lewat WhatsApp.
+                    </p>
+                  </div>
                 ) : (
                   <>
                     <p className="px-1 text-sm text-gray-500">Pilih pesanan yang ingin dibatalkan:</p>
@@ -293,18 +324,25 @@ export default function CancelOrderPage() {
               )}
             </div>
 
-            {/* Konfirmasi ketik ulang nomor */}
+            {/* Konfirmasi kepemilikan lewat no_telepon — identitas KEDUA, bukan pengulangan
+                langkah 1 yang memakai email. Lihat catatan di kepala berkas. */}
             <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
               <h2 className="text-base font-bold text-gray-900">Konfirmasi Kepemilikan</h2>
               <p className="mt-1 text-sm text-gray-500">
-                Ketik ulang nomor telepon Anda untuk memastikan pesanan ini milik Anda.
+                Masukkan nomor telepon yang Anda pakai pada pesanan ini. Pembatalan tidak bisa
+                dibatalkan kembali, jadi kami memastikannya lewat satu data lagi selain email.
               </p>
               <form onSubmit={handleVerify} className="mt-4 space-y-3">
                 <Honeypot value={confirmHoneypot} onChange={setConfirmHoneypot} />
+                <label htmlFor="confirmPhone" className="mb-1 block text-sm font-medium text-gray-700">
+                  Nomor Telepon
+                </label>
                 <input
+                  id="confirmPhone"
                   type="tel"
                   inputMode="numeric"
-                  placeholder="Ketik ulang 08xxxxxxxxxx"
+                  autoComplete="off"
+                  placeholder="08xxxxxxxxxx"
                   value={confirmPhone}
                   onChange={(e) => {
                     setConfirmPhone(e.target.value.replace(/\D/g, '').slice(0, 12))

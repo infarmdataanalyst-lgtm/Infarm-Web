@@ -42,6 +42,16 @@ export const RATE_LIMITS = {
   PHONE_WRITE_IP: { max: 8, windowMs: 15 * MINUTE },
   PHONE_WRITE_PHONE: { max: 5, windowMs: 60 * MINUTE },
 
+  // Endpoint TULIS by email (reviews/create-by-email). Angkanya sama dengan PHONE_WRITE_PHONE
+  // karena ancamannya sebangun, tapi dibuat konstanta sendiri dengan alasan yang sama seperti
+  // EMAIL_LOOKUP_*: email lebih mudah ditebak daripada nomor telepon, jadi bila suatu saat perlu
+  // diperketat, yang diturunkan cukup angka di sini tanpa ikut mengetatkan jalur telepon.
+  //
+  // Tak ada pasangan EMAIL_WRITE_IP: lapis per-IP untuk submit ulasan sudah dipegang
+  // REVIEW_CREATE_IP, yang sengaja dipakai bersama oleh KETIGA endpoint submit ulasan supaya bot
+  // tak bisa memecah spamnya ke beberapa endpoint untuk mendapat jatah berkali lipat.
+  EMAIL_WRITE_EMAIL: { max: 5, windowMs: 60 * MINUTE },
+
   // Proxy Mengantar (search alamat & cek ongkir) — cegah dipakai bot sebagai relay gratis.
   //
   // Dinaikkan 20 → 40 (2026-08-24) setelah pengukuran langsung ke app.mengantar.com:

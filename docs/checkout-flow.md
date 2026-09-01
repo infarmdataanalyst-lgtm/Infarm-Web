@@ -3,7 +3,7 @@
 > Dipecah dari `CLAUDE.md` (2026-08-14). Isi dipindahkan APA ADANYA, tanpa pemangkasan.
 > Kembali ke ringkasan: [CLAUDE.md](../CLAUDE.md)
 >
-> Empat section pertama (Pembatalan Pesanan Guest, Layanan Pesanan Guest by No. Telepon,
+> Empat section pertama (Pembatalan Pesanan Guest, Layanan Pesanan Guest,
 > Mengantar, Validasi Form Checkout) tidak disebut eksplisit dalam rencana pemecahan;
 > ditaruh di sini karena semuanya bagian dari alur pesanan pasca-checkout.
 
@@ -24,27 +24,38 @@
 Keluarga fitur guest yang menemukan pesanan **tanpa login**. Entry lewat **hub `/pesanan-saya`**
 (ikon profil header → hub; badge dot merah bila cookie `infarm_phone` ada).
 
-> ⚠️ **Kuncinya TIDAK seragam sejak 2026-08-31.** Baca tabel ini sebelum menyentuh salah satunya —
-> mengubah satu jalur ke identitas yang lain akan mematikan jalur lainnya.
+> **PENCARIAN kini seragam: email** (sejak 2026-09-01). Yang TIDAK seragam adalah verifikasi —
+> baca tabel ini sebelum menyentuh salah satunya.
 
-| Layanan | Halaman | Kunci | Endpoint | Query | Cookie |
+| Layanan | Halaman | Kunci PENCARIAN | Endpoint | Query | Cookie |
 |---|---|---|---|---|---|
 | **Lacak** | `/track-order` | **email** | `track-by-email` | `getOrdersByEmail` → `.eq('email')` | `infarm_email` |
-| **Batalkan** | `/cancel-order` | no_telepon | `track-by-phone` → `verify-cancel` → `cancel-by-phone` | `getOrdersByPhone` → `.eq('no_telepon')` | `infarm_phone` |
-| **Review** | `/review` | no_telepon | `reviewable-by-phone` → `create-by-phone` | idem | `infarm_phone` |
-| **Badge pesanan aktif** | header | no_telepon | `track-by-phone` | idem | `infarm_phone` |
+| **Batalkan** | `/cancel-order` | **email**, lalu **no_telepon** sebagai konfirmasi | `track-by-email` → `verify-cancel` → `cancel-by-phone` | `getOrdersByEmail`, lalu cocokkan `no_telepon` pesanan | `infarm_email` |
+| **Review** | `/review` | **email** | `reviewable-by-email` → `create-by-email` | `getOrdersByEmail` → `.eq('email')` | `infarm_email` |
+| **Badge pesanan aktif** | header | no_telepon | `track-by-phone` | `getOrdersByPhone` → `.eq('no_telepon')` | `infarm_phone` |
 
-**Kenapa hanya Lacak yang pindah ke email**: Lacak murni membaca, jadi memindahkannya tak menyentuh
-alur verifikasi mana pun. Batalkan & Review **menulis/mengubah** data dan verifikasinya sudah
-dibangun di atas nomor telepon — memindahkannya butuh pekerjaan tersendiri, bukan sekadar mengganti
-kolom. Karena itu `track-by-phone` **tetap hidup** (dipakai `/cancel-order` dan badge); jangan
-di-rename atau dihapus.
+**Kenapa Batalkan memakai DUA identitas**: pencariannya email seperti yang lain, tapi pembatalan
+baru dieksekusi setelah pembeli memasukkan **no_telepon** pesanan itu. Kalau langkah konfirmasi
+ikut memakai email, ia tak menambah apa pun — yang lolos pencarian otomatis lolos konfirmasi.
+Dengan telepon, aksi yang tak bisa ditarik kembali menuntut DUA data berbeda dari pesanan yang
+sama. Pencocokannya SERVER, dua kali dan saling bebas: `verify-cancel` lalu `cancel-by-phone`
+yang sengaja tidak mempercayai hasil verifikasi sebelumnya. **Review tidak punya langkah ini** —
+memberi ulasan tak merusak apa pun, jadi biayanya tak sepadan.
+
+**Jalur `*-by-phone` tetap hidup, jangan di-rename atau dihapus**: `track-by-phone` masih dipakai
+badge pesanan aktif, dan `cancel-by-phone` justru jadi langkah konfirmasi Batalkan.
+`reviewable-by-phone`/`create-by-phone` tak lagi punya pemanggil di UI tapi dibiarkan utuh.
+
+⚠️ **Pesanan ber-`email` NULL tak bisa ditemukan di ketiga halaman itu.** Kolom `orders.email`
+baru terisi sejak field email kembali ke checkout (2026-08-31); pesanan sebelum itu tak punya
+pemilik yang bisa dibuktikan lewat jalur email. Per 2026-09-01: 46 dari 69 pesanan.
 
 Semua berbagi pola yang sama: input identitas → query → output NON-SENSITIF; **honeypot** field
-`website`; **auto-recognize** cookie (Opsi A: auto-cari tanpa ketik). **Rate-limit sudah terpasang**
-— jalur telepon memakai `PHONE_LOOKUP_*`, jalur email memakai `EMAIL_LOOKUP_*` (ambang sama,
-konstanta terpisah). Lihat "Rate Limiting" di [CLAUDE.md](../CLAUDE.md) (section itu tetap di root,
-tidak ikut dipecah ke sini).
+`website`; **auto-recognize** cookie (Opsi A: auto-cari tanpa ketik) — kecuali langkah konfirmasi
+Batalkan, yang **tak pernah di-prefill** dari cookie mana pun. **Rate-limit sudah terpasang** —
+jalur telepon memakai `PHONE_LOOKUP_*`, jalur email memakai `EMAIL_LOOKUP_*`/`EMAIL_WRITE_*`
+(ambang sama, konstanta terpisah). Lihat "Rate Limiting" di [CLAUDE.md](../CLAUDE.md) (section itu
+tetap di root, tidak ikut dipecah ke sini).
 
 ### Lacak — `/track-order` (berdampingan dengan `/track` by invoice)
 - **Kunci = email**, bukan no_telepon. `POST /api/orders/track-by-email`: kembalikan info
@@ -53,7 +64,9 @@ tidak ikut dipecah ke sini).
 - Email dinormalisasi (`normalizeEmail`) di client **dan** di server — pencocokan `.eq('email')`
   peka huruf besar/kecil, jadi bentuk yang disimpan dan yang dicari harus melewati helper yang sama.
 - **Pesanan lama ber-email NULL tak akan muncul di sini.** Saat hasilnya kosong, halaman menampilkan
-  arahan ke pencarian by no. telepon agar pembeli tak mengira pesanannya hilang.
+  arahan ke pencarian by NOMOR INVOICE (/track) agar pembeli tak mengira pesanannya hilang.
+  Dulu arahannya ke pencarian by no. telepon di /cancel-order; sejak halaman itu ikut pindah ke
+  email, janji itu tak bisa ditepati lagi.
 
 #### `/track?order=INV-…` — tata letak & kartu produk
 - **Tak ada verifikasi kepemilikan**: nomor invoice adalah satu-satunya kunci. Karena itu nama,
@@ -72,20 +85,29 @@ tidak ikut dipecah ke sini).
   produk, kanan stepper/timeline/kurir/alamat. Urutan mobile mengikuti urutan DOM kolom kiri lalu
   kanan. `<header>` ikut `lg:max-w-5xl` agar logo sejajar tepi kartu.
 
-### Batalkan — `/cancel-order` (2 LANGKAH)
-- LANGKAH 1: cari by phone (reuse `track-by-phone`) → daftar ringkas → pilih satu.
-- LANGKAH 2: **ketik ULANG no_telepon** (tak di-prefill) → `POST /api/orders/verify-cancel` (query ulang
-  DB: cocokkan phone↔order + cek status cancellable) → cocok & boleh → tombol "Ya, Batalkan Pesanan".
+### Batalkan — `/cancel-order` (2 LANGKAH, DUA IDENTITAS)
+- LANGKAH 1: cari **by email** (reuse `track-by-email`) → daftar ringkas → pilih satu.
+- LANGKAH 2: **ketik no_telepon pesanan itu** (tak pernah di-prefill dari cookie mana pun) →
+  `POST /api/orders/verify-cancel` (query ulang DB: cocokkan phone↔order + cek status cancellable)
+  → cocok & boleh → tombol "Ya, Batalkan Pesanan".
 - Eksekusi: `POST /api/orders/cancel-by-phone` — **RE-verifikasi phone↔order ke DB** (tak percaya client),
   status boleh cancel (`Menunggu Pembayaran`/`Diproses`; tolak `Dikirim`/`Selesai`/`Dibatalkan`),
   `updateOrderStatus('Dibatalkan')` + `restoreStock` + revalidate/tag. (Alur token `/order-cancellation` tetap ada.)
+- Langkah 2 sengaja memakai identitas BERBEDA dari langkah 1 — alasannya di atas tabel.
 
 ### Review terverifikasi — `/review` (GANTI flow invoice lama)
-- `/review` kini **by no_telepon** (pembeli terverifikasi lewat riwayat beli). `POST /api/reviews/reviewable-by-phone`:
-  kumpulkan produk BELUM diulas dari semua pesanan phone (exclude `Dibatalkan` & yang sudah diulas via
-  `getReviewedProductIds` per invoice). Pilih produk → form rating/komentar/nama (auto-fill, editable).
-- `POST /api/reviews/create-by-phone`: **verifikasi server phone↔order (query ulang DB)** + produk∈order +
+- `/review` kini **by email** (pembeli terverifikasi lewat riwayat beli). `POST /api/reviews/reviewable-by-email`:
+  kumpulkan produk BELUM diulas dari semua pesanan email itu (exclude `Dibatalkan` & yang sudah diulas via
+  `getReviewedProductIds` per invoice). Pilih produk → form rating + komentar. **Tanpa faktor kedua** —
+  memberi ulasan tak merusak apa pun.
+- `POST /api/reviews/create-by-email`: **verifikasi server email↔order (query ulang DB)** + produk∈order +
   not cancelled + dedup (`order_invoice`+product, unique index). Submit lama `create` (invoice) masih ada.
+- **Nama penulis diisi SERVER dari pesanan, tak ada input "Nama Tampilan"**, dan
+  `reviewable-by-email` **tidak** mengembalikan nama pelanggan sama sekali. Dua-duanya aturan yang
+  sama dengan yang menutup SEC-007: endpoint publik jangan jadi alat menukar "email seseorang"
+  menjadi "nama lengkapnya", dan nama penulis yang bisa diketik bebas berarti ulasan bisa dikirim
+  atas nama orang lain. Jalur `reviewable-by-phone`/`create-by-phone` masih memakai pola lama
+  (mengembalikan `customerName`, menerima `authorName` dari client) tapi sudah tak punya pemanggil.
 - **Badge "Pembeli Terverifikasi"**: `ProductReview.verified = Boolean(order_invoice)` (`getReviewsByProduct`),
   dirender di `ProductReviews.tsx` (`BadgeCheck`). Ulasan lama `order_invoice` NULL → tanpa badge.
 - **Schema**: TANPA kolom baru — reuse `order_invoice` (TEXT) + unique index yang sudah ada (bukan `order_id` UUID).
@@ -459,7 +481,8 @@ Section Alamat Pengiriman divalidasi di client sebelum request order dikirim. Lo
 > **Update 2026-08-31**: form checkout **mengumpulkan email lagi** dan field itu WAJIB. Order baru
 > mengirim `customerEmail` berisi nilai asli ke `/api/orders/create` → tersimpan di kolom
 > `orders.email`. Fitur kirim email otomatis di bawah ini **masih roadmap**, tapi kini sudah punya
-> alamat tujuan. Email juga menjadi kunci Lacak Pesanan — lihat "Layanan Pesanan Guest".
+> alamat tujuan. Email juga menjadi kunci pencarian SELURUH layanan pesanan guest (lacak, batalkan, review)
+> — lihat "Layanan Pesanan Guest".
 >
 > ⚠️ **Nama kolomnya `email`, BUKAN `customer_email`.** Migration
 > `20260624120000_add_orders_customer_email.sql` menyebut `customer_email`, tapi kolom itu **tak
@@ -468,7 +491,8 @@ Section Alamat Pengiriman divalidasi di client sebelum request order dikirim. Lo
 > migration itu mendeskripsikan kolom yang tak pernah dibuat — jangan dijadikan acuan.
 >
 > **Pesanan lama ber-email NULL** (dibuat selama field email absen) tidak bisa dilacak lewat
-> `/track-order`; halaman itu mengarahkan pembelinya ke pencarian by no. telepon.
+> `/track-order`, `/cancel-order`, maupun `/review`; ketiganya mengarahkan pembelinya ke jalur
+> yang masih berbasis nomor invoice (pencarian /track, atau tautan bertoken pada bukti pesanan).
 
 - Template HTML: **`src/emails/order-confirmation.html`** — table-based + inline CSS (kompatibel
   Gmail/Outlook/Mail iOS), fluid `max-width:600px; margin:0 auto`, palet brand (`#46b33c`).

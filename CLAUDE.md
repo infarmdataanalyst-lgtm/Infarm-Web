@@ -78,14 +78,30 @@ Dokumen pendukung lain yang sudah ada: `docs/security/`, `docs/design/`, `docs/t
 
 **Identitas guest TERBELAH menjadi dua — disengaja, jangan disatukan tanpa memindahkan semuanya:**
 
-| Layanan | Kunci | Cookie auto-recognize |
+| Layanan | Kunci PENCARIAN | Cookie auto-recognize |
 |---|---|---|
 | Lacak pesanan (`/track-order`) | **email** | `infarm_email` |
-| Batalkan (`/cancel-order`), Review (`/review`), badge pesanan aktif | **no_telepon** | `infarm_phone` |
+| Batalkan (`/cancel-order`) | **email** (+ no_telepon sebagai konfirmasi kedua) | `infarm_email` |
+| Review (`/review`) | **email** | `infarm_email` |
+| Badge pesanan aktif (`ActiveOrdersSummary`) | **no_telepon** | `infarm_phone` |
 
-`/cancel-order` dan `/review` menulis/mengubah data dan verifikasinya dibangun di atas nomor
-telepon; memindahkannya ke email adalah pekerjaan tersendiri, bukan sekadar mengganti kolom.
+Ketiga halaman layanan pesanan kini **mencari dengan email**, memakai pola yang sama persis:
+validasi + normalisasi di klien untuk UX, lalu DIULANG di server sebagai yang otoritatif.
+
+**`/cancel-order` memakai DUA identitas, dan itu disengaja.** Pencariannya email (langkah 1),
+tapi pembatalannya baru jalan setelah pembeli memasukkan **no_telepon** pesanan itu (langkah 2).
+Kalau keduanya email, konfirmasi kedua tak menambah apa pun — yang lolos langkah 1 otomatis lolos
+langkah 2. Dengan telepon, aksi yang tak bisa ditarik kembali itu menuntut dua data berbeda dari
+pesanan yang sama. `/review` **tidak** punya langkah ini: memberi ulasan tak merusak apa pun.
+
+Badge pesanan aktif sengaja ditinggal di `infarm_phone`: ia cuma menghitung angka di ikon profil,
+dan memindahkannya berarti pengguna lama yang hanya punya cookie telepon kehilangan badgenya.
+
 Detail lengkap: [docs/checkout-flow.md](docs/checkout-flow.md) → "Layanan Pesanan Guest".
+
+⚠️ **Pesanan ber-`email` NULL tak bisa ditemukan di ketiga halaman itu.** Kolom `orders.email`
+baru terisi sejak field email kembali ke checkout; pesanan yang dibuat saat field itu absen tak
+punya pemilik yang bisa dibuktikan lewat jalur email, jadi tak akan pernah muncul.
 
 **Implementasi cookie keranjang (kondisi sekarang):**
 - Operasi keranjang dijalankan **sisi-klien** lewat `src/lib/cart-client.ts`
@@ -106,8 +122,8 @@ Detail lengkap: [docs/checkout-flow.md](docs/checkout-flow.md) → "Layanan Pesa
 
 | Cookie | Ditulis oleh | Dibaca di |
 |---|---|---|
-| `infarm_phone` | `setGuestPhone` (`src/lib/guest-phone.ts`) | `/cancel-order`, `/review`, badge `ActiveOrdersSummary` |
-| `infarm_email` | `setGuestEmail` (`src/lib/guest-email.ts`) | `/track-order` |
+| `infarm_phone` | `setGuestPhone` (`src/lib/guest-phone.ts`) | badge `ActiveOrdersSummary` |
+| `infarm_email` | `setGuestEmail` (`src/lib/guest-email.ts`) | `/track-order`, `/cancel-order`, `/review` |
 
 - Keduanya ditulis setelah checkout sukses, 30 hari, plain cookie (bukan base64). Bukan data
   sensitif kritis — no. HP & email milik user sendiri di device-nya; TIDAK menyimpan
@@ -116,10 +132,12 @@ Detail lengkap: [docs/checkout-flow.md](docs/checkout-flow.md) → "Layanan Pesa
   tanpa ketik; kedaluwarsa/tak ada → input manual.
 - **Cookie = sumber IDENTITAS saja; status pesanan SELALU di-fetch fresh dari server.** Jangan
   pernah menjadikannya dasar otorisasi.
-- **Kenapa dua, bukan satu**: `/track-order` berpindah ke email sementara `/cancel-order`,
-  `/review`, dan badge tetap no_telepon. Satu cookie yang dipakai bergantian akan membuat salah
-  satu kelompok kehilangan auto-fill-nya, dan pengguna lama yang sudah punya `infarm_phone` tak
-  boleh kehilangan apa pun.
+- **Kenapa masih dua, bukan satu**: ketiga halaman layanan pesanan sudah pindah ke `infarm_email`,
+  tapi badge pesanan aktif masih membaca `infarm_phone`. Menghapus cookie telepon berarti pengguna
+  lama yang belum checkout lagi kehilangan badgenya tanpa alasan yang sepadan.
+- **Cookie TIDAK berlaku untuk langkah konfirmasi.** Di `/cancel-order`, no_telepon langkah 2
+  selalu diketik manual dan tak pernah di-prefill dari mana pun — kalau di-prefill, konfirmasinya
+  berhenti mengonfirmasi apa pun.
 
 **Catatan sinkronisasi "Beli Langsung" vs "Checkout":**
 - Halaman `/checkout` membaca cookie **`infarm_checkout`** (bukan `infarm_cart`).
@@ -209,11 +227,11 @@ src/
 │   │   ├── page.tsx              # Guest checkout
 │   │   └── success/page.tsx      # Pesanan Berhasil (2 kolom di lg+, + tombol batalkan pesanan)
 │   ├── order-cancellation/page.tsx  # Pembatalan pesanan Guest (token-protected, dari link email/sukses)
-│   ├── review/page.tsx           # Beri Review by NO. TELEPON (pembeli terverifikasi; ganti flow invoice lama)
+│   ├── review/page.tsx           # Beri Review by EMAIL (pembeli terverifikasi; nama penulis diisi server)
 │   │                             #   (ReviewForm.tsx/ReviewProductCard.tsx = flow invoice lama, kini dead code)
 │   ├── track/page.tsx            # Lacak pesanan by NOMOR INVOICE (dipakai untuk detail timeline ?order=)
-│   ├── track-order/page.tsx      # Lacak pesanan by NO. TELEPON (entry utama; honeypot + auto-recognize cookie)
-│   ├── cancel-order/page.tsx     # Batalkan pesanan by NO. TELEPON — 2 langkah (verifikasi ulang phone ke DB)
+│   ├── track-order/page.tsx      # Lacak pesanan by EMAIL (entry utama; honeypot + auto-recognize cookie)
+│   ├── cancel-order/page.tsx     # Batalkan pesanan: cari by EMAIL, lalu konfirmasi NO. TELEPON ke DB (2 langkah)
 │   ├── pesanan-saya/page.tsx     # Hub "Pesanan Saya": kartu lacak / batalkan / review (ikon profil header → sini)
 │   ├── privacy-policy/page.tsx   # Kebijakan Privasi (statis, LegalPageShell) — NONAKTIF (404),
 │   │                             #   kode utuh; tuas LEGAL_PAGES_ENABLED di lib/data/legal.ts
@@ -233,7 +251,8 @@ src/
 │   │   │                         #   sort + opsi dropdown; sumber tabel & CSV OMS) | get | cancel (GET+PATCH token) |
 │   │   │                         #   track-by-phone | track-by-email (lacak by email) | verify-cancel | cancel-by-phone (batalkan by no_telepon)
 │   │   ├── reviews/              # create (invoice) | list | reply | visibility | reviewed |
-│   │   │                         #   reviewable-by-phone | create-by-phone (review terverifikasi via no_telepon)
+│   │   │                         #   reviewable-by-email | create-by-email (review terverifikasi via EMAIL; nama penulis diisi server)
+│   │   │                         #   reviewable-by-phone | create-by-phone (jalur no_telepon lama, masih hidup)
 │   │   ├── combos/              # create | update | delete | toggle | list | active (storefront)
 │   │   ├── promotions/          # create | update | delete | toggle | list | active (storefront)
 │   │   ├── warehouses/         # list | create | update | set-default | toggle | delete | stock |
@@ -279,8 +298,8 @@ src/
 │                                 #   (search persisten: inline desktop, overlay mobile), FloatingWhatsApp
 ├── lib/
 │   ├── cart-client.ts            # Helper keranjang sisi-klien (cookie base64) + addComboToCart + removeComboFromCart + snapshot promo + clearCart
-│   ├── guest-phone.ts            # Cookie client no_telepon (infarm_phone) — batalkan/review/badge
-│   ├── guest-email.ts            # Cookie client email (infarm_email) — auto-recognize /track-order
+│   ├── guest-phone.ts            # Cookie client no_telepon (infarm_phone) — badge pesanan aktif saja
+│   ├── guest-email.ts            # Cookie client email (infarm_email) — auto-recognize track/cancel/review
 │   ├── recently-viewed.ts        # Riwayat "pernah dilihat" (guest, localStorage, maks 10)
 │   ├── promo-cart.ts             # Helper murni: progres/hadiah promo + relevansi & alokasi harga combo (keranjang)
 │   ├── product-validation.ts     # Validasi form produk (SKU, nama, kategori, harga jual/asli, stok, berat, deskripsi, foto)
@@ -543,16 +562,17 @@ header `Retry-After`. Map disapu berkala tiap 500 penulisan agar tak bocor memor
 | `PHONE_LOOKUP_IP` | 20 / 15 mnt / IP | `track-by-phone`, `verify-cancel`, `reviewable-by-phone` |
 | `PHONE_LOOKUP_PHONE` | 15 / jam / nomor | idem (cegah serangan 1 nomor dari banyak IP) |
 | `PHONE_LOOKUP_IP_PHONE_MISS` | 5 / 15 mnt / (IP+nomor) | idem — **hanya percobaan GAGAL** yang dihitung |
-| `EMAIL_LOOKUP_IP` | 20 / 15 mnt / IP | `track-by-email` |
+| `EMAIL_LOOKUP_IP` | 20 / 15 mnt / IP | `track-by-email`, `reviewable-by-email` |
 | `EMAIL_LOOKUP_EMAIL` | 15 / jam / email | idem (cegah serangan 1 email dari banyak IP) |
 | `EMAIL_LOOKUP_IP_EMAIL_MISS` | 5 / 15 mnt / (IP+email) | idem — **hanya percobaan GAGAL** yang dihitung |
 | `PHONE_WRITE_IP` | 8 / 15 mnt / IP | `cancel-by-phone` |
 | `PHONE_WRITE_PHONE` | 5 / jam / nomor | `cancel-by-phone`, `create-by-phone` |
+| `EMAIL_WRITE_EMAIL` | 5 / jam / email | `reviews/create-by-email` |
 | `MENGANTAR_IP` | 40 / menit / IP | proxy search alamat & cek ongkir |
 | `ORDER_CREATE_IP` | 3 / menit / IP | `POST /api/orders/create` |
 | `ORDER_GET_IP` | 30 / 15 mnt / IP | `GET /api/orders/get` |
 | `ORDER_GET_IP_MISS` | 10 / 15 mnt / IP | idem — **hanya invoice yang TIDAK ditemukan** yang dihitung |
-| `REVIEW_CREATE_IP` | 3 / 10 mnt / IP | `reviews/create` **dan** `reviews/create-by-phone` (bucket sama) |
+| `REVIEW_CREATE_IP` | 3 / 10 mnt / IP | `reviews/create`, `create-by-phone`, **dan** `create-by-email` — satu bucket bersama, supaya bot tak bisa memecah spamnya ke tiga endpoint |
 | `PAYMENT_CREATE_IP` | 6 / 5 mnt / IP | pembuatan invoice/VA Xendit — tiap panggilan menembus ke API Xendit |
 | `PAYMENT_CREATE_INVOICE` | 5 / 30 mnt / nomor invoice | idem — satu pesanan tak butuh belasan VA |
 | `OMS_LOGIN_IP` | 10 / 15 mnt / IP | `POST /api/oms/login` — **hanya login GAGAL** yang dihitung |
