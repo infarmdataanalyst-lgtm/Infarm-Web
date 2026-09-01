@@ -5,10 +5,38 @@
 // Password disimpan sebagai hash scrypt berformat "saltHex:hashHex" (tanpa dependency eksternal).
 // Login memverifikasi via verifyPassword; seed admin awal lewat SQL (lihat supabase/migrations).
 
-import { scryptSync, randomBytes, timingSafeEqual } from 'node:crypto'
+import { createHash, scryptSync, randomBytes, timingSafeEqual } from 'node:crypto'
 import { createAdminClient } from '@/lib/supabase/server'
 
 const SCRYPT_KEYLEN = 64
+
+// === Daftar hitam kredensial yang sudah bocor (temuan SEC-011) ===
+//
+// Migration 20260708120000 dulu men-seed akun OMS pertama dengan password lemah BESERTA hash-nya,
+// keduanya tertulis polos di file yang ikut ter-commit. Password itu sudah dirotasi di database,
+// tapi rotasi saja belum menutup lubangnya: hash lama masih hidup di riwayat Git, di setiap klon
+// repo, dan di setiap backup database. Satu `git revert`, satu restore, atau satu migration yang
+// dijalankan ulang sudah cukup untuk menghidupkannya kembali tanpa ada yang sadar.
+//
+// Karena itu penolakannya dipasang di sini, di jalur login — bukan hanya di data. Selama hash
+// tersimpan cocok dengan salah satu entri di bawah, login DITOLAK berapa pun kali password yang
+// benar dimasukkan.
+//
+// Yang disimpan SIDIK JARI SHA-256 dari password_hash-nya, bukan hash itu sendiri. Sengaja: menaruh
+// hash aslinya di sini sama saja memindahkan kebocoran dari satu file ke file lain. Sidik jari
+// cukup untuk mencocokkan, tapi tak bisa dipakai menyerang apa pun.
+//
+// Menambah entri baru bila suatu saat ada kredensial bocor lagi:
+//   node -e "console.log(require('node:crypto').createHash('sha256').update('<password_hash>').digest('hex'))"
+const KNOWN_COMPROMISED_HASHES = new Set<string>([
+  // Seed 'admin@infarm.id' dari migration 20260708120000 versi awal (bocor via Git).
+  '80348f571c757ae8021f21f59f331228034c7d02ba7be99510ab5fb24eb2d797',
+])
+
+// true bila password_hash tersimpan adalah kredensial yang sudah diketahui bocor.
+function isCompromisedHash(storedHash: string): boolean {
+  return KNOWN_COMPROMISED_HASHES.has(createHash('sha256').update(storedHash).digest('hex'))
+}
 
 type AdminRow = {
   id: string
@@ -112,6 +140,17 @@ export async function authenticateAdmin(
   }
   const row = data as AdminRow | null
   if (!row || !row.is_active) return null
+
+  // Kredensial yang sudah diketahui bocor ditolak SEBELUM password diperiksa — tak peduli
+  // passwordnya benar. Lihat KNOWN_COMPROMISED_HASHES di atas.
+  if (isCompromisedHash(row.password_hash)) {
+    console.error(
+      `[admins] Login ditolak: password_hash akun "${row.username}" masih kredensial yang bocor ` +
+        `(SEC-011). Rotasi passwordnya lewat SQL — lihat supabase/migrations/20260708120000_init_admin_users.sql.`,
+    )
+    return null
+  }
+
   if (!verifyPassword(password, row.password_hash)) return null
 
   return { id: row.id, name: row.name ?? row.username, role: toRole(row.role) }

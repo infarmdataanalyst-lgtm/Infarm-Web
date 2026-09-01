@@ -79,8 +79,19 @@ export async function POST(request: Request) {
     )
   }
 
+  // Nama penulis diambil dari PESANAN, bukan dari body permintaan.
+  //
+  // Dua sebab. Pertama, keamanan: `authorName` dari client bisa diisi apa saja, termasuk nama orang
+  // lain — ulasan atas nama pembeli lain bisa dipalsukan tanpa perlu menembus apa pun. Server sudah
+  // memegang pesanannya di sini, jadi tak ada alasan mempercayai kiriman client.
+  // Kedua, ini yang memungkinkan `orders/get` berhenti mengembalikan `customerName` sama sekali
+  // (temuan SEC-007): form ulasan tak lagi perlu tahu namanya, karena server yang mengisinya.
+  //
+  // Fallback dipakai hanya bila pesanan lama benar-benar tak punya nama tersimpan.
+  const authorName = order.customerName?.trim() || 'Pelanggan Infarm'
+
   try {
-    const id = await createReview({ ...body, orderInvoice: invoice })
+    const id = await createReview({ ...body, authorName, orderInvoice: invoice })
     // Segarkan halaman detail produk agar ulasan baru langsung tampil
     revalidatePath(`/produk/${body.productId}`)
     revalidateTag('reviews', 'max')

@@ -5,6 +5,13 @@
 import { NextResponse } from 'next/server'
 import { authenticateAdmin } from '@/lib/mock-db/admins'
 import {
+  RATE_LIMITS,
+  getClientIp,
+  isOverLimit,
+  rateLimitResponse,
+  recordAttempt,
+} from '@/lib/rate-limit'
+import {
   createSessionToken,
   OMS_SESSION_COOKIE,
   OMS_SESSION_MAX_AGE_DEFAULT,
@@ -14,23 +21,25 @@ import {
 // createAdminClient (Supabase) + node:crypto butuh runtime Node.js, bukan Edge
 export const runtime = 'nodejs'
 
-// === Rate limit sederhana (in-memory, best-effort) ===
-// Batasi percobaan login per kunci (IP + username) untuk melambatkan brute force.
-// Catatan: in-memory per-instance — bukan pengganti rate limit terpusat di production.
-const MAX_ATTEMPTS = 5
-const WINDOW_MS = 60_000 // 1 menit
-const attempts = new Map<string, { count: number; resetAt: number }>()
-
-function rateLimited(key: string): boolean {
-  const now = Date.now()
-  const entry = attempts.get(key)
-  if (!entry || entry.resetAt < now) {
-    attempts.set(key, { count: 1, resetAt: now + WINDOW_MS })
-    return false
-  }
-  entry.count += 1
-  return entry.count > MAX_ATTEMPTS
-}
+// === Rate limit login ===
+//
+// Dulu berkas ini memelihara limiter sendiri (Map lokal + pembacaan `x-forwarded-for` sendiri).
+// Duplikat itu dibuang dan diganti limiter bersama di `@/lib/rate-limit`, karena dua salinan yang
+// sama pasti menyimpang: perbaikan sumber IP yang menutup pemalsuan `X-Forwarded-For` hanya
+// diterapkan di satu tempat, dan berkas ini akan diam-diam tertinggal memakai versi rapuh.
+//
+// Tiga perubahan perilaku yang menutup temuan SEC-010:
+//   1. IP diambil lewat `getClientIp()` yang tak lagi memercayai entri pertama `x-forwarded-for`
+//      (entri itu dipilih klien, jadi bisa diganti tiap permintaan untuk mengelak dari limit).
+//   2. HANYA percobaan GAGAL yang dihitung. Sebelumnya login yang BERHASIL pun ikut menghabiskan
+//      jatah, sehingga admin yang keluar-masuk beberapa kali bisa mengunci dirinya sendiri —
+//      dan itu pula yang membuat ambangnya dulu terpaksa dibuat longgar.
+//   3. Ditambah lapis per-AKUN lintas IP (`OMS_LOGIN_USER`). Tanpa itu, penyerang cukup berganti
+//      IP untuk mendapat jatah tebakan baru berulang kali, dan pembatasan per-IP tak berarti.
+//
+// Sisa yang TIDAK ditutup di sini: hitungannya masih di memori tiap instance, sehingga di
+// serverless multi-instance batas efektifnya berlipat sebanyak instance aktif. Itu dilacak
+// terpisah sebagai temuan SEC-029 dan butuh penyimpanan bersama (tabel Supabase / Redis).
 
 export async function POST(request: Request) {
   let body: Record<string, unknown>
@@ -48,20 +57,33 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Email kerja dan kata sandi wajib diisi.' }, { status: 400 })
   }
 
-  // Kunci rate limit: IP (dari header proxy) + username
-  const ip =
-    request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-    request.headers.get('x-real-ip') ||
-    'unknown'
-  if (rateLimited(`${ip}:${username.toLowerCase()}`)) {
-    return NextResponse.json(
-      { error: 'Terlalu banyak percobaan login. Coba lagi dalam 1 menit.' },
-      { status: 429 },
-    )
+  const ip = getClientIp(request)
+  const akun = username.toLowerCase()
+
+  // Tiga lapis, masing-masing menutup celah yang tak ditutup lapis lain:
+  //   ipKey     — satu sumber membanjiri banyak akun sekaligus
+  //   ipUserKey — satu sumber menebak satu akun
+  //   userKey   — BANYAK sumber menebak satu akun (brute-force terdistribusi)
+  const ipKey = `oms-login:ip:${ip}`
+  const ipUserKey = `oms-login:ip-user:${ip}:${akun}`
+  const userKey = `oms-login:user:${akun}`
+
+  // Diperiksa TANPA mencatat: pencatatan ditunda sampai hasil autentikasi diketahui, supaya login
+  // yang benar tidak ikut menghabiskan jatah.
+  for (const [key, rule] of [
+    [ipKey, RATE_LIMITS.OMS_LOGIN_IP],
+    [ipUserKey, RATE_LIMITS.OMS_LOGIN_IP_USER],
+    [userKey, RATE_LIMITS.OMS_LOGIN_USER],
+  ] as const) {
+    if (isOverLimit(key, rule)) return rateLimitResponse(rule, key)
   }
 
   const admin = await authenticateAdmin(username, password)
   if (!admin) {
+    // Gagal → baru dicatat ke ketiga lapis.
+    recordAttempt(ipKey, RATE_LIMITS.OMS_LOGIN_IP)
+    recordAttempt(ipUserKey, RATE_LIMITS.OMS_LOGIN_IP_USER)
+    recordAttempt(userKey, RATE_LIMITS.OMS_LOGIN_USER)
     // Pesan generik (jangan bocorkan apakah username ada atau password yang salah)
     return NextResponse.json(
       { error: 'Email kerja atau kata sandi salah. Silakan periksa kembali.' },

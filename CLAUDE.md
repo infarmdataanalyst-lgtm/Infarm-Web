@@ -130,7 +130,7 @@ Detail lengkap: [docs/checkout-flow.md](docs/checkout-flow.md) → "Layanan Pesa
 
 ## Tech Stack
 
-- **Framework**: Next.js 16.2.7 (App Router) — bukan Pages Router
+- **Framework**: Next.js 16.3.4 (App Router) — bukan Pages Router
 - **Language**: TypeScript (strict mode)
 - **Frontend**: React 19.2, Tailwind CSS v4 (PostCSS, `@tailwindcss/postcss`)
 - **Ikon**: `lucide-react`
@@ -166,7 +166,7 @@ selesai, dikumpulkan di [ROADMAP.md](ROADMAP.md).
   Jadi **caching yang dipakai sekarang = klasik**: `export const revalidate` (ISR) + `unstable_cache`
   + `revalidateTag`/`revalidatePath`. Lihat bagian "Caching & Revalidasi (storefront)". Bila nanti
   Cache Components diaktifkan, wrapper `unstable_cache` di `cached-reads.ts` perlu dimigrasi ke `use cache`.
-- **`revalidateTag` di Next 16.2.7 WAJIB 2 argumen**: `revalidateTag(tag, 'max')` (`'max'` =
+- **`revalidateTag` di Next 16.3.4 WAJIB 2 argumen**: `revalidateTag(tag, 'max')` (`'max'` =
   stale-while-revalidate, rekomendasi resmi). Memanggil dengan 1 argumen = error TypeScript.
 - **Turbopack aktif by default** — tidak perlu flag `--turbo`
 
@@ -305,7 +305,8 @@ src/
 │   ├── combo-validation.ts       # Validasi server payload combo
 │   ├── promotion-validation.ts   # Validasi server payload promo
 │   ├── mengantar.ts              # Client: search alamat (via proxy) + cek ongkir (fetch langsung)
-│   ├── order-token.ts            # Token HMAC tautan pembatalan (server-only)
+│   ├── order-token.ts            # Token HMAC tautan pembatalan: exp 7 hari + nonce (server-only)
+│   ├── server-secret.ts          # SATU pintu secret HMAC dari env; production fail-fast bila kosong
 │   ├── supabase/                 # Client Supabase: server.ts (admin/SSR) + browser.ts
 │   ├── mock-db/                  # Akses data Supabase: products, orders, reviews, combos, promotions,
 │   │                             #   admins, variants, settings (store_settings key-value),
@@ -472,12 +473,25 @@ sesi disimpan sebagai **cookie httpOnly bertanda tangan HMAC** (bukan lagi penan
 
 - **Tabel `admin_users`**: `username` (unik), `password_hash` (scrypt, format `saltHex:hashHex`),
   `name`, `is_active`, **`role`**. RLS aktif tanpa policy publik → akses hanya server (service_role).
-  Migration `supabase/migrations/20260708120000_init_admin_users.sql` (+ seed admin awal) &
-  `20260814120000_add_admin_users_role.sql`.
+  Migration `supabase/migrations/20260708120000_init_admin_users.sql` (seed **nonaktif, tanpa
+  password yang bisa dipakai**) & `20260814120000_add_admin_users_role.sql`.
 - **Verifikasi password**: `src/lib/mock-db/admins.ts` (server-only, `node:crypto` scrypt +
   `timingSafeEqual`). `authenticateAdmin(username, password)` & `getAdminById(id)` — keduanya
   mengembalikan `AdminIdentity { id, name, role }`. `admin_users` **tak punya kolom email**; nama
   tampilan = `name`, fallback `username`.
+- **Daftar hitam kredensial bocor** (`KNOWN_COMPROMISED_HASHES` di `admins.ts`, temuan SEC-011):
+  seed awal dulu ditulis lengkap dengan password DAN hash-nya di file yang ikut ter-commit. Rotasi
+  di database saja tidak menutupnya — hash lama tetap hidup di riwayat Git dan di setiap backup,
+  jadi satu restore sudah cukup menghidupkannya lagi. Karena itu penolakan dipasang **di jalur
+  login**: `authenticateAdmin` menolak lebih dulu, sebelum password diperiksa, bila `password_hash`
+  tersimpan ada di daftar. Yang disimpan **sidik jari SHA-256 dari hash-nya**, bukan hash itu
+  sendiri — menaruh hash aslinya di sini sama saja memindahkan kebocoran ke berkas lain.
+  Menambah entri: `node -e "console.log(require('node:crypto').createHash('sha256').update('<password_hash>').digest('hex'))"`.
+  Migration `20260901120000_nonaktifkan_kredensial_admin_bocor.sql` melakukan hal setara di sisi
+  data (cocokkan sidik jari → `'DISABLED'` + nonaktif), idempoten, untuk database lain/backup lama.
+  **Konsekuensi yang disengaja**: akun yang masih memakai hash bocor TERKUNCI TOTAL sampai
+  passwordnya dirotasi lewat SQL — satu-satunya password yang berfungsi adalah yang sudah bocor,
+  jadi terkunci memang keadaan yang benar. Langkahnya ada di komentar migration `20260708120000`.
 - **Peran (`role`)** — hanya DUA nilai, dijaga CHECK constraint (menambah nilai baru = ubah
   constraint juga):
   | Peran | Wewenang |
@@ -494,10 +508,15 @@ sesi disimpan sebagai **cookie httpOnly bertanda tangan HMAC** (bukan lagi penan
     `canEdit` yang dikirim endpoint matrix HANYA untuk menyembunyikan tombol — UI bukan penjagaan.
 - **Token sesi**: `src/lib/oms-auth.ts` — `createSessionToken`/`verifySessionToken`
   (HMAC-SHA256 via Web Crypto, jalan di edge & node), `sanitizeOmsRedirect`,
-  `OMS_SESSION_COOKIE`. Secret dari env `OMS_SESSION_SECRET` (fallback dev).
-- **Login**: `POST /api/oms/login` (runtime nodejs) — verifikasi kredensial + **rate limit**
-  in-memory (5 percobaan/menit per IP+username) → set cookie sesi `httpOnly`, `secure` (prod),
-  `SameSite=Lax`, `maxAge` (12 jam; 30 hari bila "Ingat Saya").
+  `OMS_SESSION_COOKIE`. Secret diambil **malas** lewat `requireServerSecret('OMS_SESSION_SECRET')`
+  (`src/lib/server-secret.ts`) — **tanpa fallback**; production dengan env kosong melempar.
+  Malas, bukan konstanta tingkat modul, karena berkas ini juga mengekspor `sanitizeOmsRedirect`
+  yang diimpor halaman login `'use client'`.
+- **Login**: `POST /api/oms/login` (runtime nodejs) — verifikasi kredensial + **rate limit tiga
+  lapis** (`OMS_LOGIN_*` di `RATE_LIMITS`, lihat tabel di bawah) → set cookie sesi `httpOnly`,
+  `secure` (prod), `SameSite=Lax`, `maxAge` (12 jam; 30 hari bila "Ingat Saya").
+  **Hanya percobaan GAGAL yang dihitung** — login berhasil tak pernah menghabiskan jatah, jadi
+  admin tak bisa mengunci dirinya sendiri.
 - **Guard** (`proxy.ts`, `matcher: '/oms/dashboard/:path*'`): `verifySessionToken` cookie →
   invalid/kedaluwarsa → `307` ke `/oms/login?redirect=<tujuan asli>`. `/oms/login` tak diproteksi.
 - **Logout**: tombol "Keluar" di `Sidebar` → `POST /api/oms/logout` (hapus cookie httpOnly) +
@@ -531,7 +550,14 @@ header `Retry-After`. Map disapu berkala tiap 500 penulisan agar tak bocor memor
 | `PHONE_WRITE_PHONE` | 5 / jam / nomor | `cancel-by-phone`, `create-by-phone` |
 | `MENGANTAR_IP` | 40 / menit / IP | proxy search alamat & cek ongkir |
 | `ORDER_CREATE_IP` | 3 / menit / IP | `POST /api/orders/create` |
+| `ORDER_GET_IP` | 30 / 15 mnt / IP | `GET /api/orders/get` |
+| `ORDER_GET_IP_MISS` | 10 / 15 mnt / IP | idem — **hanya invoice yang TIDAK ditemukan** yang dihitung |
 | `REVIEW_CREATE_IP` | 3 / 10 mnt / IP | `reviews/create` **dan** `reviews/create-by-phone` (bucket sama) |
+| `PAYMENT_CREATE_IP` | 6 / 5 mnt / IP | pembuatan invoice/VA Xendit — tiap panggilan menembus ke API Xendit |
+| `PAYMENT_CREATE_INVOICE` | 5 / 30 mnt / nomor invoice | idem — satu pesanan tak butuh belasan VA |
+| `OMS_LOGIN_IP` | 10 / 15 mnt / IP | `POST /api/oms/login` — **hanya login GAGAL** yang dihitung |
+| `OMS_LOGIN_IP_USER` | 5 / 15 mnt / (IP+username) | idem — satu penyerang menebak satu akun |
+| `OMS_LOGIN_USER` | 20 / jam / username | idem — **lintas IP**, menutup brute-force terdistribusi |
 
 - **Kenapa "hanya percobaan gagal" untuk kunci IP+nomor**: penebak nomor orang lain hampir selalu
   meleset (0 pesanan / nomor tak cocok), sedangkan pemilik nomor selalu dapat hasil. Menghitung
@@ -544,7 +570,24 @@ header `Retry-After`. Map disapu berkala tiap 500 penulisan agar tak bocor memor
   memperketat jalur telepon.
 - **Catatan UX**: `REVIEW_CREATE_IP` 3/10 menit berarti pembeli yang mengulas >3 produk sekaligus
   akan tertahan. Naikkan konstanta itu bila keluhan muncul.
-- Menutup temuan K-1 di `docs/security/audit-2026-07-24.md`.
+- **Kenapa `OMS_LOGIN_USER` (per-akun, lintas IP) wajib ada**: dua lapis pertama dikunci per-IP,
+  dan IP itu murah. Tanpa lapis ketiga, penyerang cukup berganti IP (atau memakai botnet) untuk
+  memperoleh jatah 5 tebakan baru berulang kali — pembatasan per-IP jadi tak membatasi apa pun bagi
+  lawan yang serius. Sengaja **bukan** penguncian akun permanen: itu justru membuka penolakan
+  layanan, siapa pun bisa mengunci akun admin hanya dengan sengaja salah ketik.
+- **`ORDER_GET_IP_MISS` dikunci per-IP saja, bukan per (IP+invoice)** — dan itu disengaja. Kunci
+  per-invoice tak berguna melawan enumerasi, sebab setiap tebakan memakai invoice yang berbeda
+  sehingga selalu mendapat bucket baru. Konsekuensi yang diterima: IP yang sudah 10 kali meleset
+  ikut ditolak saat membawa nomor yang BENAR selama 15 menit. Dampaknya kecil (pembeli sah jarang
+  salah nomor sampai sepuluh kali) tapi kantor/warnet ber-IP bersama bisa terkena.
+- **Sumber IP tak lagi memercayai `x-forwarded-for` mentah.** `getClientIp()` dulu membaca entri
+  PERTAMA header itu — dan entri paling kiri ditulis oleh KLIEN, karena proxy menambahkan IP asli
+  di kanan, bukan menimpanya. Penyerang cukup mengganti nilainya tiap permintaan untuk mendapat
+  kunci rate-limit baru terus-menerus. Urutan sekarang: `x-vercel-forwarded-for` (header `x-vercel-*`
+  dari klien dibuang di perbatasan Vercel) → `x-real-ip` → entri **TERAKHIR** `x-forwarded-for`.
+  Perbaikan ada di helper bersama, jadi berlaku untuk **seluruh** aturan di tabel ini.
+- Menutup temuan K-1 di `docs/security/audit-2026-07-24.md`, serta SEC-007 & SEC-010 di database
+  Audit Security (Notion).
 
 
 ---
@@ -644,9 +687,20 @@ Jangan di-commit (sudah diabaikan `.gitignore`). Di production, set lewat Vercel
 NEXT_PUBLIC_SUPABASE_URL
 NEXT_PUBLIC_SUPABASE_ANON_KEY
 SUPABASE_SERVICE_ROLE_KEY        # server-only (dipakai mock-db via createAdminClient)
-ORDER_CANCEL_SECRET              # server-only, opsional (HMAC token pembatalan; ada fallback dev)
-OMS_SESSION_SECRET               # server-only (HMAC tanda tangan cookie sesi OMS; ada fallback dev
-                                 # — WAJIB di-set di production, jangan pakai fallback)
+ORDER_CANCEL_SECRET              # server-only, WAJIB DI PRODUCTION (HMAC token tautan pembatalan).
+                                 # SEJAK 2026-09-01 TIDAK ADA LAGI FALLBACK. Bila kosong di
+                                 # production, requireServerSecret() MELEMPAR dan jalur pembatalan
+                                 # menolak melayani — disengaja: lebih baik satu endpoint mati keras
+                                 # dan langsung terlihat daripada seluruh sistem menandatangani
+                                 # dengan kunci yang tertulis di repo. Di dev, nilai kosong diganti
+                                 # secret ACAK per proses (tautan pembatalan hangus tiap restart).
+OMS_SESSION_SECRET               # server-only, WAJIB DI PRODUCTION (HMAC tanda tangan cookie sesi
+                                 # OMS). Perlakuan sama persis dengan ORDER_CANCEL_SECRET di atas —
+                                 # tanpa fallback. Bila kosong di production, login OMS berhenti
+                                 # bekerja alih-alih memakai kunci yang bisa ditempa siapa pun.
+                                 # Keduanya diambil lewat SATU PINTU src/lib/server-secret.ts.
+                                 # ROTASI: nilai bawaan lama ('infarm-dev-…') sempat tertulis di
+                                 # riwayat repo, jadi anggap keduanya sudah bocor dan ganti baru.
 
 # Sudah dipakai sekarang (Mengantar — cek ongkir)
 NEXT_PUBLIC_MENGANTAR_ORIGIN_ID  # _id kelurahan toko (asal pengiriman). WAJIB di-set di Vercel juga
@@ -818,7 +872,29 @@ Lubang ini ditutup oleh lapis 3, bukan oleh kode.
   jangan dari komponen klien. Browser pakai anon key + RLS
 - Validasi input & **status order** di sisi server, bukan hanya frontend
   (mis. pembatalan: status dicek ulang di `PATCH /api/orders/cancel`, bukan percaya UI)
-- Tautan aksi guest (pembatalan) wajib diverifikasi token (`verifyCancelToken`) sebelum diproses
+- Tautan aksi guest (pembatalan) wajib diverifikasi token (`verifyCancelToken`) sebelum diproses.
+  Token kini berformat `exp.nonce.signature` dengan masa berlaku **7 hari yang ikut ditandatangani**
+  — jangan "menyederhanakannya" kembali ke HMAC(orderId) polos: itu membuat tautan berlaku selamanya
+  dan satu-satunya cara mencabutnya adalah merotasi secret, yang sekaligus mematikan token seluruh
+  pesanan lain. Format lama sengaja DITOLAK, bukan diterima demi kompatibilitas.
+- **Endpoint publik jangan mengembalikan nama pelanggan.** `GET /api/orders/get` dulu mengembalikan
+  `customerName` utuh padahal terbuka tanpa token dan nomor invoicenya mudah ditebak — nama
+  pelanggan bisa dipanen massal. Kini field itu dihapus dari respons, dan `reviews/create` mengisi
+  nama penulis sendiri dari pesanan yang sudah diverifikasinya. Aturan turunannya: **nilai identitas
+  jangan dipercaya dari client bila server sudah memegang datanya** — `authorName` dari body kini
+  diabaikan, karena dulu ulasan bisa dikirim atas nama orang lain.
+- **Jangan pernah menaruh kredensial di file yang ikut ter-commit — plaintext MAUPUN hash-nya.**
+  Migration seed `admin_users` dulu memuat keduanya, jadi setiap pemegang salinan repo memegang
+  akun back-office berfungsi penuh (SEC-011). Hash bukan pengaman di sini: password seed selalu
+  pendek dan bisa ditebak, dan hash-nya sendiri sudah cukup untuk mencocokkan secara offline.
+  Seed sekarang membuat akun **nonaktif tanpa password yang bisa dipakai**; operator memberi
+  password lewat SQL manual, dan yang berpindah hanya hash-nya. Konsekuensi yang perlu diingat:
+  sekali sebuah kredensial masuk Git, merotasinya **belum** cukup — ia tetap hidup di riwayat dan
+  di backup, jadi tutup juga di lapisan aplikasi (lihat `KNOWN_COMPROMISED_HASHES`).
+- **Jaga `npm audit` tetap bersih.** Cek sebelum rilis; `next` menyeret `postcss` dan `sharp`,
+  jadi satu bump `next` biasanya menutup sebagian besar temuan sekaligus. Setelah bump: `npx tsc
+  --noEmit` + `npm run build` + smoke test guard `/oms/dashboard` (307 ke login) — advisory bypass
+  proxy/middleware pernah muncul di jalur itu, jadi jangan cuma mengandalkan build hijau.
 - Verifikasi webhook signature Xendit sebelum memproses event apapun (saat integrasi)
 - Cookie keranjang tidak boleh menyimpan data sensitif — hanya ID produk, quantity, price
 

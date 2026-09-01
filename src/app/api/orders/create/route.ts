@@ -326,8 +326,13 @@ export async function POST(request: Request) {
 
   const tarifSah = quoted ? quoted.options.map((o) => Math.round(o.price)) : []
 
-  // `const`: nilainya tak pernah ditimpa. Cabang "tak cocok" MENOLAK permintaan (return), bukan
-  // menimpa dengan tarif server — lihat alasannya di komentar cabang itu.
+  // `const`: nilainya tak pernah ditimpa. KEDUA cabang kegagalan di bawah MENOLAK permintaan
+  // (return) alih-alih menimpa dengan tarif server — lihat alasannya di komentar masing-masing.
+  //
+  // Sejak 2026-09-01 berlaku jaminan yang lebih kuat: begitu eksekusi melewati kedua cabang itu,
+  // `shippingCost` DIPASTIKAN salah satu tarif yang server sendiri terima dari Mengantar untuk
+  // (tujuan + berat + isi keranjang) yang sama. Tak ada lagi jalur yang meloloskan angka client
+  // tanpa pembanding.
   const shippingCost = clientShipping
 
   // ⚠️ "Tak ada tarif" punya DUA sebab yang sama sekali berbeda, dan keduanya tak boleh
@@ -364,15 +369,37 @@ export async function POST(request: Request) {
   if (tarifSah.length === 0) {
     // (a) Mengantar tak bisa dihubungi DAN cache kosong → tak ada dasar untuk membandingkan.
     //
-    // Nilai client diterima, TAPI dicatat keras. Menolak di sini berarti seluruh checkout berhenti
-    // setiap kali Mengantar bermasalah — kerugian yang jauh lebih besar dan lebih sering daripada
-    // celah yang sedang ditutup. Ini satu-satunya jalan yang tersisa terbuka, dan ia butuh Mengantar
-    // sedang down untuk bisa dipakai.
+    // DITOLAK. Sampai 2026-09-01 cabang ini justru MENERIMA nilai client dan hanya mencatatnya ke
+    // log, dengan alasan menolak akan mematikan checkout tiap kali Mengantar bermasalah. Alasan itu
+    // tak bertahan saat diperiksa ulang, dan inilah lubang terakhir temuan SEC-008:
+    //
+    //   1. Pembeli sah praktis TAK BISA sampai ke sini saat Mengantar mati. Tanpa tarif, bottom
+    //      sheet tak punya kurir untuk dipilih, dan tombol bayar tetap terkunci — sudah terbukti
+    //      lewat uji "bayar tanpa kurir terpilih → nol request /api/orders/create".
+    //   2. Pembeli yang tarifnya baru saja tampil hampir pasti masih tertolong cache 10 menit, jadi
+    //      ia tak jatuh ke cabang ini.
+    //   3. Yang tersisa di cabang ini karena itu didominasi permintaan yang disusun langsung —
+    //      dan menerima angka berdampak-uang dari sana persis kerentanan yang sedang ditutup.
+    //      `shippingCost: 0` membuat tagihan Xendit ikut nol-ongkir sementara tarif kurir tetap
+    //      ditagih ke toko: Rp4.000–30.000 per pesanan, tanpa jejak.
+    //
+    // 503, bukan 4xx: sebabnya memang di hulu (Mengantar tak menjawab), bukan kesalahan pembeli,
+    // dan status ini memberi tahu klien bahwa mencoba lagi memang masuk akal.
     console.error(
-      `${LOG} ONGKIR TAK TERVERIFIKASI (Mengantar tak menjawab) — memakai nilai client ` +
-        `Rp${clientShipping}. destination=${body.address.destinationId} weight=${serverWeight}`,
+      `${LOG} ongkir TAK BISA DIVERIFIKASI (Mengantar tak menjawab) — permintaan DITOLAK. ` +
+        `client=Rp${clientShipping} destination=${body.address.destinationId} weight=${serverWeight}`,
     )
-  } else if (!tarifSah.includes(clientShipping)) {
+    return NextResponse.json(
+      {
+        error:
+          'Ongkos kirim sedang tidak bisa dipastikan. Silakan pilih ulang kurir pengiriman lalu coba lagi sebentar.',
+        code: 'SHIPPING_UNVERIFIED',
+      },
+      { status: 503 },
+    )
+  }
+
+  if (!tarifSah.includes(clientShipping)) {
     // Angka yang dikirim client bukan salah satu tarif yang benar-benar ditawarkan.
     //
     // DITOLAK, bukan diam-diam ditimpa dengan tarif server. Menimpanya berarti pembeli ditagih

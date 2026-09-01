@@ -58,8 +58,34 @@ export const RATE_LIMITS = {
   // Checkout / buat pesanan — cegah order spam
   ORDER_CREATE_IP: { max: 3, windowMs: 1 * MINUTE },
 
+  // === Baca satu pesanan by nomor invoice (orders/get, dipakai form ulasan) ===
+  // Nomor invoice berpola INV-YYYYMMDD-xxxx, jadi ruang tebakannya kecil untuk satu hari tertentu.
+  // Tanpa pembatas, seluruh ruang satu hari bisa disapu dari satu IP dalam hitungan menit.
+  ORDER_GET_IP: { max: 30, windowMs: 15 * MINUTE },
+  // Lapis anti-enumerasi: HANYA tebakan MELESET (invoice tak ditemukan) yang dihitung. Pembeli sah
+  // datang dengan nomor yang benar dan boleh memuat ulang halaman ulasannya sesering apa pun tanpa
+  // pernah menyentuh limit ini, sementara penyapu — yang menurut definisinya hampir selalu meleset —
+  // berhenti setelah 10 percobaan gagal. Menutup temuan SEC-007.
+  ORDER_GET_IP_MISS: { max: 10, windowMs: 15 * MINUTE },
+
   // Submit ulasan — cegah spam review
   REVIEW_CREATE_IP: { max: 3, windowMs: 10 * MINUTE },
+
+  // === Login OMS ===
+  // HANYA percobaan GAGAL yang dihitung (pola sama seperti PHONE_LOOKUP_IP_PHONE_MISS). Admin yang
+  // kredensialnya benar tak pernah menghabiskan jatah, berapa kali pun ia keluar-masuk — jadi
+  // ambangnya bisa dibuat ketat tanpa mengganggu pemakaian wajar.
+  OMS_LOGIN_IP: { max: 10, windowMs: 15 * MINUTE }, // throttle umum per sumber
+  OMS_LOGIN_IP_USER: { max: 5, windowMs: 15 * MINUTE }, // satu penyerang menebak satu akun
+  // Per AKUN, LINTAS IP. Ini yang menutup brute-force terdistribusi: tanpa lapis ini, penyerang
+  // cukup mengganti IP (atau memakai botnet) untuk mendapat jatah 5 tebakan baru berulang kali,
+  // sehingga dua lapis di atas tak membatasi apa pun bagi lawan yang serius.
+  //
+  // Jendelanya sengaja panjang (1 jam) dan angkanya longgar: yang dilawan adalah ribuan tebakan,
+  // bukan admin yang lupa kata sandinya beberapa kali dari kantor dan rumah. Sengaja TIDAK memakai
+  // penguncian akun permanen — itu justru membuka penolakan layanan, siapa pun bisa mengunci akun
+  // admin hanya dengan mengetik kata sandi salah berulang kali.
+  OMS_LOGIN_USER: { max: 20, windowMs: 60 * MINUTE },
 
   // Pembuatan Virtual Account (Xendit). Lebih longgar dari ORDER_CREATE_IP karena pembeli yang sah
   // memang bisa mencoba beberapa bank berbeda untuk satu pesanan, tapi tetap dibatasi: setiap
@@ -141,11 +167,44 @@ export function rateLimitResponse(rule: RateRule, key?: string): NextResponse {
   )
 }
 
-// Ambil IP client dari header proxy (Vercel/umum). Fallback 'unknown' saat dev lokal/tak ada header.
+// Ambil IP client dari header proxy. Fallback 'unknown' saat dev lokal/tak ada header.
+//
+// ── Kenapa TIDAK memakai entri PERTAMA `x-forwarded-for` ──
+// `x-forwarded-for` adalah daftar yang TUMBUH dari kiri: entri paling kiri ditulis oleh pihak
+// terjauh — dan pihak terjauh itu adalah KLIEN sendiri. Siapa pun bisa mengirim
+// `X-Forwarded-For: 1.2.3.4` dan proxy akan menambahkan IP aslinya di KANAN, bukan menimpanya.
+// Jadi membaca entri pertama berarti membaca angka yang dipilih penyerang: ia cukup mengubah
+// nilainya tiap permintaan untuk mendapat kunci rate-limit baru terus-menerus, dan seluruh
+// pembatasan per-IP di aplikasi ini menjadi hiasan belaka.
+//
+// Urutan di bawah dipilih dari yang paling tepercaya:
+//   1. `x-vercel-forwarded-for` — ditulis Vercel Edge dan header `x-vercel-*` dari klien DIBUANG
+//      di perbatasan, jadi nilainya tak bisa dipalsukan dari luar.
+//   2. `x-real-ip` — ditulis proxy terdekat (Vercel ikut menyetelnya).
+//   3. entri TERAKHIR `x-forwarded-for` — yang ditambahkan proxy terdekat, satu-satunya bagian
+//      daftar itu yang tidak berasal dari klien.
+//
+// Menutup separuh temuan SEC-010 (audit: "percaya X-Forwarded-For mentah"). Perbaikan di sini
+// berlaku untuk SELURUH pemakai rate limit, bukan hanya login OMS.
 export function getClientIp(request: Request): string {
-  return (
-    request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-    request.headers.get('x-real-ip') ||
-    'unknown'
-  )
+  const vercel = request.headers.get('x-vercel-forwarded-for')
+  if (vercel) {
+    const first = vercel.split(',')[0]?.trim()
+    if (first) return first
+  }
+
+  const real = request.headers.get('x-real-ip')?.trim()
+  if (real) return real
+
+  const forwarded = request.headers.get('x-forwarded-for')
+  if (forwarded) {
+    const hops = forwarded
+      .split(',')
+      .map((hop) => hop.trim())
+      .filter(Boolean)
+    // Entri terakhir = ditambahkan proxy terdekat. Sisanya bisa saja karangan klien.
+    if (hops.length > 0) return hops[hops.length - 1]!
+  }
+
+  return 'unknown'
 }

@@ -6,6 +6,8 @@
 // Memakai Web Crypto (globalThis.crypto.subtle) agar jalan di edge (proxy) MAUPUN node (route).
 // Verifikasi password (scrypt) ada di modul terpisah server-only: src/lib/oms-admin.ts.
 
+import { requireServerSecret } from '@/lib/server-secret'
+
 // Nama cookie sesi admin OMS.
 export const OMS_SESSION_COOKIE = 'oms_session'
 
@@ -16,9 +18,19 @@ export const OMS_DEFAULT_REDIRECT = '/oms/dashboard'
 export const OMS_SESSION_MAX_AGE_REMEMBER = 60 * 60 * 24 * 30
 export const OMS_SESSION_MAX_AGE_DEFAULT = 60 * 60 * 12
 
-// Secret penandatangan sesi. Pakai env bila ada; fallback konstanta untuk mode prototipe.
-// TODO: WAJIB set OMS_SESSION_SECRET di environment production (jangan pakai fallback).
-const SECRET = process.env.OMS_SESSION_SECRET ?? 'infarm-dev-oms-session-secret'
+// Nama env secret penandatangan sesi. Nilainya diambil MALAS lewat requireServerSecret() di dalam
+// fungsi tanda tangan — lihat src/lib/server-secret.ts.
+//
+// Dulu di sini ada `?? 'infarm-dev-oms-session-secret'`. Fallback itu berarti: sekali saja
+// deployment produksi lupa menyetel env-nya, kunci penandatangan cookie sesi admin menjadi string
+// yang tertulis di repo, dan siapa pun yang membacanya bisa menempa cookie admin yang sah —
+// bypass login OMS sepenuhnya, tanpa perlu tahu satu pun kata sandi. Kini produksi MENOLAK
+// menandatangani bila env kosong. Menutup separuh temuan SEC-006.
+//
+// Pengambilan dibuat malas (bukan `const` tingkat modul) karena berkas ini juga mengekspor
+// sanitizeOmsRedirect yang diimpor halaman login berlabel 'use client'. Konstanta tingkat modul
+// akan dievaluasi begitu modul tertarik ke graph mana pun; fungsi tidak.
+const SESSION_SECRET_ENV = 'OMS_SESSION_SECRET'
 
 // Pastikan target redirect aman: hanya path internal area dashboard OMS (cegah open redirect
 // ke URL absolut / domain luar). Selain itu, kembalikan tujuan default.
@@ -53,7 +65,7 @@ function base64UrlToString(b64url: string): string {
 async function sign(data: string): Promise<string> {
   const key = await crypto.subtle.importKey(
     'raw',
-    new TextEncoder().encode(SECRET),
+    new TextEncoder().encode(requireServerSecret(SESSION_SECRET_ENV)),
     { name: 'HMAC', hash: 'SHA-256' },
     false,
     ['sign'],
