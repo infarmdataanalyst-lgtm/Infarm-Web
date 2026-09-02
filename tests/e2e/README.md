@@ -7,7 +7,22 @@ Berkas uji end-to-end.
 | `checkout-address-fields.spec.ts` | tidak | ya |
 | `checkout-special-chars.spec.ts` | tidak | ya |
 | `checkout-ongkir-flow.spec.ts` | tidak | ya |
+| `order-cancel-by-buyer.spec.ts` | **YA — pesanan seed sendiri, dihapus lagi** | ya |
+| `product-review-submit.spec.ts` | **YA — pesanan + item + ulasan, dihapus lagi** | ya |
 | `checkout-full-payment-flow.spec.ts` | **YA — pesanan, invoice, resi** | **tidak** (lihat di bawah) |
+
+Dua spec pertama yang bertanda **YA** tetap aman dijalankan otomatis: datanya **di-seed sendiri
+langsung ke Supabase** (bukan lewat checkout, jadi tak menyentuh Mengantar/Xendit dan tak memotong
+stok), dibungkus `describe.serial`, dan dihapus lagi di `afterAll` — termasuk bila ujinya gagal di
+tengah jalan. Identitas (email & no_telepon) diacak tiap run agar hitungan rate limit in-memory tak
+menumpuk antar-run pada dev server yang dipakai ulang.
+
+- `order-cancel-by-buyer.spec.ts` — pesanan uji sengaja **tanpa `order_items`**, supaya
+  pembatalannya tak mengembalikan stok produk sungguhan lewat `restoreStock`.
+- `product-review-submit.spec.ts` — ini justru **butuh** `order_items`: submit ulasan diverifikasi
+  server terhadap isi pesanan. Produknya diambil dari katalog saat uji berjalan (bukan di-hardcode)
+  karena `reviews.product_id` punya FK ke `products`. Alur ulasan tak menyentuh stok. `order_items`
+  ikut terhapus sendiri lewat `on delete cascade` saat pesanannya dihapus.
 
 ## Menjalankan
 
