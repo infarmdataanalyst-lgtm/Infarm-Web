@@ -19,7 +19,7 @@ import OrderSummary from '@/components/checkout/OrderSummary'
 import CheckoutBottomBar from '@/components/checkout/CheckoutBottomBar'
 import ShippingOptions from '@/components/checkout/ShippingOptions'
 import PaymentMethodsInfo from '@/components/checkout/PaymentMethodsInfo'
-import PhoneConfirmModal from '@/components/checkout/PhoneConfirmModal'
+import EmailConfirmModal from '@/components/checkout/EmailConfirmModal'
 import CheckoutSkeleton from '@/components/checkout/CheckoutSkeleton'
 import {
   readCheckoutDraft,
@@ -82,7 +82,7 @@ export default function CheckoutPage() {
   const router = useRouter()
 
   // === State tampilan modal ===
-  const [isPhoneConfirmOpen, setIsPhoneConfirmOpen] = useState(false) // popup konfirmasi no. telepon
+  const [isEmailConfirmOpen, setIsEmailConfirmOpen] = useState(false) // popup konfirmasi alamat email
   const [isPaying, setIsPaying] = useState(false) // mencegah double submit saat memproses bayar
 
   // === Draf isian yang tersimpan dari kunjungan sebelumnya (localStorage) ===
@@ -419,15 +419,15 @@ export default function CheckoutPage() {
       return
     }
 
-    // Validasi lolos → JANGAN langsung bayar. Tampilkan popup konfirmasi nomor telepon dulu.
+    // Validasi lolos → JANGAN langsung bayar. Tampilkan popup konfirmasi email dulu.
     // Proses bayar sebenarnya dijalankan proceedPayment() saat user tekan "Lanjutkan Checkout".
-    setIsPhoneConfirmOpen(true)
+    setIsEmailConfirmOpen(true)
   }
 
   // Proses bayar sebenarnya — dipanggil dari popup konfirmasi ("Lanjutkan Checkout").
   async function proceedPayment() {
     if (isPaying || !selectedCourier) return
-    setIsPhoneConfirmOpen(false)
+    setIsEmailConfirmOpen(false)
     setIsPaying(true)
 
     try {
@@ -716,14 +716,15 @@ export default function CheckoutPage() {
         minOrderShortfall={minOrderShortfall}
       />
 
-      {/* === Popup konfirmasi nomor telepon (setelah validasi lolos, sebelum bayar) === */}
-      {/* "Kembali" / klik luar / X → tutup + kembalikan fokus ke field telepon untuk dikoreksi */}
-      <PhoneConfirmModal
-        open={isPhoneConfirmOpen}
-        phone={address.phone}
+      {/* === Popup konfirmasi EMAIL (setelah validasi lolos, sebelum bayar) === */}
+      {/* "Kembali" / klik luar / X → tutup + kembalikan fokus ke field email untuk dikoreksi.
+          Dulu popup ini mengonfirmasi no_telepon — lihat alasan pindahnya di EmailConfirmModal. */}
+      <EmailConfirmModal
+        open={isEmailConfirmOpen}
+        email={address.email}
         onBack={() => {
-          setIsPhoneConfirmOpen(false)
-          addressFormRef.current?.focusPhone()
+          setIsEmailConfirmOpen(false)
+          addressFormRef.current?.focusEmail()
         }}
         onConfirm={proceedPayment}
       />

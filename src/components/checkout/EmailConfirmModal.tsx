@@ -1,22 +1,35 @@
 'use client'
 
-// src/components/checkout/PhoneConfirmModal.tsx
-// Popup konfirmasi nomor telepon SEBELUM lanjut ke pembayaran. Muncul setelah validasi form lolos.
-// Modal TERPUSAT (centered) dengan overlay gelap menutupi SELURUH halaman termasuk header (z-[60] >
-// header z-30). Klik backdrop / "Kembali" / X = onBack (tetap di form, fokuskan field telepon).
-// "Lanjutkan Checkout" = onConfirm (proses bayar). Logic/behavior tidak berubah — hanya visual.
+// src/components/checkout/EmailConfirmModal.tsx
+// Popup konfirmasi ALAMAT EMAIL sebelum lanjut ke pembayaran. Muncul setelah validasi form lolos.
+// Modal TERPUSAT (centered) dengan overlay gelap menutupi SELURUH halaman termasuk header (z-[70] >
+// header z-30). Klik backdrop / "Kembali" / X = onBack (tetap di form, fokuskan field email).
+// "Lanjutkan Checkout" = onConfirm (proses bayar).
+//
+// ── Kenapa email, bukan nomor telepon ──
+// Popup ini dulu mengonfirmasi no_telepon, dengan alasan "nomor ini dipakai untuk melacak,
+// mereview, dan membatalkan pesanan". Alasan itu sudah TIDAK BENAR lagi: ketiga alur tersebut
+// berpindah ke pencarian by EMAIL (/track-order, /review, /cancel-order — lihat docs/checkout-flow.md),
+// dan invoice pembayaran juga dikirim Xendit ke email. Nomor telepon kini hanya dipakai sebagai
+// konfirmasi kedua saat membatalkan, bukan sebagai kunci pencarian.
+//
+// Membiarkan popup lama berarti pembeli diminta memeriksa dengan teliti justru field yang BUKAN
+// penentu — sementara email, satu-satunya jalan ia menerima tagihan dan menemukan pesanannya lagi,
+// lewat tanpa diperiksa. Salah ketik email adalah kesalahan yang paling mahal di halaman ini:
+// pesanannya tetap terbuat dan stok tetap terpotong, tapi pembelinya tak pernah menerima invoice
+// dan tak akan pernah bisa menemukan pesanannya sendiri.
 
 import { useEffect } from 'react'
 import { ShieldCheck, Info, X } from 'lucide-react'
 
-export default function PhoneConfirmModal({
+export default function EmailConfirmModal({
   open,
-  phone,
+  email,
   onBack,
   onConfirm,
 }: {
   open: boolean
-  phone: string // ditampilkan APA ADANYA (sudah divalidasi 08xx) — jangan diformat ulang
+  email: string // sudah dinormalisasi & divalidasi di AddressForm — jangan diformat ulang di sini
   onBack: () => void
   onConfirm: () => void
 }) {
@@ -65,18 +78,21 @@ export default function PhoneConfirmModal({
           <ShieldCheck className="h-8 w-8 text-brand-primary" />
         </div>
 
-        {/* Judul — hijau gelap, center */}
+        {/* Judul — hijau gelap, center. TEKSNYA JANGAN DIUBAH: dipakai sebagai selector di empat
+            berkas uji e2e (checkout-edge-cases, checkout-full-payment-flow,
+            checkout-order-data-integrity, xendit-va-creation). */}
         <h2 className="relative mt-4 text-center text-lg font-bold text-green-800">
           Pastikan data yang Anda masukkan benar
         </h2>
 
-        {/* Nomor telepon — badge/pill hijau muda, center */}
+        {/* Email — badge/pill hijau muda, center.
+            break-all: alamat email panjang tak boleh melebar keluar kartu di layar sempit. */}
         <div className="mt-4 flex justify-center">
-          <span className="inline-flex items-center rounded-full bg-brand-light/40 px-5 py-2 text-center text-base font-bold text-green-800">
-            {phone}
+          <span className="inline-flex max-w-full items-center break-all rounded-full bg-brand-light/40 px-5 py-2 text-center text-base font-bold text-green-800">
+            {email}
           </span>
         </div>
-        <p className="mt-2 text-center text-xs text-zinc-500">Nomor yang Anda masukkan</p>
+        <p className="mt-2 text-center text-xs text-zinc-500">Email yang Anda masukkan</p>
 
         {/* Catatan/notice — background lembut (soft pink) + ikon info bulat kiri */}
         <div className="mt-4 flex items-start gap-2.5 rounded-2xl bg-rose-50 px-4 py-3">
@@ -84,12 +100,14 @@ export default function PhoneConfirmModal({
             <Info className="h-3.5 w-3.5 text-rose-500" />
           </span>
           <p className="text-xs leading-relaxed text-rose-900/80">
-            Pastikan nomor telepon yang Anda masukkan sudah benar, karena nomor telepon ini akan
-            digunakan untuk melacak pesanan, mereview pesanan, dan membatalkan pesanan.
+            Pastikan alamat email yang Anda masukkan sudah benar, karena tagihan pembayaran akan
+            dikirim ke email ini — dan email ini pula yang dipakai untuk melacak pesanan, memberi
+            ulasan, dan membatalkan pesanan.
           </p>
         </div>
 
-        {/* Aksi — bentuk tombol DIPERTAHANKAN seperti sebelumnya (jangan diubah) */}
+        {/* Aksi — bentuk tombol DIPERTAHANKAN seperti sebelumnya (jangan diubah).
+            Label "Lanjutkan Checkout" juga dipakai sebagai selector di berkas uji e2e. */}
         <div className="mt-5 flex gap-3">
           <button
             type="button"
