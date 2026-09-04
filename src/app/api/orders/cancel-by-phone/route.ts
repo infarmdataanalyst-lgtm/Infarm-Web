@@ -1,7 +1,19 @@
 // src/app/api/orders/cancel-by-phone/route.ts
-// LANGKAH akhir pembatalan by no_telepon: batalkan pesanan setelah RE-VERIFIKASI no_telepon ke DB
+// LANGKAH akhir pembatalan: batalkan pesanan setelah RE-VERIFIKASI DUA IDENTITAS ke DB
 // (defense-in-depth — tidak percaya hasil verify sisi client) + cek status di server.
 // Set status 'Dibatalkan' + kembalikan stok. Aturan status = sama dengan alur token (/api/orders/cancel).
+//
+// ── DUA IDENTITAS, keduanya diverifikasi di sini (menutup SEC-037) ──
+// Endpoint ini dulu hanya menuntut nomor invoice + no_telepon. Halaman /cancel-order memang
+// meminta email lebih dulu lalu no_telepon sebagai konfirmasi, tetapi properti "dua identitas"
+// itu HANYA hidup di UI: siapa pun yang memanggil endpoint ini langsung tak perlu tahu email
+// pemilik pesanan sama sekali. Dibuktikan saat audit — satu request berisi orderId dan phone saja
+// membatalkan pesanan sungguhan.
+//
+// Kini `email` WAJIB ada di payload dan dicocokkan ke orders.email. Jadi pembatalan benar-benar
+// menuntut dua data berbeda dari pesanan yang sama, dan keduanya diperiksa SERVER, bukan UI.
+// Jangan melonggarkan ini kembali menjadi telepon saja: sendirian, no_telepon hanya menyembunyikan
+// 4 digit tengah (lihat maskPhone di /track) sehingga ruang tebaknya cuma 10.000.
 //
 // Perlindungan: honeypot `website` + rate limit per-IP & per-nomor (threshold lebih ketat
 // karena ini aksi destruktif — lihat @/lib/rate-limit). Menutup temuan K-1 audit keamanan
@@ -13,6 +25,7 @@ import { getOrderByOrderId, getOrderUuidByInvoice, updateOrderStatus } from '@/l
 import { restoreStock } from '@/lib/mock-db/products'
 import { recordOrderStockChanges } from '@/lib/stock-audit'
 import { normalizePhone, isValidPhone } from '@/lib/phone'
+import { normalizeEmail, isValidEmail } from '@/lib/email'
 import type { OrderFulfillmentStatus } from '@/types/order'
 import { RATE_LIMITS, enforceRateLimit, getClientIp } from '@/lib/rate-limit'
 
@@ -40,24 +53,44 @@ export async function POST(request: Request) {
 
   const orderId = typeof body.orderId === 'string' ? body.orderId.trim().replace(/^#/, '') : ''
   const rawPhone = typeof body.phone === 'string' ? body.phone : ''
+  const rawEmail = typeof body.email === 'string' ? body.email : ''
   if (!orderId) return NextResponse.json({ error: 'Pesanan tidak valid.' }, { status: 400 })
+  if (!isValidEmail(rawEmail)) {
+    return NextResponse.json({ error: 'Email tidak valid.' }, { status: 400 })
+  }
   if (!isValidPhone(rawPhone)) {
     return NextResponse.json({ error: 'Nomor telepon tidak valid.' }, { status: 400 })
   }
 
-  // Rate limit per-nomor: cegah brute-force tertarget ke satu nomor dari banyak IP
+  // Rate limit per-pesanan untuk aksi destruktif. Dikunci pada NOMOR PESANAN dengan alasan yang
+  // sama seperti verify-cancel (SEC-038): mengunci pada nilai yang ditebak berarti penebak selalu
+  // mendapat ember baru. Bedanya di sini SETIAP percobaan dihitung, bukan hanya yang gagal —
+  // membatalkan pesanan yang sama berkali-kali memang bukan perilaku wajar.
   const normalizedPhone = normalizePhone(rawPhone)
-  const limitedByPhone = enforceRateLimit(
-    `cancel-by-phone:phone:${normalizedPhone}`,
+  const email = normalizeEmail(rawEmail)
+  const limitedByOrder = enforceRateLimit(
+    `cancel-by-phone:order:${orderId}`,
     RATE_LIMITS.PHONE_WRITE_PHONE,
   )
-  if (limitedByPhone) return limitedByPhone
+  if (limitedByOrder) return limitedByOrder
 
   // Query ULANG dari DB
   const order = await getOrderByOrderId(orderId)
   if (!order) return NextResponse.json({ error: 'Pesanan tidak ditemukan.' }, { status: 404 })
 
-  // RE-VERIFIKASI kepemilikan: no_telepon input WAJIB cocok dengan no_telepon order
+  // RE-VERIFIKASI kepemilikan — DUA identitas, keduanya wajib cocok. Lihat catatan di kepala
+  // berkas: sebelum SEC-037 ditutup, hanya no_telepon yang diperiksa di sini.
+  //
+  // Pesanan lama ber-email NULL tak akan pernah lolos: normalizeEmail(undefined) menghasilkan
+  // string kosong sementara `email` dijamin tidak kosong oleh isValidEmail di atas. Itu memang
+  // diinginkan — pesanan tanpa email tak punya pemilik yang bisa dibuktikan lewat jalur ini, dan
+  // pemiliknya masih bisa memakai tautan pembatalan bertoken.
+  if (email !== normalizeEmail(order.customerEmail ?? '')) {
+    return NextResponse.json(
+      { error: 'Email tidak cocok dengan pesanan ini.' },
+      { status: 403 },
+    )
+  }
   if (normalizedPhone !== normalizePhone(order.customerPhone ?? '')) {
     return NextResponse.json(
       { error: 'Nomor telepon tidak cocok dengan pesanan ini.' },

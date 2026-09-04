@@ -566,8 +566,9 @@ header `Retry-After`. Map disapu berkala tiap 500 penulisan agar tak bocor memor
 | `EMAIL_LOOKUP_EMAIL` | 15 / jam / email | idem (cegah serangan 1 email dari banyak IP) |
 | `EMAIL_LOOKUP_IP_EMAIL_MISS` | 5 / 15 mnt / (IP+email) | idem — **hanya percobaan GAGAL** yang dihitung |
 | `PHONE_WRITE_IP` | 8 / 15 mnt / IP | `cancel-by-phone` |
-| `PHONE_WRITE_PHONE` | 5 / jam / nomor | `cancel-by-phone`, `create-by-phone` |
+| `PHONE_WRITE_PHONE` | 5 / jam / **pesanan** | `cancel-by-phone` (kunci = invoice), `create-by-phone` (kunci = nomor) |
 | `EMAIL_WRITE_EMAIL` | 5 / jam / email | `reviews/create-by-email` |
+| `CANCEL_VERIFY_ORDER_MISS` | 10 gagal / jam / **pesanan** | `verify-cancel` |
 | `MENGANTAR_IP` | 40 / menit / IP | proxy search alamat & cek ongkir |
 | `ORDER_CREATE_IP` | 3 / menit / IP | `POST /api/orders/create` |
 | `ORDER_GET_IP` | 30 / 15 mnt / IP | `GET /api/orders/get` |
@@ -583,6 +584,20 @@ header `Retry-After`. Map disapu berkala tiap 500 penulisan agar tak bocor memor
   meleset (0 pesanan / nomor tak cocok), sedangkan pemilik nomor selalu dapat hasil. Menghitung
   yang gagal saja = brute-force tetap terhenti di 5 tebakan, tapi user normal yang reload halaman
   atau mengulang pencarian nomornya sendiri **tidak pernah** kena limit.
+- **⚠️ Konfirmasi pembatalan dikunci pada PESANAN, bukan pada tebakan** (`CANCEL_VERIFY_ORDER_MISS`,
+  menutup SEC-038). Versi lama mengunci ember pada no_telepon yang sedang *dicoba*. Penebak
+  mengganti nomor tiap percobaan, jadi ia selalu mendapat ember baru dan lapis itu tak pernah
+  menyentuhnya — terukur: 14 percobaan dengan nomor berbeda lolos semua, sementara 6 percobaan
+  dengan nomor sama berhenti di percobaan keenam. Pembatasnya bekerja persis untuk pola yang
+  **tidak** dipakai penyerang. Yang tetap sama sepanjang serangan adalah **pesanan** yang diincar.
+  - **IP sengaja TIDAK ikut jadi kunci**: penyerang yang berganti IP akan mendapat ember baru
+    lagi, persis kelemahan yang ditutup. Jatah itu milik pesanannya, bukan pemanggilnya.
+  - **Angkanya melawan ruang tebak sebenarnya**: `/track` menyamarkan telepon jadi `0812****7890`,
+    jadi yang perlu ditebak cuma 4 digit tengah — 10.000 kemungkinan. 10 per jam ⇒ ±42 hari untuk
+    menyapu seluruhnya, jauh melewati masa pesanan masih boleh dibatalkan.
+  - **Tradeoff yang diterima**: penyerang bisa membakar jatah sebuah pesanan dan menunda pembatalan
+    mandiri pemiliknya selama satu jam. Jalur tautan bertoken (`/order-cancellation`) tak terpengaruh.
+  - Jangan mengembalikannya ke kunci per-nomor atau per-IP+nomor.
 - **Kenapa `EMAIL_LOOKUP_*` dibuat terpisah, bukan memakai ulang `PHONE_LOOKUP_*`**: ambangnya
   memang identik hari ini (ancamannya sama — menebak identitas orang lain untuk mengintip
   pesanannya), tapi email jauh lebih mudah ditebak daripada nomor telepon (alamat kerja berpola

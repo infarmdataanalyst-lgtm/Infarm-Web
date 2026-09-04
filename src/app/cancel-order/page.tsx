@@ -177,10 +177,18 @@ export default function CancelOrderPage() {
     setCancelling(true)
     setVerifyError('')
     try {
+      // Email ikut dikirim dan diverifikasi ulang server terhadap orders.email (SEC-037).
+      // Sebelumnya hanya orderId + phone yang dikirim, sehingga sifat "dua identitas" pada alur
+      // ini cuma ada di UI — endpointnya sendiri tak pernah menuntut email.
       const res = await fetch('/api/orders/cancel-by-phone', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId: selected.orderId, phone: confirmPhone, website: confirmHoneypot }),
+        body: JSON.stringify({
+          orderId: selected.orderId,
+          email: normalizeEmail(email),
+          phone: confirmPhone,
+          website: confirmHoneypot,
+        }),
       })
       const data = await res.json()
       if (!res.ok) {

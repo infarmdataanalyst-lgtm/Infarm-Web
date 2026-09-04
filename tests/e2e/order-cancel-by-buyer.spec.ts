@@ -246,10 +246,13 @@ test.describe.serial('Batalkan pesanan oleh pembeli (cari via email, konfirmasi 
     // Verifikasi bahwa penolakan itu dari SERVER, bukan cuma penjagaan di UI.
     //
     // Klik-klik di halaman tak bisa membuktikannya: penyerang tak memakai halaman kita. Karena itu
-    // endpoint eksekusinya dipanggil langsung, melewati seluruh langkah UI, dengan nomor salah.
-    // Inilah asersi yang benar-benar menjawab "validasi no_telepon wajib di server".
+    // endpoint eksekusinya dipanggil langsung, melewati seluruh langkah UI. Inilah asersi yang
+    // benar-benar menjawab "validasi wajib di server".
+    //
+    // Email yang BENAR sengaja dipakai di sini supaya yang diuji murni penolakan atas telepon
+    // salah — bukan tersangkut lebih dulu di penjaga email.
     const langsung = await request.post('/api/orders/cancel-by-phone', {
-      data: { orderId: pesanan.invoice, phone: teleponSalah },
+      data: { orderId: pesanan.invoice, email: pesanan.email, phone: teleponSalah },
     })
     expect(langsung.status()).toBe(403)
     expect(await langsung.json()).toMatchObject({
@@ -258,6 +261,42 @@ test.describe.serial('Batalkan pesanan oleh pembeli (cari via email, konfirmasi 
 
     // Tetap tak berubah setelah percobaan langsung itu.
     expect(await statusDiDb(pesanan.invoice)).toBe(STATUS_AWAL_DB)
+  })
+
+  test('menolak pembatalan langsung tanpa email atau dengan email orang lain (SEC-037)', async ({
+    request,
+  }) => {
+    // Menutup celah yang ditemukan audit: dulu endpoint eksekusi hanya menuntut invoice +
+    // no_telepon, sehingga sifat "dua identitas" pada alur ini cuma ada di UI. Uji ini memanggil
+    // endpointnya LANGSUNG — satu-satunya cara membuktikan email benar-benar diwajibkan server.
+    const t = token()
+    const pesanan = await seedPesanan(`e2e-batal-sec037-${t}@contoh.test`, nomorTelepon())
+    const emailOrangLain = `e2e-batal-bukan-pemilik-${token()}@contoh.test`
+
+    // Telepon BENAR di ketiga skenario — jadi satu-satunya yang menggagalkan adalah emailnya.
+    const skenario = [
+      ['tanpa email sama sekali', { orderId: pesanan.invoice, phone: pesanan.phone }, 400],
+      [
+        'email milik orang lain',
+        { orderId: pesanan.invoice, email: emailOrangLain, phone: pesanan.phone },
+        403,
+      ],
+    ] as const
+
+    for (const [nama, payload, kodeDiharapkan] of skenario) {
+      const res = await request.post('/api/orders/cancel-by-phone', { data: payload })
+      expect(res.status(), nama).toBe(kodeDiharapkan)
+      // Yang menentukan: pesanan TIDAK batal, berapa pun kode responsnya.
+      expect(await statusDiDb(pesanan.invoice), nama).toBe(STATUS_AWAL_DB)
+    }
+
+    // Pembanding positif: dengan email DAN telepon yang benar, pembatalan memang berhasil.
+    // Tanpa ini, uji di atas bisa lolos hanya karena endpointnya rusak total.
+    const sah = await request.post('/api/orders/cancel-by-phone', {
+      data: { orderId: pesanan.invoice, email: pesanan.email, phone: pesanan.phone },
+    })
+    expect(sah.status()).toBe(200)
+    expect(await statusDiDb(pesanan.invoice)).toBe(STATUS_BATAL_DB)
   })
 
   test('membatalkan pesanan saat no_telepon konfirmasi benar, dan status di DB jadi CANCELLED', async ({

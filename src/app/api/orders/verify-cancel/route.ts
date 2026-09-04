@@ -19,6 +19,11 @@ import {
   recordAttempt,
 } from '@/lib/rate-limit'
 
+// CATATAN SEC-038: ember pembatas laju di berkas ini dikunci pada NOMOR PESANAN, bukan pada
+// no_telepon yang sedang dicoba. Jangan "memperbaikinya" kembali ke kunci per-nomor atau
+// per-IP+nomor — itu persis kelemahan yang ditutup: penebak mengganti nomor tiap percobaan,
+// sehingga selalu mendapat ember baru dan tak pernah dibatasi.
+
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
@@ -52,32 +57,34 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Nomor telepon tidak valid.' }, { status: 400 })
   }
 
-  // Rate limit per-nomor: cegah brute-force tertarget ke satu nomor dari banyak IP
   const normalizedPhone = normalizePhone(rawPhone)
-  const limitedByPhone = enforceRateLimit(
-    `verify-cancel:phone:${normalizedPhone}`,
-    RATE_LIMITS.PHONE_LOOKUP_PHONE,
-  )
-  if (limitedByPhone) return limitedByPhone
 
-  // Rate limit per-kombinasi IP+nomor, hanya untuk percobaan GAGAL (nomor tidak cocok dengan
-  // pesanan). Verifikasi yang benar tidak dihitung → user asli tak terganggu.
-  const missKey = `verify-cancel:miss:${ip}:${normalizedPhone}`
-  if (isOverLimit(missKey, RATE_LIMITS.PHONE_LOOKUP_IP_PHONE_MISS)) {
-    return rateLimitResponse(RATE_LIMITS.PHONE_LOOKUP_IP_PHONE_MISS, missKey)
+  // Rate limit percobaan GAGAL, DIKUNCI PADA NOMOR PESANAN — menutup SEC-038.
+  //
+  // Versi lama mengunci ember pada no_telepon yang sedang DICOBA. Penebak mengganti nomor tiap
+  // percobaan, jadi ia selalu mendapat ember baru dan lapis itu tak pernah menyentuhnya. Yang
+  // tetap sama sepanjang serangan adalah PESANAN yang diincar, jadi itulah kunci yang benar.
+  //
+  // Sengaja TIDAK memakai IP sebagai bagian kunci: penyerang yang berganti IP akan mendapat ember
+  // baru lagi, persis kelemahan yang sedang ditutup. Konsekuensinya jatah ini dibagi seluruh dunia
+  // untuk satu pesanan — dan memang begitu yang diinginkan, karena yang dilindungi adalah
+  // pesanannya, bukan sumber permintaannya.
+  const missKey = `verify-cancel:miss:order:${orderId}`
+  if (isOverLimit(missKey, RATE_LIMITS.CANCEL_VERIFY_ORDER_MISS)) {
+    return rateLimitResponse(RATE_LIMITS.CANCEL_VERIFY_ORDER_MISS, missKey)
   }
 
   // Query ULANG dari DB (bukan dari state client)
   const order = await getOrderByOrderId(orderId)
   if (!order) {
-    recordAttempt(missKey, RATE_LIMITS.PHONE_LOOKUP_IP_PHONE_MISS)
+    recordAttempt(missKey, RATE_LIMITS.CANCEL_VERIFY_ORDER_MISS)
     return NextResponse.json({ error: 'Pesanan tidak ditemukan.' }, { status: 404 })
   }
 
   // Cocokkan no_telepon input dengan no_telepon di order (keduanya dinormalkan)
   const match = normalizedPhone === normalizePhone(order.customerPhone ?? '')
   if (!match) {
-    recordAttempt(missKey, RATE_LIMITS.PHONE_LOOKUP_IP_PHONE_MISS)
+    recordAttempt(missKey, RATE_LIMITS.CANCEL_VERIFY_ORDER_MISS)
     // Jangan bocorkan status bila nomor tak cocok
     return NextResponse.json({ match: false })
   }

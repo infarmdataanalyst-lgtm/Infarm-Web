@@ -42,6 +42,31 @@ export const RATE_LIMITS = {
   PHONE_WRITE_IP: { max: 8, windowMs: 15 * MINUTE },
   PHONE_WRITE_PHONE: { max: 5, windowMs: 60 * MINUTE },
 
+  // === Konfirmasi kepemilikan pembatalan — DIKUNCI PADA PESANAN, BUKAN PADA TEBAKAN ===
+  //
+  // Menutup SEC-038. Versi lama mengunci ember pada no_telepon yang sedang DICOBA
+  // (`verify-cancel:phone:{nomor}` dan `verify-cancel:miss:{ip}:{nomor}`). Penebak, menurut
+  // definisinya, mengganti nomor tiap percobaan — jadi ia selalu mendapat ember baru dan kedua
+  // lapis itu tak pernah menyentuhnya. Terukur: enam percobaan dengan nomor BERBEDA lolos
+  // seluruhnya, sementara enam percobaan dengan nomor SAMA berhenti di 429 pada percobaan keenam.
+  // Pembatasnya bekerja persis untuk pola yang TIDAK dipakai penyerang.
+  //
+  // Kuncinya kini NOMOR INVOICE yang sedang diserang. Itulah yang tetap sama sepanjang serangan,
+  // sehingga percobaan ke-N benar-benar terhitung sebagai percobaan ke-N.
+  //
+  // Angkanya melawan ruang tebak yang sebenarnya: /track menyamarkan telepon menjadi 0812****7890,
+  // jadi yang perlu ditebak hanya 4 digit tengah — 10.000 kemungkinan. Dengan 10 per jam per
+  // pesanan, menyapu seluruh ruang itu butuh ~42 hari, jauh melewati masa sebuah pesanan masih
+  // berstatus boleh dibatalkan.
+  //
+  // HANYA percobaan GAGAL yang dihitung, jadi pemilik sah yang mengetik nomornya sendiri dengan
+  // benar tak pernah menghabiskan jatah. TRADEOFF YANG DISENGAJA: penyerang bisa membakar jatah
+  // sebuah pesanan untuk menghalangi pemiliknya membatalkan lewat halaman ini selama satu jam.
+  // Itu diterima karena jalur tautan bertoken (/order-cancellation) tak ikut terpengaruh, dan
+  // menukar "pesanan orang lain bisa dibatalkan" dengan "pembatalan mandiri tertunda satu jam"
+  // jelas menguntungkan.
+  CANCEL_VERIFY_ORDER_MISS: { max: 10, windowMs: 60 * MINUTE },
+
   // Endpoint TULIS by email (reviews/create-by-email). Angkanya sama dengan PHONE_WRITE_PHONE
   // karena ancamannya sebangun, tapi dibuat konstanta sendiri dengan alasan yang sama seperti
   // EMAIL_LOOKUP_*: email lebih mudah ditebak daripada nomor telepon, jadi bila suatu saat perlu
