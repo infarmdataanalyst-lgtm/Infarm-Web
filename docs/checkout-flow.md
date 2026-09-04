@@ -675,23 +675,61 @@ QRIS, retail) tanpa kita membangun UI apa pun.
   dan dikurangi diskon, sementara ongkir tak punya kolom sendiri), dan daftar yang tak berjumlah
   sama dengan tagihan lebih membingungkan daripada tak ada daftar.
 
-### Notifikasi lewat WhatsApp, bukan email
+### Notifikasi lewat EMAIL (sejak 2026-09-04)
 
-`payer_email` tetap **tidak** dikirim ke Xendit meski `orders.email` kini selalu terisi sejak
-2026-08-31. Notifikasi pembayaran sengaja lewat WhatsApp: nomor telepon adalah kanal yang sudah
-terbukti dipakai pembeli (lacak/batalkan/review), sementara email baru dikumpulkan lagi dan belum
-punya pengirim apa pun (`src/emails/` masih template + preview saja). Jadi
-`customer.mobile_number` + `customer_notification_preference` diisi saluran `whatsapp` untuk keempat
-peristiwa (created/reminder/paid/expired). Menambahkan `payer_email` bisa dipertimbangkan setelah
-pengirim email benar-benar ada.
+Tagihan dikirim ke **email** pembeli. `NOTIFICATION_CHANNELS = ['email']` di
+`src/lib/xendit/invoice.ts`, dan alamatnya dikirim **dua kali**: sebagai `payer_email` (field
+tingkat atas, warisan v1 yang masih didukung v2) dan sebagai `customer.email`. Keduanya
+didokumentasikan Xendit sebagai sumber alamat notifikasi dan mana yang dipakai berbeda antar versi
+API — mengirim keduanya dengan nilai sama menghilangkan pertanyaan itu tanpa risiko konflik.
 
-- Nomor dikonversi ke E.164 oleh **`toE164Phone()`** di `src/lib/phone.ts` (`08…` → `+628…`).
-  Xendit menolak format lokal. Nomor tak valid → blok `customer` **tak dikirim sama sekali**
-  (mengirim `mobile_number` kosong ditolak).
-- ⚠️ Saluran WhatsApp harus **diaktifkan di Dashboard Xendit** (Settings → Customer notifications).
-  Bila belum, invoice tetap terbit tapi notifikasinya tak terkirim.
-- ⚠️ UNVERIFIED: sebagian versi Invoice API mewajibkan `payer_email`. Bila Xendit menolak dengan
-  `API_VALIDATION_ERROR`, nama field-nya akan muncul apa adanya di log lewat `describeXenditError()`.
+**⚠️ JEBAKAN YANG SUDAH MEMAKAN KORBAN — baca sebelum mengubah saluran notifikasi.**
+Nilai `customer_notification_preference` yang dikirim **per-invoice MENIMPA setelan Dashboard
+Xendit**. Mengganti saluran di dashboard saja TIDAK berpengaruh apa pun selama konstanta di kode
+masih berkata lain. Itulah yang terjadi sebelum 2026-09-04: dashboard sudah dialihkan ke email,
+tetapi payload masih mengirim `['whatsapp']` — dan lebih parah, alamat emailnya tak pernah ikut
+dikirim sama sekali, jadi Xendit tak punya tujuan meski salurannya benar. Dua hal harus sejalan:
+konstanta di kode **dan** Settings → Customer notifications di dashboard.
+
+Alasan lama memilih WhatsApp ("email sudah dihapus dari form checkout, `orders.email` NULL untuk
+semua pesanan baru") sudah tidak berlaku: email kembali **wajib** di checkout, divalidasi ulang di
+server (SEC-022), dan justru menjadi kunci utama pembeli tamu — lacak, ulas, dan batalkan pesanan
+semuanya dicari lewat email.
+
+- Blok notifikasi digantungkan pada **ada tidaknya email**, bukan lagi nomor telepon. Tanpa email
+  (hanya mungkin pada pesanan warisan), blok itu tak dikirim dan log menulis peringatan eksplisit —
+  invoice tetap terbit dan tetap bisa dibayar lewat tautannya, yang hilang hanya notifikasinya.
+- Nomor telepon **tidak lagi menentukan apa pun** soal notifikasi; ia hanya ikut dititipkan sebagai
+  `customer.mobile_number` bila formatnya sah (`toE164Phone()`, `08…` → `+628…`). Nomor tak valid →
+  field-nya dihilangkan, bukan dikirim kosong (Xendit menolak nilai kosong).
+- **`should_send_email` SENGAJA tidak dikirim.** Field itu ada di `CreateInvoiceRequest`, tetapi
+  panggilan manual yang terbukti mengirim email tidak menyertakannya. Menambahkannya berarti
+  menyimpang dari payload yang sudah terbukti demi field yang nilai bawaannya pun tak dinyatakan
+  dokumentasi. Jangan tambahkan tanpa pengujian ulang.
+- **`invoice_expired` dipertahankan meski tak ada di spesifikasi SDK.** `NotificationPreference`
+  pada xendit-php & xendit-go hanya memuat `invoice_created`, `invoice_reminder`, `invoice_paid` —
+  tetapi API sungguhan MENERIMA `invoice_expired` tanpa keluhan pada panggilan manual. Keduanya
+  tidak bertentangan: field tak dikenal umumnya diabaikan diam-diam, jadi paling buruk ia tak
+  berefek; bila dilayani, pembeli dapat kabar saat invoicenya kedaluwarsa dan pesanannya otomatis
+  dibatalkan.
+- **Nilai saluran yang sah**: `email` · `sms` · `whatsapp` · `viber` — huruf kecil semua.
+
+**Sumber kebenaran kontrak ini (2026-09-04), berurut kekuatannya:**
+
+1. **Panggilan manual yang TERBUKTI** mengirim email ke inbox pemilik proyek — `payer_email` +
+   `customer.email` + `customer_notification_preference` bersaluran `email`, TANPA
+   `should_send_email`. Bukti terhadap API sungguhan mengalahkan dokumentasi mana pun.
+2. SDK resmi [xendit-php](https://github.com/xendit/xendit-php/blob/master/docs/Invoice/CreateInvoiceRequest.md)
+   & [xendit-go](https://github.com/xendit/xendit-go/blob/master/docs/invoice/NotificationPreference.md),
+   di-generate dari spesifikasi OpenAPI — dipakai untuk enum saluran dan daftar field.
+
+⚠️ `docs.xendit.co` kini mengarahkan Invoice API ke Payments v3/Payment Sessions dan menyebut
+Invoice sebagai **legacy**; halaman referensi `create-invoice`-nya sudah tidak ada di indeks. Jalur
+v2 yang dipakai project ini belum mati, tapi arah Xendit jelas — pertimbangkan migrasi.
+
+Bila Xendit tetap menolak salah satu field, `describeXenditError()` menampilkan `error_code` dan
+`message` apa adanya di log (mis. `API_VALIDATION_ERROR` beserta nama field-nya) — kegagalannya
+terbaca jelas, bukan tersamar sebagai galat generik.
 
 ### `success_redirect_url` = `failure_redirect_url`
 

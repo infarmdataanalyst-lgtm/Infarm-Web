@@ -39,13 +39,19 @@ export const INVOICE_DURATION_SECONDS = 24 * 60 * 60
 
 // Saluran notifikasi ke pembeli.
 //
-// KENAPA WHATSAPP, BUKAN EMAIL: field email sudah dihapus dari form checkout — `orders.email` NULL
-// untuk semua pesanan baru, dan identitas guest di project ini murni nomor telepon. WhatsApp
-// memakai nomor yang sudah kita punya.
+// EMAIL, bukan lagi WhatsApp. Alasan lama ("field email sudah dihapus dari form checkout,
+// orders.email NULL untuk semua pesanan baru") sudah TIDAK BERLAKU: email kembali menjadi field
+// WAJIB di checkout dan kini justru menjadi kunci utama pembeli tamu — lacak pesanan, ulasan, dan
+// pembatalan semuanya dicari lewat email. Saluran WhatsApp juga tak lagi dipakai di akun Xendit
+// project ini.
 //
-// ⚠️ Saluran WhatsApp harus DIAKTIFKAN lebih dulu di Dashboard Xendit (Settings → Customer
-// notifications). Bila belum, Xendit menerima invoice-nya tapi notifikasinya tak terkirim.
-const NOTIFICATION_CHANNELS = ['whatsapp'] as const
+// ⚠️ Nilai `customer_notification_preference` yang dikirim per-invoice MENIMPA setelan Dashboard
+// Xendit. Mengganti saluran di dashboard saja tidak berpengaruh selama konstanta ini berkata lain.
+//
+// Nilai yang SAH hanya: 'email' | 'sms' | 'whatsapp' | 'viber' (huruf kecil). Diverifikasi
+// terhadap enum NotificationChannel di SDK resmi xendit-php & xendit-go, yang di-generate dari
+// spesifikasi OpenAPI Xendit. Jangan menulis 'Email' atau 'EMAIL'.
+const NOTIFICATION_CHANNELS = ['email'] as const
 
 export type XenditInvoice = {
   invoiceId: string // id invoice di Xendit → orders.id_transaksi
@@ -71,7 +77,7 @@ function asString(v: unknown): string | undefined {
   return typeof v === 'string' && v.trim().length > 0 ? v.trim() : undefined
 }
 
-// Deskripsi yang tampil di halaman pembayaran Xendit & notifikasi WhatsApp.
+// Deskripsi yang tampil di halaman pembayaran Xendit & email notifikasi ke pembeli.
 function buildDescription(order: Order): string {
   const count = order.items.length
   return `Pembayaran pesanan ${order.orderId} (${count} produk) — infarm.id`
@@ -127,8 +133,17 @@ export async function createXenditInvoice(
   // diketik siapa pun.
   const returnUrl = `${origin.replace(/\/+$/, '')}/checkout/success?invoice=${encodeURIComponent(order.orderId)}`
 
-  // Nomor WhatsApp pembeli dalam format E.164. Kosong → blok `customer` tak dikirim sama sekali
-  // (mengirim mobile_number kosong ditolak Xendit).
+  // Email pembeli — TUJUAN notifikasi invoice. Kosong → blok notifikasi tak dikirim sama sekali
+  // (lihat di bawah), karena meminta Xendit mengirim email tanpa memberi alamatnya hanya
+  // menghasilkan invoice yang notifikasinya menguap tanpa jejak.
+  //
+  // Pesanan BARU selalu punya email: field-nya wajib di checkout dan divalidasi ulang di server
+  // (SEC-022). Yang bisa kosong hanya pesanan warisan sebelum email dikembalikan ke form.
+  const payerEmail = order.customerEmail?.trim() ?? ''
+
+  // Nomor telepon dalam format E.164. TIDAK lagi menentukan apa pun soal notifikasi — hanya ikut
+  // dititipkan ke Xendit sebagai data kontak bila formatnya sah. Nomor tak valid → field-nya
+  // dihilangkan (mengirim mobile_number kosong ditolak Xendit).
   const mobileNumber = order.customerPhone ? toE164Phone(order.customerPhone) : ''
 
   const payload = {
@@ -143,12 +158,36 @@ export async function createXenditInvoice(
     // memuat ongkir dan dikurangi diskon, sementara ongkir tak punya kolom tersendiri di tabel
     // orders), dan daftar item yang tak berjumlah sama dengan tagihan lebih membingungkan pembeli
     // daripada tidak ada daftar sama sekali.
-    ...(mobileNumber
+    //
+    // ── Alamat email dikirim DUA KALI, dan itu disengaja ──
+    // `payer_email` (field tingkat atas, warisan Invoice API v1 yang masih didukung v2) dan
+    // `customer.email`. Keduanya didokumentasikan Xendit sebagai sumber alamat notifikasi, dan
+    // mana yang benar-benar dipakai berbeda antar versi API. Mengirim keduanya dengan nilai yang
+    // sama menghilangkan pertanyaan itu tanpa risiko: tak ada konflik yang mungkin terjadi.
+    ...(payerEmail
       ? {
+          payer_email: payerEmail,
+          // `should_send_email` SENGAJA TIDAK DIKIRIM. Field itu memang ada di CreateInvoiceRequest,
+          // tetapi panggilan manual yang TERBUKTI mengirim email ke inbox pemilik proyek
+          // (2026-09-04) tidak menyertakannya sama sekali. Menambahkannya berarti menyimpang dari
+          // payload yang sudah terbukti, demi field yang nilai bawaannya pun tak dinyatakan
+          // dokumentasi — risiko tanpa manfaat. Jangan tambahkan tanpa pengujian ulang.
           customer: {
             given_names: order.customerName.slice(0, 100),
-            mobile_number: mobileNumber,
+            email: payerEmail,
+            // Nomor hanya disertakan bila formatnya sah — lihat catatan di atas.
+            ...(mobileNumber ? { mobile_number: mobileNumber } : {}),
           },
+          // Catatan soal `invoice_expired`: SDK resmi Xendit (xendit-php & xendit-go, keduanya
+          // di-generate dari spesifikasi OpenAPI) HANYA memuat invoice_created, invoice_reminder,
+          // dan invoice_paid — invoice_expired tak ada di sana. TETAPI panggilan manual yang
+          // terbukti bekerja menyertakannya dan API menerimanya tanpa keluhan.
+          //
+          // Ia dipertahankan karena dua hal itu tidak bertentangan: field yang tak dikenal
+          // umumnya diabaikan diam-diam, jadi paling buruk ia tak berefek — sementara bila ia
+          // memang dilayani, pembeli mendapat kabar saat invoicenya kedaluwarsa dan pesanannya
+          // otomatis dibatalkan. Menghapusnya menukar manfaat yang mungkin dengan kerapian yang
+          // tak ada gunanya.
           customer_notification_preference: {
             invoice_created: NOTIFICATION_CHANNELS,
             invoice_reminder: NOTIFICATION_CHANNELS,
@@ -157,15 +196,22 @@ export async function createXenditInvoice(
           },
         }
       : {}),
-    // `payer_email` TIDAK dikirim — tak ada emailnya (lihat catatan di kepala file).
-    // ⚠️ UNVERIFIED: sebagian versi Invoice API mewajibkan payer_email. Bila Xendit menolak dengan
-    // API_VALIDATION_ERROR yang menyebut field itu, ia akan muncul apa adanya di log lewat
-    // describeXenditError() — bukan tersembunyi sebagai kegagalan generik.
+    // ⚠️ Bila Xendit menolak salah satu field di atas, `describeXenditError()` menampilkan
+    // `error_code` + `message` apa adanya di log (mis. API_VALIDATION_ERROR beserta nama
+    // field-nya) — bukan tersembunyi sebagai kegagalan generik.
   }
 
   console.log(
-    `${LOG} membuat invoice ${order.orderId} nominal=${order.totalAmount} wa=${mobileNumber ? 'ya' : 'tidak'} (kunci ${credentials.live ? 'LIVE' : 'test'})`,
+    `${LOG} membuat invoice ${order.orderId} nominal=${order.totalAmount} email=${payerEmail ? 'ya' : 'TIDAK ADA'} (kunci ${credentials.live ? 'LIVE' : 'test'})`,
   )
+  if (!payerEmail) {
+    // Bukan kegagalan — invoice tetap dibuat dan tetap bisa dibayar lewat tautannya. Yang hilang
+    // hanya notifikasinya. Diberi peringatan eksplisit supaya tidak terlihat seperti Xendit yang
+    // bermasalah saat pembeli mengeluh tak menerima tagihan.
+    console.warn(
+      `${LOG} ${order.orderId} TANPA email — invoice tetap terbit tapi notifikasi tak dikirim ke siapa pun.`,
+    )
+  }
 
   try {
     const res = await fetch(xenditUrl(INVOICE_PATH), {
