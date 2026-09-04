@@ -25,6 +25,11 @@ import { revalidatePath, revalidateTag } from 'next/cache'
 import { createReview, DuplicateReviewError } from '@/lib/mock-db/reviews'
 import { getOrderByOrderId } from '@/lib/mock-db/orders'
 import { normalizeEmail, isValidEmail } from '@/lib/email'
+import {
+  REVIEW_COMMENT_MAX,
+  REVIEW_COMMENT_TOO_LONG,
+  clampAuthorName,
+} from '@/lib/review-validation'
 import { RATE_LIMITS, enforceRateLimit, getClientIp } from '@/lib/rate-limit'
 
 export const runtime = 'nodejs'
@@ -68,6 +73,10 @@ export async function POST(request: Request) {
       { status: 422 },
     )
   }
+  // Batas panjang komentar — lihat @/lib/review-validation (bagian batas panjang pada SEC-042).
+  if (comment.length > REVIEW_COMMENT_MAX) {
+    return NextResponse.json({ error: REVIEW_COMMENT_TOO_LONG }, { status: 422 })
+  }
 
   // Rate limit per-email: cegah brute-force tertarget ke satu email dari banyak IP
   const email = normalizeEmail(rawEmail)
@@ -109,7 +118,7 @@ export async function POST(request: Request) {
 
   // Nama penulis diambil dari PESANAN, bukan dari body. Fallback dipakai hanya bila pesanan lama
   // benar-benar tak punya nama tersimpan.
-  const authorName = order.customerName?.trim() || 'Pelanggan Infarm'
+  const authorName = clampAuthorName(order.customerName?.trim() || 'Pelanggan Infarm')
 
   try {
     const id = await createReview({ productId, authorName, rating, comment, orderInvoice })

@@ -24,6 +24,8 @@ import {
 import { shippingWeightKg } from '@/lib/shipping-weight'
 import type { Warehouse } from '@/types/warehouse'
 import { formatRupiah } from '@/lib/format'
+import { isValidPhone } from '@/lib/phone'
+import { isValidEmail } from '@/lib/email'
 import { isPromotionExpired } from '@/types/promotion'
 import type { CreateOrderInput, OrderItem, OrderShippingAddress } from '@/types/order'
 
@@ -116,6 +118,73 @@ export async function POST(request: Request) {
   if (!isValidPayload(body)) {
     return NextResponse.json(
       { error: 'Data pesanan tidak lengkap atau tipe data salah.' },
+      { status: 422 },
+    )
+  }
+
+  // === Identitas pembeli divalidasi BENTUKNYA di server (menutup SEC-022) ===
+  //
+  // isValidPayload hanya memastikan kedua field ini bertipe string. Client memang memblokir format
+  // yang salah, tetapi endpoint ini publik dan bisa dipanggil langsung dengan string apa pun.
+  //
+  // Kenapa ini bukan sekadar kebersihan data: no_telepon dan email adalah SATU-SATUNYA pegangan
+  // pembeli tamu atas pesanannya. Kelima endpoint by-phone/by-email menuntut format yang sah
+  // sebelum mencari, jadi pesanan yang tersimpan dengan nilai malformed tidak akan pernah bisa
+  // dilacak, dibatalkan, maupun diulas oleh pemiliknya sendiri. Itu bug diam yang baru ketahuan
+  // saat pelanggan mengeluh, dan pada saat itu pesanannya sudah telanjur memotong stok.
+  //
+  // Keduanya tetap OPSIONAL seperti sebelumnya — yang ditolak hanya nilai yang DIISI tapi tak
+  // berbentuk sah. 422 dipilih agar seragam dengan penolakan payload di atas.
+  const phoneInput = body.customerPhone?.trim() ?? ''
+  if (phoneInput && !isValidPhone(phoneInput)) {
+    return NextResponse.json(
+      { error: 'Nomor telepon tidak valid. Contoh: 08123456789.' },
+      { status: 422 },
+    )
+  }
+  const emailInput = body.customerEmail?.trim() ?? ''
+  if (emailInput && !isValidEmail(emailInput)) {
+    return NextResponse.json(
+      { error: 'Email tidak valid. Contoh: nama@gmail.com' },
+      { status: 422 },
+    )
+  }
+
+  // === Diskon: TIDAK PERNAH diterima dari client (menutup SEC-013) ===
+  //
+  // Berkas ini dulu menerima `discount` mentah dari body dan hanya melakukan clamp
+  // Math.min(Math.round(discount), subtotal) — tanpa sekali pun menyentuh tabel promotions untuk
+  // memastikan promonya is_active, belum melewati end_at, sudah melewati start_at, subtotal
+  // mencapai min_purchase, atau nilai yang diklaim benar-benar sama dengan discount_value yang
+  // tersimpan. UI checkout memang tak pernah mengirim field ini, jadi lewat browser normal ia tak
+  // ter-eksploitasi; tetapi endpoint ini publik, dan satu permintaan curl berisi
+  // `discount: <subtotal>` sudah cukup untuk membayar nyaris nol tanpa promo apa pun tercapai.
+  //
+  // Sikap yang diambil: nilai nominal dari client DITOLAK, bukan diperbaiki diam-diam. Diam-diam
+  // menolnya membuat pemanggil mengira diskonnya masuk; menolak terang-terangan memberi tahu
+  // pemanggil bahwa angka uang bukan miliknya untuk ditentukan. Sikapnya sama dengan `shippingCost`
+  // dan harga item di bawah: setiap angka berdampak-uang berasal dari server.
+  //
+  // DITARUH DI SINI, bukan di dekat perhitungan totalnya, dengan sengaja: di bawah sana ia berada
+  // SESUDAH verifikasi ongkir, yang memanggil API Mengantar BERBAYAR. Permintaan yang sudah pasti
+  // ditolak tak boleh menghabiskan kuota panggilan berbayar lebih dulu — dan sebagai efeknya,
+  // penolakan ini kini bisa diuji tanpa memanggil Mengantar sama sekali.
+  //
+  // Kenapa tidak sekalian menghitung diskonnya dari tabel promotions: promo bertipe
+  // discount_nominal / discount_percent memang BELUM di-wire ke pesanan sama sekali (lihat
+  // computePromoRewards di @/lib/promo-cart yang saat ini hanya dipakai untuk TAMPILAN keranjang).
+  // Menyalakannya sebagai efek samping penutupan temuan keamanan berarti mengubah jumlah yang
+  // benar-benar ditagih ke pembeli — keputusan bisnis, bukan perbaikan keamanan. Yang wajib
+  // sekarang adalah menutup jalur kepercayaannya; perhitungan otoritatifnya menyusul bersama
+  // wiring promonya, dan tempatnya adalah di dekat perhitungan total di bawah.
+  const claimedDiscount = (body as { discount?: unknown }).discount
+  if (typeof claimedDiscount === 'number' && claimedDiscount > 0) {
+    console.warn(
+      `${LOG} Permintaan menyertakan discount=${claimedDiscount} — ditolak (SEC-013): nilai diskon ` +
+        `hanya boleh ditentukan server dari tabel promotions.`,
+    )
+    return NextResponse.json(
+      { error: 'Diskon tidak dapat ditentukan dari sisi klien.', code: 'DISCOUNT_NOT_ACCEPTED' },
       { status: 422 },
     )
   }
@@ -421,11 +490,9 @@ export async function POST(request: Request) {
     )
   }
 
-  // Diskon (promo) — clamp 0..subtotal. Wiring promo→order masih roadmap; default 0.
-  const discount =
-    typeof extra.discount === 'number' && extra.discount > 0
-      ? Math.min(Math.round(extra.discount), subtotal)
-      : 0
+  // Penolakannya sendiri sudah dilakukan JAUH DI ATAS, tepat setelah payload divalidasi — lihat
+  // blok berlabel SEC-013 di sana. Di sini yang tersisa hanya penegasan bahwa angkanya nol.
+  const discount = 0
   const totalAmount = Math.max(0, subtotal + shippingCost - discount)
 
   // === Gudang pemenuh pesanan ===

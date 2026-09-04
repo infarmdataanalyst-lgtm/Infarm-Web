@@ -82,15 +82,17 @@ export async function POST(request: Request) {
   )
   if (limitedByEmail) return limitedByEmail
 
-  // Rate limit per-kombinasi IP+email untuk percobaan GAGAL (email tanpa pesanan sama sekali) —
-  // pencarian yang membuahkan hasil tidak dihitung agar user asli tidak terblokir.
-  const missKey = `reviewable-by-email:miss:${ip}:${email}`
-  if (isOverLimit(missKey, RATE_LIMITS.EMAIL_LOOKUP_IP_EMAIL_MISS)) {
-    return rateLimitResponse(RATE_LIMITS.EMAIL_LOOKUP_IP_EMAIL_MISS, missKey)
+  // Rate limit percobaan GAGAL, DIKUNCI PADA IP SAJA. Alasannya sama persis dengan track-by-email
+  // (SEC-039): mengunci ember pada email yang sedang DICOBA berarti penyisir daftar email selalu
+  // mendapat ember baru, sehingga lapis ini tak pernah mengikat siapa pun. Pencarian yang
+  // membuahkan hasil tetap tidak dihitung agar pemilik email asli tak pernah terblokir.
+  const missKey = `reviewable-by-email:miss:ip:${ip}`
+  if (isOverLimit(missKey, RATE_LIMITS.EMAIL_LOOKUP_IP_MISS)) {
+    return rateLimitResponse(RATE_LIMITS.EMAIL_LOOKUP_IP_MISS, missKey)
   }
 
   const orders = await getOrdersByEmail(email)
-  if (orders.length === 0) recordAttempt(missKey, RATE_LIMITS.EMAIL_LOOKUP_IP_EMAIL_MISS)
+  if (orders.length === 0) recordAttempt(missKey, RATE_LIMITS.EMAIL_LOOKUP_IP_MISS)
 
   const items: ReviewableItem[] = []
   for (const order of orders) {

@@ -1,5 +1,18 @@
 // src/app/api/products/update/route.ts
 // API memperbarui produk di mock database (dari modal Edit OMS).
+//
+// ── Validator yang sama dengan create/route.ts (menutup SEC-018) ──
+// Berkas ini dulu nyaris tak mengimpor apa pun dari @/lib/product-validation, padahal create sudah
+// memakainya sepenuhnya. Akibatnya `price` hanya dicek >= 0 tanpa PRICE_MIN/PRICE_MAX, `stock`
+// hanya >= 0 tanpa STOCK_MAX dan tanpa cek bilangan bulat, `sku` tak diadu ke SKU_REGEX, `name`
+// dan `description` tanpa batas panjang, dan `images` tanpa batas MAX_PRODUCT_IMAGES — sehingga
+// produk yang TIDAK MUNGKIN dibuat lewat create bisa lahir dengan membuatnya seadanya lalu
+// mengeditnya. Ini bukan celah anonim (endpoint ini menuntut sesi admin); nilainya ada pada
+// pertahanan berlapis bila akun admin dikompromikan, dan pada data produk yang tetap bersih.
+//
+// Sifat PATCH dipertahankan: field yang TIDAK dikirim tetap tak tersentuh. Yang berubah hanya
+// nasib field yang dikirim tapi tak lolos — dulu diam-diam diabaikan, kini ditolak 422. Diam-diam
+// mengabaikan justru lebih buruk: admin melihat formnya tersimpan padahal nilainya tidak berubah.
 
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/oms-guard'
@@ -9,7 +22,18 @@ import { parseStockPerWarehouse, writeStockPerWarehouse } from '@/lib/warehouse'
 import { readStockRows } from '@/lib/mock-db/warehouses'
 import { recordAdminStockChanges } from '@/lib/stock-audit'
 import { PRODUCT_CATEGORIES } from '@/lib/data/categories'
-import { validateBerat, validateMinOrderQty } from '@/lib/product-validation'
+import {
+  validateBerat,
+  validateMinOrderQty,
+  validateName,
+  validateSkuFormat,
+  validatePrice,
+  validateOriginalPrice,
+  validateStock,
+  validateDescription,
+  MAX_PRODUCT_IMAGES,
+} from '@/lib/product-validation'
+import { validateProductImages } from '@/lib/product-image-validation'
 import type { StoredProduct } from '@/types/product'
 
 export const runtime = 'nodejs'
@@ -33,23 +57,62 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: 'id produk wajib ada.' }, { status: 400 })
   }
 
-  // Susun patch hanya dari field bertipe benar
+  // Susun patch hanya dari field bertipe benar. Setiap field yang DIKIRIM diadu ke validator yang
+  // sama persis dengan create/route.ts — lihat SEC-018 di kepala berkas.
   const patch: Partial<Omit<StoredProduct, 'id' | 'createdAt'>> = {}
-  if (typeof body.name === 'string' && body.name.trim()) patch.name = body.name.trim()
-  if (typeof body.sku === 'string' && body.sku.trim()) patch.sku = body.sku.trim()
-  if (typeof body.category === 'string' && VALID_CATEGORIES.includes(body.category)) {
+
+  if (body.name !== undefined) {
+    if (typeof body.name !== 'string') {
+      return NextResponse.json({ error: 'Nama produk tidak valid.' }, { status: 422 })
+    }
+    const nameErr = validateName(body.name)
+    if (nameErr) return NextResponse.json({ error: nameErr }, { status: 422 })
+    patch.name = body.name.trim()
+  }
+
+  if (body.sku !== undefined) {
+    if (typeof body.sku !== 'string') {
+      return NextResponse.json({ error: 'SKU tidak valid.' }, { status: 422 })
+    }
+    const skuErr = validateSkuFormat(body.sku)
+    if (skuErr) return NextResponse.json({ error: skuErr }, { status: 422 })
+    patch.sku = body.sku.trim()
+  }
+
+  if (body.category !== undefined) {
+    if (typeof body.category !== 'string' || !VALID_CATEGORIES.includes(body.category)) {
+      return NextResponse.json({ error: 'Pilih kategori produk.' }, { status: 422 })
+    }
     patch.category = body.category as StoredProduct['category']
   }
+
   // Harga jual → promo_price. Harga asli (opsional) → original_price bila > harga jual,
   // selain itu disamakan (tanpa diskon).
-  if (typeof body.price === 'number' && body.price >= 0) {
-    patch.promoPrice = body.price
+  //
+  // originalPrice sengaja hanya divalidasi bersama price: validateOriginalPrice menuntut keduanya
+  // untuk bisa menilai "harga asli harus di atas harga jual", dan modal edit OMS memang selalu
+  // mengirim keduanya sekaligus.
+  if (body.price !== undefined) {
+    const price = typeof body.price === 'number' ? body.price : ''
+    const priceErr = validatePrice(price)
+    if (priceErr) return NextResponse.json({ error: priceErr }, { status: 422 })
+
+    const originalPrice = typeof body.originalPrice === 'number' ? body.originalPrice : undefined
+    const origErr = validateOriginalPrice(originalPrice ?? '', price)
+    if (origErr) return NextResponse.json({ error: origErr }, { status: 422 })
+
+    patch.promoPrice = body.price as number
     patch.originalPrice =
-      typeof body.originalPrice === 'number' && body.originalPrice > body.price
-        ? body.originalPrice
-        : body.price
+      originalPrice !== undefined && originalPrice > (body.price as number)
+        ? originalPrice
+        : (body.price as number)
   }
-  if (typeof body.stock === 'number' && body.stock >= 0) patch.stock = body.stock
+
+  if (body.stock !== undefined) {
+    const stockErr = validateStock(typeof body.stock === 'number' ? body.stock : '')
+    if (stockErr) return NextResponse.json({ error: stockErr }, { status: 422 })
+    patch.stock = body.stock as number
+  }
   // Minimum pembelian: divalidasi ulang di server (jangan percaya form OMS)
   if (typeof body.minOrderQty === 'number') {
     const minQtyErr = validateMinOrderQty(body.minOrderQty)
@@ -63,13 +126,39 @@ export async function PATCH(request: Request) {
     if (beratErr) return NextResponse.json({ error: beratErr }, { status: 422 })
     patch.berat = body.berat as number
   }
-  if (typeof body.description === 'string') patch.description = body.description
+  if (body.description !== undefined) {
+    if (typeof body.description !== 'string') {
+      return NextResponse.json({ error: 'Deskripsi tidak valid.' }, { status: 422 })
+    }
+    const descErr = validateDescription(body.description)
+    if (descErr) return NextResponse.json({ error: descErr }, { status: 422 })
+    patch.description = body.description
+  }
+
   if (typeof body.archived === 'boolean') patch.archived = body.archived
   if (typeof body.imageUrl === 'string' && body.imageUrl.trim()) patch.imageUrl = body.imageUrl
-  // Galeri foto (opsional): array string, dibatasi maks 9 di mock-db
-  if (Array.isArray(body.images) && body.images.every((s) => typeof s === 'string')) {
+
+  // Galeri foto (opsional): array string, dibatasi MAX_PRODUCT_IMAGES — batas yang sama dengan
+  // create/route.ts dan dengan constraint DB. Dulu batas ini hanya ada di mock-db.
+  if (body.images !== undefined) {
+    if (!Array.isArray(body.images) || !body.images.every((s) => typeof s === 'string')) {
+      return NextResponse.json({ error: 'Gambar produk tidak valid.' }, { status: 422 })
+    }
+    if (body.images.length > MAX_PRODUCT_IMAGES) {
+      return NextResponse.json(
+        { error: `Maksimal ${MAX_PRODUCT_IMAGES} gambar per produk` },
+        { status: 422 },
+      )
+    }
     patch.images = body.images as string[]
   }
+
+  // Tipe, ukuran, dan ISI tiap gambar diperiksa di server (menutup SEC-019). Dilakukan di route,
+  // bukan hanya di lapisan penyimpanan, supaya admin mendapat penolakan yang JELAS — kalau hanya
+  // ditolak jauh di dalam uploadImageIfDataUrl, respons yang kembali tetap 200 dan fotonya diam-diam
+  // menghilang. Pemeriksaan di lapisan penyimpanan tetap ada sebagai pertahanan berlapis.
+  const imageError = validateProductImages({ imageUrl: body.imageUrl, images: body.images })
+  if (imageError) return NextResponse.json({ error: imageError }, { status: 422 })
 
   // Rincian stok per gudang (mode multi) — divalidasi sebelum menyentuh produk.
   const perWarehouse = parseStockPerWarehouse(body.stockPerWarehouse)

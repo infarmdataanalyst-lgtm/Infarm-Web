@@ -303,6 +303,9 @@ src/
 │   ├── recently-viewed.ts        # Riwayat "pernah dilihat" (guest, localStorage, maks 10)
 │   ├── promo-cart.ts             # Helper murni: progres/hadiah promo + relevansi & alokasi harga combo (keranjang)
 │   ├── product-validation.ts     # Validasi form produk (SKU, nama, kategori, harga jual/asli, stok, berat, deskripsi, foto)
+│   ├── product-image-validation.ts # SERVER-ONLY: whitelist tipe + magic bytes + batas ukuran data-URL gambar (SEC-019)
+│   ├── review-validation.ts      # Batas panjang komentar & nama penulis ulasan — dipakai server & client (SEC-042)
+│   ├── oms-redirect.ts           # sanitizeOmsRedirect — modul BEBAS SECRET, satu-satunya bagian alur sesi OMS yang boleh diimpor client (SEC-016)
 │   ├── warehouse.ts              # SATU pintu pergudangan: mode (DB), resolve gudang (fallback),
 │   │                             #   stok efektif, origin id (server-only; TANPA jarak/Haversine)
 │   ├── warehouse-shipping.ts     # Perbandingan ongkir riil antar gudang (paralel + cache 10 mnt)
@@ -564,7 +567,7 @@ header `Retry-After`. Map disapu berkala tiap 500 penulisan agar tak bocor memor
 | `PHONE_LOOKUP_IP_PHONE_MISS` | 5 / 15 mnt / (IP+nomor) | idem — **hanya percobaan GAGAL** yang dihitung |
 | `EMAIL_LOOKUP_IP` | 20 / 15 mnt / IP | `track-by-email`, `reviewable-by-email` |
 | `EMAIL_LOOKUP_EMAIL` | 15 / jam / email | idem (cegah serangan 1 email dari banyak IP) |
-| `EMAIL_LOOKUP_IP_EMAIL_MISS` | 5 / 15 mnt / (IP+email) | idem — **hanya percobaan GAGAL** yang dihitung |
+| `EMAIL_LOOKUP_IP_MISS` | 8 / 15 mnt / **IP** | idem — **hanya percobaan GAGAL** yang dihitung (kunci sengaja bukan IP+email, lihat SEC-039 di bawah) |
 | `PHONE_WRITE_IP` | 8 / 15 mnt / IP | `cancel-by-phone` |
 | `PHONE_WRITE_PHONE` | 5 / jam / **pesanan** | `cancel-by-phone` (kunci = invoice), `create-by-phone` (kunci = nomor) |
 | `EMAIL_WRITE_EMAIL` | 5 / jam / email | `reviews/create-by-email` |
@@ -598,6 +601,16 @@ header `Retry-After`. Map disapu berkala tiap 500 penulisan agar tak bocor memor
   - **Tradeoff yang diterima**: penyerang bisa membakar jatah sebuah pesanan dan menunda pembatalan
     mandiri pemiliknya selama satu jam. Jalur tautan bertoken (`/order-cancellation`) tak terpengaruh.
   - Jangan mengembalikannya ke kunci per-nomor atau per-IP+nomor.
+- **⚠️ Pencarian by email: ember gagal dikunci pada IP, BUKAN pada email yang ditebak**
+  (`EMAIL_LOOKUP_IP_MISS`, menutup cacat pembatas laju pada SEC-039). Versi lama memakai kunci
+  `{ip}:{email}` — cacat yang sama persis dengan SEC-038, hanya di jalur email: nilai yang sedang
+  *ditebak* ikut menjadi bagian kunci, jadi tiap email baru mendapat ember yang masih kosong dan
+  lapis ini tak pernah menyentuh siapa pun. Terukur: 12 email berbeda dulu lolos semua; sesudah
+  perbaikan, 429 muncul di percobaan ke-9. Yang tetap sama sepanjang penyisiran adalah **sumber**
+  permintaannya, jadi itulah kuncinya. Pemilik email asli selalu mendapat hasil, sehingga ia tak
+  pernah menambah hitungan ini sama sekali.
+  - Aturan umumnya, berlaku untuk seluruh tabel di atas: **kunci ember = hal yang DISERANG, bukan
+    nilai yang ditebak.** Setiap kali keduanya tertukar, pembatasnya berhenti membatasi.
 - **Kenapa `EMAIL_LOOKUP_*` dibuat terpisah, bukan memakai ulang `PHONE_LOOKUP_*`**: ambangnya
   memang identik hari ini (ancamannya sama — menebak identitas orang lain untuk mengintip
   pesanannya), tapi email jauh lebih mudah ditebak daripada nomor telepon (alamat kerja berpola
@@ -930,6 +943,64 @@ Lubang ini ditutup oleh lapis 3, bukan oleh kode.
   jadi satu bump `next` biasanya menutup sebagian besar temuan sekaligus. Setelah bump: `npx tsc
   --noEmit` + `npm run build` + smoke test guard `/oms/dashboard` (307 ke login) — advisory bypass
   proxy/middleware pernah muncul di jalur itu, jadi jangan cuma mengandalkan build hijau.
+- **HTTP security header ada di `next.config.ts`, bukan di proxy.** `X-Frame-Options: DENY`,
+  `nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy`, HSTS, dan
+  CSP **report-only** — berlaku untuk semua path (SEC-012). Dua hal yang jangan diubah tanpa sadar:
+  `Referrer-Policy` menahan token pembatalan di query string agar tak ikut terkirim lewat header
+  `Referer`; dan CSP sengaja masih report-only karena hidrasi Next memakai inline script serta
+  Turbopack dev memakai `eval` — menegakkannya butuh pipeline nonce per-request lebih dulu.
+  `preload` pada HSTS sengaja tidak dipasang: mendaftarkannya sulit dibatalkan dan itu keputusan
+  pemilik domain.
+- **Setiap angka berdampak-uang berasal dari server.** Harga item, ongkir, DAN diskon. `discount`
+  yang dikirim client kini **ditolak 422** (`DISCOUNT_NOT_ACCEPTED`), bukan di-clamp seperti dulu —
+  clamp lama `Math.min(discount, subtotal)` berarti satu permintaan curl bisa membayar nyaris nol
+  tanpa promo apa pun tercapai (SEC-013). Penolakannya sengaja diletakkan **sebelum** verifikasi
+  ongkir, supaya permintaan yang pasti ditolak tak lebih dulu menghabiskan panggilan Mengantar
+  berbayar. Saat promo `discount_nominal`/`discount_percent` di-wire nanti, hitung nilainya di
+  server dari tabel `promotions` — jangan pernah menerima nominalnya dari client.
+- **Gambar produk divalidasi di server, isinya bukan cuma klaimnya** (`@/lib/product-image-validation`,
+  SEC-019): tipe diadu ke whitelist, **isi berkas diadu ke magic bytes**, dan ukuran diperkirakan
+  dari panjang base64 **sebelum** di-decode. Dipanggil di route (agar admin dapat pesan 422 yang
+  jelas) DAN diulang di `uploadImageIfDataUrl` sebagai lapis kedua — fungsi itu satu-satunya pintu
+  ke Storage publik. Dulu mime dari data-URL dipakai apa adanya sebagai `contentType`.
+- **`products/update` wajib memakai validator yang sama dengan `products/create`** (SEC-018).
+  Tanpa itu, produk yang tak mungkin dibuat lewat create bisa lahir dengan membuatnya seadanya lalu
+  mengeditnya.
+- **Pembatalan pesanan wajib compare-and-swap** (SEC-020): `updateOrderStatus(..., expectedFrom)`
+  memasukkan status lama ke `WHERE`, sehingga dua permintaan kembar (double-click, retry, dua tab)
+  tak bisa dua-duanya lolos dan mengembalikan stok dua kali. Terukur: tanpa CAS, dua permintaan
+  serentak sama-sama 200 dan stok naik **+6** untuk pesanan berisi 3 item; dengan CAS, 200 + 409
+  dan stok naik +3. Penyesuaian stok juga memakai **increment atomik** lewat RPC
+  (`adjust_warehouse_stock_atomic` / `adjust_product_stock_atomic`), dengan jalur cadangan
+  baca-lalu-tulis bila migration-nya belum dijalankan.
+- **Jangan membedakan bentuk respons antara "tidak ada" dan "identitas salah"** (SEC-040). Pada
+  `verify-cancel` dan `cancel-by-phone`, kedua (dan ketiga) kegagalan kini menjawab **identik** —
+  selisih sekecil 404-vs-403 sudah cukup menjadikan endpoint itu oracle untuk memastikan sebuah
+  nomor invoice nyata. Pastikan pembatas lajunya juga mencatat **semua** kegagalan; kalau hanya
+  sebagian, selisih waktu sampai 429 menghidupkan kembali oracle yang baru ditutup. Prinsip ini
+  sudah lama dipegang `/api/oms/login`.
+- **Endpoint OMS wajib `requireAdmin()` sendiri** — `proxy.ts` hanya menjaga HALAMAN
+  `/oms/dashboard/*`, route `/api/*` tak tersentuh. `reviews/list` sempat terlewat dan membuka
+  ulasan yang sudah disembunyikan moderator ke publik (SEC-015).
+- **Modul pembawa secret wajib `import 'server-only'`.** `oms-auth.ts` memegang kunci penanda tangan
+  cookie sesi admin; helper yang perlu diimpor komponen client (`sanitizeOmsRedirect`) sudah
+  dipindah ke `@/lib/oms-redirect` yang bersih dari rahasia (SEC-016). Sebelumnya yang menahan
+  secret agar tak ikut ke bundle browser hanyalah tree-shaking — optimisasi, bukan jaminan.
+  Terverifikasi: mengembalikan import lama membuat **build gagal**, bukan lolos diam-diam.
+- **Jangan memakai `ilike` untuk pencocokan yang seharusnya persis.** `%` dan `_` bermakna wildcard,
+  jadi username berisi satu tanda persen dulu cocok dengan baris admin **mana pun** (SEC-023).
+  Pakai `escapeLikeWildcards()` di `admins.ts` — ia juga meng-escape `*`, karena PostgREST
+  menerjemahkannya menjadi `%` sebelum query sampai ke SQL. Input login juga dibatasi panjangnya
+  (254/1024) supaya scrypt tak bisa dijadikan beban CPU.
+- **Endpoint publik jangan mengembalikan identitas yang tak dipakai UI.** `reviewable-by-phone` dulu
+  mengembalikan `customerName` utuh tanpa mask (SEC-021); field itu dihapus, bukan di-mask, karena
+  sejak nama penulis diisi server tak ada lagi yang memakainya. Ketiga endpoint submit ulasan kini
+  mengisi `authorName` dari pesanan terverifikasi dan **tak pernah membaca** `body.authorName`
+  (SEC-007, SEC-041), serta membatasi panjang `comment` lewat `@/lib/review-validation` (SEC-042).
+- **Format `no_telepon` & `email` divalidasi di server saat checkout** (SEC-022). Keduanya tetap
+  opsional; yang ditolak hanya nilai yang diisi tapi malformed. Ini bukan sekadar kebersihan data:
+  keduanya satu-satunya pegangan pembeli tamu atas pesanannya, dan nilai malformed membuat pesanan
+  itu tak pernah bisa dilacak, dibatalkan, maupun diulas oleh pemiliknya sendiri.
 - Verifikasi webhook signature Xendit sebelum memproses event apapun (saat integrasi)
 - Cookie keranjang tidak boleh menyimpan data sensitif — hanya ID produk, quantity, price
 

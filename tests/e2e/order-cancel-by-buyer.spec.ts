@@ -255,11 +255,68 @@ test.describe.serial('Batalkan pesanan oleh pembeli (cari via email, konfirmasi 
       data: { orderId: pesanan.invoice, email: pesanan.email, phone: teleponSalah },
     })
     expect(langsung.status()).toBe(403)
+
+    // Pesannya SENGAJA tidak lagi menyebut field mana yang salah (SEC-040). Uji ini dulu menuntut
+    // "Nomor telepon tidak cocok dengan pesanan ini." — kalimat yang justru MEMBOCORKAN bahwa
+    // invoice-nya nyata dan emailnya benar, sehingga penebak tinggal memusatkan tebakan ke telepon.
     expect(await langsung.json()).toMatchObject({
-      error: 'Nomor telepon tidak cocok dengan pesanan ini.',
+      error: 'Email atau nomor telepon tidak cocok dengan pesanan ini.',
     })
 
     // Tetap tak berubah setelah percobaan langsung itu.
+    expect(await statusDiDb(pesanan.invoice)).toBe(STATUS_AWAL_DB)
+  })
+
+  test('tidak membocorkan apakah sebuah nomor invoice nyata (SEC-040)', async ({ request }) => {
+    // Inti temuannya: dua kegagalan yang berbeda dulu dijawab berbeda, sehingga siapa pun bisa
+    // MEMASTIKAN sebuah nomor invoice nyata tanpa mengetahui apa pun tentang pemiliknya — lalu
+    // memusatkan tebakan teleponnya (SEC-038) hanya ke invoice yang sudah terbukti ada, tanpa
+    // membuang jatah pembatas laju pada invoice karangan.
+    //
+    // Yang diuji di sini BUKAN isi pesannya, melainkan sifat yang sesungguhnya penting:
+    // respons untuk "invoice nyata, identitas salah" harus TAK BISA DIBEDAKAN dari respons untuk
+    // "invoice yang memang tak ada". Karena itu keduanya dibandingkan satu sama lain, bukan
+    // dengan string yang ditulis di uji ini.
+    const t = token()
+    const pesanan = await seedPesanan(`e2e-batal-sec040-${t}@contoh.test`, nomorTelepon())
+    const invoicePalsu = `INV-20260101-TIDAKADA${t}`
+
+    // — verify-cancel: invoice nyata + telepon salah  vs  invoice yang tak ada —
+    let teleponSalah = nomorTelepon()
+    while (teleponSalah === pesanan.phone) teleponSalah = nomorTelepon()
+
+    const vNyata = await request.post('/api/orders/verify-cancel', {
+      data: { orderId: pesanan.invoice, phone: teleponSalah },
+    })
+    const vPalsu = await request.post('/api/orders/verify-cancel', {
+      data: { orderId: invoicePalsu, phone: teleponSalah },
+    })
+    expect(vPalsu.status(), 'verify-cancel: kode status wajib sama').toBe(vNyata.status())
+    expect(await vPalsu.json(), 'verify-cancel: badan respons wajib sama').toEqual(
+      await vNyata.json(),
+    )
+
+    // — cancel-by-phone: invoice nyata + identitas salah  vs  invoice yang tak ada —
+    const emailOrangLain = `e2e-batal-bukan-pemilik-${token()}@contoh.test`
+    const cNyata = await request.post('/api/orders/cancel-by-phone', {
+      data: { orderId: pesanan.invoice, email: emailOrangLain, phone: teleponSalah },
+    })
+    const cPalsu = await request.post('/api/orders/cancel-by-phone', {
+      data: { orderId: invoicePalsu, email: emailOrangLain, phone: teleponSalah },
+    })
+    expect(cPalsu.status(), 'cancel-by-phone: kode status wajib sama').toBe(cNyata.status())
+    expect(await cPalsu.json(), 'cancel-by-phone: badan respons wajib sama').toEqual(
+      await cNyata.json(),
+    )
+
+    // Pembanding positif: identitas yang BENAR tetap dibedakan dari yang salah. Tanpa ini, uji di
+    // atas bisa lolos hanya karena endpointnya menjawab hal yang sama untuk segalanya.
+    const vBenar = await request.post('/api/orders/verify-cancel', {
+      data: { orderId: pesanan.invoice, phone: pesanan.phone },
+    })
+    expect(await vBenar.json()).toMatchObject({ match: true })
+
+    // Pesanan tak tersentuh oleh seluruh rangkaian di atas.
     expect(await statusDiDb(pesanan.invoice)).toBe(STATUS_AWAL_DB)
   })
 

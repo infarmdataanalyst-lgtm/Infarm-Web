@@ -6,13 +6,20 @@
 // Memakai Web Crypto (globalThis.crypto.subtle) agar jalan di edge (proxy) MAUPUN node (route).
 // Verifikasi password (scrypt) ada di modul terpisah server-only: src/lib/oms-admin.ts.
 
+// Gagalkan BUILD bila modul ini pernah tertarik ke bundle komponen client (menutup SEC-016).
+// Berkas ini memegang kunci penanda tangan cookie sesi admin; ia tak boleh sampai ke browser dalam
+// keadaan apa pun. 'server-only' aman untuk proxy.ts yang berjalan di Edge — yang dilarang paket
+// ini adalah bundle CLIENT, bukan runtime non-Node.
+import 'server-only'
+
 import { requireServerSecret } from '@/lib/server-secret'
+
+// OMS_DEFAULT_REDIRECT & sanitizeOmsRedirect SUDAH PINDAH ke @/lib/oms-redirect — keduanya satu-
+// satunya bagian alur sesi OMS yang perlu diimpor komponen client, dan menaruhnya di berkas ini
+// memaksa halaman login menarik modul pembawa secret ke import graph-nya (SEC-016).
 
 // Nama cookie sesi admin OMS.
 export const OMS_SESSION_COOKIE = 'oms_session'
-
-// Tujuan default setelah login bila tak ada ?redirect yang valid.
-export const OMS_DEFAULT_REDIRECT = '/oms/dashboard'
 
 // Umur sesi (detik): 30 hari bila "Ingat Saya", selain itu 12 jam.
 export const OMS_SESSION_MAX_AGE_REMEMBER = 60 * 60 * 24 * 30
@@ -27,18 +34,13 @@ export const OMS_SESSION_MAX_AGE_DEFAULT = 60 * 60 * 12
 // bypass login OMS sepenuhnya, tanpa perlu tahu satu pun kata sandi. Kini produksi MENOLAK
 // menandatangani bila env kosong. Menutup separuh temuan SEC-006.
 //
-// Pengambilan dibuat malas (bukan `const` tingkat modul) karena berkas ini juga mengekspor
-// sanitizeOmsRedirect yang diimpor halaman login berlabel 'use client'. Konstanta tingkat modul
-// akan dievaluasi begitu modul tertarik ke graph mana pun; fungsi tidak.
+// Pengambilan dibuat malas (bukan `const` tingkat modul): konstanta tingkat modul dievaluasi
+// begitu modul tertarik ke graph mana pun, sedangkan isi fungsi tidak. Dulu ini juga yang menahan
+// secret agar tak ikut terbaca saat halaman login mengimpor sanitizeOmsRedirect dari sini —
+// sandaran yang kini tak lagi diperlukan karena helper itu sudah pindah (lihat SEC-016 dan
+// @/lib/oms-redirect). Kelambanannya tetap dipertahankan: ia juga membuat modul ini aman diimpor
+// oleh berkas yang belum tentu berjalan di lingkungan yang punya env tersebut.
 const SESSION_SECRET_ENV = 'OMS_SESSION_SECRET'
-
-// Pastikan target redirect aman: hanya path internal area dashboard OMS (cegah open redirect
-// ke URL absolut / domain luar). Selain itu, kembalikan tujuan default.
-export function sanitizeOmsRedirect(target: string | null | undefined): string {
-  if (!target) return OMS_DEFAULT_REDIRECT
-  if (target.startsWith('/oms/dashboard')) return target
-  return OMS_DEFAULT_REDIRECT
-}
 
 // === Util base64url (tanpa padding) ===
 

@@ -76,16 +76,22 @@ export async function POST(request: Request) {
 
   // Query ULANG dari DB (bukan dari state client)
   const order = await getOrderByOrderId(orderId)
-  if (!order) {
-    recordAttempt(missKey, RATE_LIMITS.CANCEL_VERIFY_ORDER_MISS)
-    return NextResponse.json({ error: 'Pesanan tidak ditemukan.' }, { status: 404 })
-  }
 
-  // Cocokkan no_telepon input dengan no_telepon di order (keduanya dinormalkan)
-  const match = normalizedPhone === normalizePhone(order.customerPhone ?? '')
-  if (!match) {
+  // === Kedua kegagalan dijawab IDENTIK (menutup SEC-040) ===
+  //
+  // Dulu keduanya mudah dibedakan: invoice yang ADA dengan telepon salah dijawab 200 {match:false},
+  // sedangkan invoice yang TIDAK ADA dijawab 404 "Pesanan tidak ditemukan". Selisih itu menjadikan
+  // endpoint ini oracle: pemanggil dapat MEMASTIKAN sebuah nomor invoice nyata tanpa mengetahui
+  // no_telepon pemiliknya, lalu memusatkan tebakan teleponnya (SEC-038) hanya pada invoice yang
+  // sudah terbukti ada — dan tidak membuang jatah pembatas laju pada invoice karangan.
+  //
+  // Prinsip ini sudah dipegang /api/oms/login, yang sengaja menjawab sama untuk akun tidak ada
+  // maupun kata sandi salah. Di sini akhirnya diterapkan juga.
+  //
+  // Keduanya JUGA sama-sama dicatat ke pembatas laju. Kalau hanya salah satu yang dihitung,
+  // selisih waktu sampai 429 muncul akan menghidupkan kembali oracle yang baru saja ditutup.
+  if (!order || normalizedPhone !== normalizePhone(order.customerPhone ?? '')) {
     recordAttempt(missKey, RATE_LIMITS.CANCEL_VERIFY_ORDER_MISS)
-    // Jangan bocorkan status bila nomor tak cocok
     return NextResponse.json({ match: false })
   }
 

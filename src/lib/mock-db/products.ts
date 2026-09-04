@@ -16,6 +16,8 @@ import {
   returnStockToWarehouse,
   writeEffectiveStock,
 } from '@/lib/warehouse'
+import { isMissingFunction } from '@/lib/mock-db/warehouses'
+import { IMAGE_MIME_EXT, validateImageValue } from '@/lib/product-image-validation'
 import { WEIGHT_GRAM_MAX, WEIGHT_GRAM_MIN } from '@/lib/shipping-weight'
 import type {
   StoredProduct,
@@ -29,15 +31,23 @@ import type {
 
 const IMAGE_BUCKET = 'product-images'
 
-// Ekstensi file dari mime data-URL (fallback .bin)
-const MIME_EXT: Record<string, string> = {
-  'image/jpeg': 'jpg',
-  'image/png': 'png',
-  'image/webp': 'webp',
-}
-
-// Bila string berupa data-URL base64 → decode, upload ke Storage, kembalikan URL publik.
+// Bila string berupa data-URL base64 → validasi, decode, upload ke Storage, kembalikan URL publik.
 // Bila sudah URL (http) / placeholder / kosong → kembalikan apa adanya (idempoten).
+//
+// === Validasi gambar di sini adalah LAPIS KEDUA (menutup SEC-019) ===
+//
+// Lapis pertamanya ada di route (products/create & products/update) lewat validateProductImages,
+// dan di sanalah admin memperoleh pesan penolakan yang jelas. Pemeriksaan diulang di sini karena
+// fungsi ini adalah SATU-SATUNYA pintu menuju Storage publik: siapa pun yang nanti menambahkan
+// jalur tulis produk baru dan lupa memanggil validator di route-nya tetap tak bisa menembus.
+//
+// Yang dijaga, dan kenapa: MIME pada data-URL adalah KLAIM CLIENT, dan dulu nilainya dipakai apa
+// adanya sebagai contentType saat mengunggah ke bucket PUBLIK — tanpa diadu ke whitelist, tanpa
+// dicocokkan dengan isi berkasnya, dan tanpa batas ukuran sebelum Buffer.from mendekodenya.
+//
+// Di lapis ini berkas yang tak lolos dikembalikan sebagai string kosong, bukan melempar error:
+// pemanggilnya memperlakukan nilai kosong sebagai "tidak ada foto", sehingga satu gambar buruk
+// yang lolos sampai sini tidak menggagalkan seluruh penyimpanan produk. Alasannya dicatat ke log.
 async function uploadImageIfDataUrl(value: string): Promise<string> {
   if (!value || !value.startsWith('data:')) return value
 
@@ -45,8 +55,16 @@ async function uploadImageIfDataUrl(value: string): Promise<string> {
   if (!match) return value // format tak dikenal → biarkan (jangan hilangkan foto)
 
   const mime = match[1]
-  const ext = MIME_EXT[mime] ?? 'bin'
-  const buffer = Buffer.from(match[2], 'base64')
+  const base64 = match[2]
+
+  const invalid = validateImageValue(value)
+  if (invalid) {
+    console.error(`[products] Upload ditolak (${mime.slice(0, 40)}): ${invalid}`)
+    return ''
+  }
+
+  const ext = IMAGE_MIME_EXT[mime]
+  const buffer = Buffer.from(base64, 'base64')
   const path = `products/${randomUUID()}.${ext}`
 
   const supabase = createAdminClient()
@@ -371,6 +389,29 @@ export async function restoreStock(
     if (!quantity || quantity <= 0) continue
     if (variantId) continue // stok varian tidak disimpan di products.stock
     if (byProduct.has(productId)) continue // sudah ditangani jalur gudang di atas
+
+    // Increment ATOMIK (menutup SEC-020). Dulu di sini stok dibaca lebih dulu lalu ditulis kembali
+    // sebagai `product.stock + quantity` — nilai MUTLAK yang dihitung dari angka yang sudah bisa
+    // basi begitu dua pembatalan berjalan berdampingan. Kini penjumlahannya dikerjakan Postgres.
+    const { data: adjusted, error: rpcError } = await supabase.rpc('adjust_product_stock_atomic', {
+      p_product_id: productId,
+      p_delta: quantity,
+    })
+    if (!rpcError) {
+      if (adjusted === null) continue // produk dummy / tidak ada di DB → lewati dengan aman
+      continue
+    }
+    if (!isMissingFunction(rpcError)) {
+      console.error('Gagal mengembalikan stok produk (RPC):', rpcError.message)
+      continue
+    }
+
+    // Jalur cadangan selama migration RPC belum dijalankan — lihat catatan yang sama di
+    // adjustWarehouseStock. Rawan lost update, tapi lebih baik daripada stok tak kembali sama sekali.
+    console.warn(
+      '[products] RPC adjust_product_stock_atomic belum ada — memakai baca-lalu-tulis yang RAWAN ' +
+        'LOST UPDATE (SEC-020). Jalankan supabase/migrations/20260904120000_stok_increment_atomik.sql.',
+    )
     const product = await getProductById(productId)
     if (!product) continue // produk dummy / tidak ada di DB → lewati dengan aman
     const { error } = await supabase

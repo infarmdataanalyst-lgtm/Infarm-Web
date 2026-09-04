@@ -10,7 +10,9 @@ import { useState, type FormEvent } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { sanitizeOmsRedirect } from '@/lib/oms-auth'
+// Diimpor dari @/lib/oms-redirect, BUKAN @/lib/oms-auth — berkas ini 'use client', dan
+// oms-auth.ts membawa penanda tangan sesi admin. Lihat catatan SEC-016 di oms-redirect.ts.
+import { sanitizeOmsRedirect } from '@/lib/oms-redirect'
 
 export default function OmsLoginPage() {
   const router = useRouter()

@@ -112,17 +112,56 @@ export async function getAdminById(id: string): Promise<AdminIdentity | null> {
   return { id: row.id, name: row.name ?? row.username, role: toRole(row.role) }
 }
 
+// === Batas panjang input login (menutup separuh SEC-023) ===
+//
+// Tanpa batas, kolom identitas login menerima string sepanjang apa pun. Untuk password itu bukan
+// sekadar kotor: verifyPassword menjalankan scrypt, yang biayanya ikut naik bersama panjang
+// masukan — permintaan login berisi password beberapa megabyte adalah cara murah membebani CPU
+// server. Ambangnya sengaja longgar (254 = batas panjang alamat email pada RFC 5321) supaya tak
+// ada kredensial sah yang tertolak; yang ditolak hanyalah masukan yang jelas bukan kredensial.
+const USERNAME_MAX_LENGTH = 254
+const PASSWORD_MAX_LENGTH = 1024
+
+// Meng-escape karakter yang bermakna WILDCARD pada pattern matching Postgres, agar ilike kembali
+// berperilaku sebagai pencocokan persis (menutup separuh SEC-023).
+//
+// Ini BUKAN soal SQL injection — query-nya sudah terparametrisasi. Masalahnya kontrak: ilike
+// memperlakukan '%' sebagai "berapa pun karakter" dan '_' sebagai "tepat satu karakter", jadi
+// username berisi satu tanda persen tunggal cocok dengan baris admin MANA PUN. Baris pertama yang
+// terambil itu lalu diadu passwordnya — penyerang tak perlu tahu satu pun username yang sah.
+//
+// '*' ikut di-escape karena PostgREST menerjemahkannya menjadi '%' sebelum query sampai ke SQL.
+// Konsekuensi kecil yang disadari: sesudah terjemahan itu, '*' yang kita escape menjadi '%'
+// literal, jadi mengetik '*' akan mencari username yang benar-benar mengandung '%'. Tidak ada
+// dampaknya di sini karena username berupa alamat email, dan yang penting sudah tercapai: tak ada
+// lagi input yang berperilaku sebagai wildcard.
+//
+// ilike (bukan eq) DIPERTAHANKAN dengan sengaja: akun admin hanya dibuat lewat SQL manual oleh
+// operator, jadi kapitalisasi username yang tersimpan tidak bisa dijamin, dan beralih ke
+// pencocokan case-sensitive berisiko mengunci admin yang sah di luar sistemnya sendiri.
+function escapeLikeWildcards(value: string): string {
+  return value.replace(/[\\%_*]/g, (ch) => `\\${ch}`)
+}
+
 // Mencari admin aktif berdasarkan username (case-insensitive) & memverifikasi password.
 // Mengembalikan { id, name } bila cocok, atau null bila tidak ada / password salah / nonaktif.
 export async function authenticateAdmin(
   username: string,
   password: string,
 ): Promise<AdminIdentity | null> {
+  const trimmed = username.trim()
+
+  // Tolak sebelum menyentuh DB maupun scrypt — lihat catatan batas panjang di atas.
+  if (!trimmed || trimmed.length > USERNAME_MAX_LENGTH) return null
+  if (password.length > PASSWORD_MAX_LENGTH) return null
+
+  const lookup = escapeLikeWildcards(trimmed)
+
   const supabase = createAdminClient()
   let { data, error } = await supabase
     .from('admin_users')
     .select('id, username, password_hash, name, is_active, role')
-    .ilike('username', username.trim())
+    .ilike('username', lookup)
     .maybeSingle()
 
   // Kolom role belum di-migrate → login tetap harus bisa jalan (lihat catatan di getAdminById).
@@ -130,7 +169,7 @@ export async function authenticateAdmin(
     ;({ data, error } = await supabase
       .from('admin_users')
       .select('id, username, password_hash, name, is_active')
-      .ilike('username', username.trim())
+      .ilike('username', lookup)
       .maybeSingle())
   }
 

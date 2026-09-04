@@ -19,6 +19,16 @@ export function isMissingWarehouseSchema(error: { code?: string } | null): boole
   return Boolean(error?.code && MISSING_SCHEMA_CODES.has(error.code))
 }
 
+// Kode error saat sebuah FUNGSI RPC belum ada di database.
+// 42883 = "function does not exist" dari Postgres; PGRST202 = PostgREST tak menemukannya di skema.
+const MISSING_FUNCTION_CODES = new Set(['42883', 'PGRST202'])
+
+// true bila error menandakan RPC-nya belum di-migrate — pemanggil boleh jatuh ke jalur cadangan.
+// Sengaja dibedakan dari kegagalan RPC yang sesungguhnya: yang terakhir HARUS tetap dilaporkan.
+export function isMissingFunction(error: { code?: string } | null): boolean {
+  return Boolean(error?.code && MISSING_FUNCTION_CODES.has(error.code))
+}
+
 // === Pemetaan baris DB <-> tipe aplikasi ===
 
 type WarehouseRow = {
@@ -349,6 +359,34 @@ export async function adjustWarehouseStock(input: {
 }): Promise<boolean> {
   if (!input.delta) return false
   const supabase = createAdminClient()
+
+  // === Jalur UTAMA: increment atomik di SQL (menutup SEC-020) ===
+  //
+  // Penjumlahannya dikerjakan Postgres dalam SATU pernyataan UPDATE, jadi dua penyesuaian yang
+  // tiba bersamaan tidak bisa saling menimpa. Lihat supabase/migrations/20260904120000_*.sql.
+  const { data: rpcData, error: rpcError } = await supabase.rpc('adjust_warehouse_stock_atomic', {
+    p_product_id: input.productId,
+    p_variant_id: input.variantId ?? null,
+    p_warehouse_id: input.warehouseId,
+    p_delta: input.delta,
+  })
+
+  if (!rpcError) {
+    // null = barisnya memang tidak ada (bukan kegagalan) → sama seperti perilaku lama.
+    return rpcData !== null
+  }
+
+  // Fungsinya belum ada di project ini → jatuh ke pola lama agar aplikasi tetap jalan.
+  // JANGAN menghapus cabang fallback ini tanpa memastikan migration-nya sudah dijalankan di
+  // SEMUA environment; menghapusnya lebih dulu berarti stok berhenti bergerak sama sekali.
+  if (!isMissingFunction(rpcError)) {
+    console.error('Gagal menyesuaikan stok gudang (RPC):', rpcError.message)
+    return false
+  }
+  console.warn(
+    '[warehouses] RPC adjust_warehouse_stock_atomic belum ada — memakai baca-lalu-tulis yang ' +
+      'RAWAN LOST UPDATE (SEC-020). Jalankan supabase/migrations/20260904120000_stok_increment_atomik.sql.',
+  )
 
   let query = supabase
     .from('product_stock_per_warehouse')

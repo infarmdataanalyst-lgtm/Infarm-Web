@@ -799,11 +799,31 @@ export type OrderLogisticsPatch = {
 
 // Memperbarui status alur pesanan (mis. 'Dibatalkan' saat pembeli membatalkan, atau 'Dikirim'
 // dari OMS dengan mengisi ekspedisi + no resi). Field logistik hanya ditulis bila disertakan.
-// Mengembalikan order terbaru (beserta item), atau null bila tidak ditemukan.
+// Mengembalikan order terbaru (beserta item), atau null bila tidak ditemukan / status lamanya
+// sudah bukan salah satu `expectedFrom`.
+//
+// === COMPARE-AND-SWAP lewat `expectedFrom` (menutup SEC-020) ===
+//
+// Tanpa argumen ini, UPDATE-nya hanya bersyarat nomor_invoice — jadi ia BERHASIL berapa kali pun
+// dipanggil, termasuk ketika status pesanan sudah berubah sejak pemanggil terakhir memeriksanya.
+// Pada pembatalan, akibatnya nyata: dua permintaan yang tiba nyaris bersamaan (double-click, retry
+// jaringan, dua tab) sama-sama lolos pemeriksaan "status masih boleh dibatalkan", sama-sama
+// menulis CANCELLED, lalu MASING-MASING mengembalikan stok. Stok menggelembung tanpa jejak.
+//
+// Jarak antara pemeriksaan dan penulisan itulah TOCTOU-nya, dan ia tak bisa ditutup di sisi
+// aplikasi — hanya database yang bisa memutuskan siapa yang menang. Dengan `expectedFrom`, syarat
+// status ikut masuk ke WHERE, sehingga hanya SATU dari dua permintaan yang benar-benar mengubah
+// baris; yang kalah tidak mendapat baris apa pun kembali dan pemanggilnya berhenti sebelum
+// menyentuh stok.
+//
+// Argumennya OPSIONAL dengan sengaja. Jalur OMS (update-status) dan sinkronisasi resi punya mesin
+// status sendiri dan boleh menulis tanpa syarat; yang WAJIB memakainya adalah jalur yang diikuti
+// efek samping tak bisa diulang — pembatalan, karena ia mengembalikan stok.
 export async function updateOrderStatus(
   orderId: string,
   status: OrderFulfillmentStatus,
   logistics?: OrderLogisticsPatch,
+  expectedFrom?: OrderFulfillmentStatus[],
 ): Promise<Order | null> {
   const supabase = createAdminClient()
   const patch: Record<string, string> = { order_status: STATUS_TO_DB[status] }
@@ -811,12 +831,15 @@ export async function updateOrderStatus(
   if (logistics?.service !== undefined) patch.jenis_layanan = logistics.service
   if (logistics?.trackingNumber !== undefined) patch.no_tracking = logistics.trackingNumber
 
-  const { data, error } = await supabase
-    .from('orders')
-    .update(patch)
-    .eq('nomor_invoice', orderId)
-    .select('id')
-    .maybeSingle()
+  let query = supabase.from('orders').update(patch).eq('nomor_invoice', orderId)
+  if (expectedFrom && expectedFrom.length > 0) {
+    query = query.in(
+      'order_status',
+      expectedFrom.map((s) => STATUS_TO_DB[s]),
+    )
+  }
+
+  const { data, error } = await query.select('id').maybeSingle()
 
   if (error) {
     console.error('Gagal memperbarui status pesanan di Supabase:', error.message)

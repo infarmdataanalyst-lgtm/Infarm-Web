@@ -21,6 +21,7 @@ import {
   validateImages,
   MAX_PRODUCT_IMAGES,
 } from '@/lib/product-validation'
+import { validateProductImages } from '@/lib/product-image-validation'
 import type { CreateProductInput, ProductCategory } from '@/types/product'
 
 // 'fs' butuh runtime Node.js (bukan Edge)
@@ -113,6 +114,12 @@ export async function POST(request: Request) {
   if ('error' in result) {
     return NextResponse.json({ error: result.error }, { status: 422 })
   }
+
+  // Tipe, ukuran, dan ISI tiap gambar diperiksa di server (menutup SEC-019). validatePayload di
+  // atas hanya memastikan gambar berupa array string dan jumlahnya wajar — ia sama sekali tidak
+  // melihat APA isi string itu.
+  const imageError = validateProductImages(result.input)
+  if (imageError) return NextResponse.json({ error: imageError }, { status: 422 })
 
   // Rincian stok per gudang (mode multi). Divalidasi SEBELUM produk dibuat agar payload cacat
   // tidak meninggalkan produk tanpa stok yang benar.

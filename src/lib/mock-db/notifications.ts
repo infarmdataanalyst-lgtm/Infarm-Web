@@ -18,7 +18,7 @@
 import { createAdminClient } from '@/lib/supabase/server'
 import { readProducts } from '@/lib/mock-db/products'
 
-export type NotificationType = 'pesanan_baru' | 'stok_habis'
+export type NotificationType = 'pesanan_baru' | 'stok_habis' | 'ulasan_baru'
 
 export type OmsNotification = {
   // id stabil lintas request (`order:<invoice>` / `stock:<productId>`) supaya React punya key
@@ -143,6 +143,69 @@ async function buildStockNotifications(): Promise<OmsNotification[]> {
     }))
 }
 
+// === Sumber 3: ulasan yang belum ditanggapi admin (menutup SEC-042) ===
+//
+// Ulasan TAYANG SEKETIKA: kolom reviews.visible berdefault true dan createReview sengaja tidak
+// mengirim kolom itu, jadi setiap ulasan yang lolos verifikasi kepemilikan langsung terlihat di
+// halaman produk tanpa persetujuan siapa pun. Untuk toko sebesar ini, "terbitkan dulu, moderasi
+// belakangan" adalah pilihan yang wajar — ASALKAN disengaja. Yang benar-benar kurang bukan
+// mekanisme persetujuannya, melainkan cara admin MENGETAHUI ada ulasan baru yang perlu dilihat:
+// sebelum ini tak ada antrean, tak ada pemberitahuan, tak ada apa pun. Konten tidak pantas bisa
+// tayang berhari-hari sampai kebetulan ada yang membuka halaman Ulasan di OMS.
+//
+// Yang dianggap "butuh perhatian" adalah ulasan yang MASIH TAYANG dan BELUM DIBALAS admin. Dua
+// syarat itu dipilih supaya notifikasinya ikut aturan main berkas ini: notifikasi di sini adalah
+// KEADAAN, bukan peristiwa, jadi ia harus bisa hilang sendiri ketika admin menanganinya. Membalas
+// ulasan ATAU menyembunyikannya sama-sama membuat notifikasinya lenyap — dua-duanya bentuk
+// "sudah ditangani". Kalau syaratnya sekadar "ulasan ada", lencananya tak akan pernah bisa nol.
+type PendingReviewRow = {
+  id: string
+  author_name: string | null
+  rating: number | null
+  comment: string | null
+  created_at: string
+  products: { name: string | null } | null
+}
+
+// Potong komentar untuk pratinjau di panel notifikasi — panel ini sempit, dan komentar boleh
+// sampai REVIEW_COMMENT_MAX karakter.
+function previewComment(comment: string | null): string {
+  const text = (comment ?? '').trim().replace(/\s+/g, ' ')
+  if (!text) return 'tanpa komentar'
+  return text.length > 80 ? `${text.slice(0, 80)}…` : text
+}
+
+async function buildReviewNotifications(): Promise<OmsNotification[]> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('reviews')
+    .select('id, author_name, rating, comment, created_at, products!reviews_product_id_fkey(name)')
+    .eq('visible', true)
+    .is('reply', null)
+    .order('created_at', { ascending: false })
+    .limit(SOURCE_LIMIT)
+
+  if (error) {
+    console.error('Gagal membaca notifikasi ulasan:', error.message)
+    return []
+  }
+
+  return ((data as unknown as PendingReviewRow[]) ?? []).map((row) => {
+    const product = row.products?.name?.trim() || '(produk dihapus)'
+    const author = row.author_name?.trim() || 'Pembeli'
+    const stars = '★'.repeat(Math.max(0, Math.min(5, row.rating ?? 0)))
+    return {
+      id: `review:${row.id}`,
+      type: 'ulasan_baru' as const,
+      title: `Ulasan baru ${stars} untuk ${product}`,
+      message: `dari ${author} — ${previewComment(row.comment)}`,
+      href: '/oms/dashboard/reviews',
+      createdAt: row.created_at,
+      unread: false, // diisi pemanggil setelah lastSeen diketahui
+    }
+  })
+}
+
 // === Gabungan ===
 
 // Mengurutkan terbaru dulu. Notifikasi tanpa waktu (produk habis tanpa jejak mutasi) ditaruh
@@ -163,9 +226,13 @@ export async function getOmsNotifications(options: {
 }): Promise<NotificationPage> {
   const { lastSeen, limit = 10, offset = 0 } = options
 
-  const [orders, stock] = await Promise.all([buildOrderNotifications(), buildStockNotifications()])
+  const [orders, stock, reviews] = await Promise.all([
+    buildOrderNotifications(),
+    buildStockNotifications(),
+    buildReviewNotifications(),
+  ])
 
-  const all = [...orders, ...stock]
+  const all = [...orders, ...stock, ...reviews]
     .map((n) => ({
       ...n,
       // Notifikasi tanpa waktu dihitung belum dibaca HANYA sebelum admin pernah membuka panel.

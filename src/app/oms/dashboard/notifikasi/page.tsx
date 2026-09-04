@@ -12,10 +12,10 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ChevronLeft, ChevronRight, PackageX, ShoppingCart } from 'lucide-react'
+import { ChevronLeft, ChevronRight, MessageSquare, PackageX, ShoppingCart } from 'lucide-react'
 import OmsHeader from '@/components/oms/OmsHeader'
 
-type NotificationType = 'pesanan_baru' | 'stok_habis'
+type NotificationType = 'pesanan_baru' | 'stok_habis' | 'ulasan_baru'
 
 type NotificationItem = {
   id: string
@@ -136,11 +136,15 @@ export default function NotifikasiPage() {
                   className={`flex h-9 w-9 flex-none items-center justify-center rounded-full ${
                     n.type === 'stok_habis'
                       ? 'bg-red-50 text-red-600'
-                      : 'bg-emerald-50 text-emerald-700'
+                      : n.type === 'ulasan_baru'
+                        ? 'bg-amber-50 text-amber-600'
+                        : 'bg-emerald-50 text-emerald-700'
                   }`}
                 >
                   {n.type === 'stok_habis' ? (
                     <PackageX className="h-4 w-4" aria-hidden />
+                  ) : n.type === 'ulasan_baru' ? (
+                    <MessageSquare className="h-4 w-4" aria-hidden />
                   ) : (
                     <ShoppingCart className="h-4 w-4" aria-hidden />
                   )}

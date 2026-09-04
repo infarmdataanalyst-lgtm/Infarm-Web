@@ -98,9 +98,19 @@ export async function PATCH(request: Request) {
     )
   }
 
-  const updated = await updateOrderStatus(orderId, 'Dibatalkan')
+  // COMPARE-AND-SWAP: status lama ikut menjadi syarat UPDATE (SEC-020). Pemeriksaan status di atas
+  // hanya melihat keadaan pada SAAT ITU — dua permintaan kembar (double-click, retry jaringan, dua
+  // tab, atau tautan pembatalan yang diklik dua kali) sama-sama bisa melewatinya. Hanya satu yang
+  // akan mendapat baris kembali dari sini; sisanya berhenti sebelum stok dikembalikan dua kali.
+  const updated = await updateOrderStatus(orderId, 'Dibatalkan', undefined, CANCELLABLE_STATUSES)
   if (!updated) {
-    return NextResponse.json({ error: 'Gagal memperbarui status pesanan.' }, { status: 500 })
+    return NextResponse.json(
+      {
+        error: 'Pesanan ini sudah dibatalkan atau statusnya berubah. Muat ulang halaman.',
+        order: toPublicOrder(order),
+      },
+      { status: 409 },
+    )
   }
 
   // Lepaskan kembali stok yang dialokasikan untuk pesanan ini (produk OMS).

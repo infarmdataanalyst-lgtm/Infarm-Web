@@ -33,6 +33,7 @@ import Image from 'next/image'
 import { Search, Star, CheckCircle2 } from 'lucide-react'
 import { getGuestEmail } from '@/lib/guest-email'
 import { isValidEmail, normalizeEmail } from '@/lib/email'
+import { REVIEW_COMMENT_MAX } from '@/lib/review-validation'
 
 // Item yang bisa diulas — tanpa data pribadi apa pun (lihat catatan nama tampilan di atas).
 type ReviewableItem = {
@@ -335,11 +336,17 @@ function ReviewForm({
           <textarea
             id="comment"
             rows={4}
+            /* Batas yang sama ditegakkan ulang di server (lihat @/lib/review-validation). Di sini
+               perannya cuma memberi tahu pengguna sebelum ia mengetik terlalu jauh. */
+            maxLength={REVIEW_COMMENT_MAX}
             value={comment}
             onChange={(e) => setComment(e.target.value)}
             placeholder="Bagikan pengalaman Anda dengan produk ini…"
             className="w-full resize-none rounded-xl border border-gray-300 px-4 py-2.5 text-sm text-gray-900 focus:border-brand-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
           />
+          <p className="mt-1 text-right text-xs text-gray-400">
+            {comment.length}/{REVIEW_COMMENT_MAX}
+          </p>
         </div>
 
         {/* Nama penulis diisi server dari pesanan — tak ada input di sini (lihat kepala berkas) */}

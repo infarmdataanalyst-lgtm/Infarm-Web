@@ -85,16 +85,22 @@ export async function POST(request: Request) {
   )
   if (limitedByEmail) return limitedByEmail
 
-  // Rate limit per-kombinasi IP+email. Hanya dihitung untuk percobaan GAGAL (email tanpa pesanan) —
-  // penebak email orang lain hampir selalu meleset, sedangkan user asli selalu dapat hasil, jadi
-  // pencarian berulang atas emailnya sendiri (mis. reload halaman) tidak pernah kena limit ini.
-  const missKey = `track-by-email:miss:${ip}:${email}`
-  if (isOverLimit(missKey, RATE_LIMITS.EMAIL_LOOKUP_IP_EMAIL_MISS)) {
-    return rateLimitResponse(RATE_LIMITS.EMAIL_LOOKUP_IP_EMAIL_MISS, missKey)
+  // Rate limit percobaan GAGAL, DIKUNCI PADA IP SAJA — menutup cacat pembatas laju pada SEC-039.
+  //
+  // Versi lama mengunci ember pada `{ip}:{email}`, yaitu ikut memakai NILAI YANG SEDANG DITEBAK
+  // sebagai bagian kunci. Penyisir daftar email karena itu selalu mendapat ember baru dan lapis ini
+  // tak pernah menyentuhnya sama sekali — cacat yang sama persis dengan SEC-038, hanya di jalur
+  // email. Yang tetap sama sepanjang penyisiran adalah SUMBER permintaannya, jadi itulah kuncinya.
+  //
+  // Hanya percobaan MELESET yang dihitung: pemilik email selalu mendapat hasil, jadi berapa kali
+  // pun ia me-reload halamannya sendiri, hitungan ini tak pernah bertambah untuknya.
+  const missKey = `track-by-email:miss:ip:${ip}`
+  if (isOverLimit(missKey, RATE_LIMITS.EMAIL_LOOKUP_IP_MISS)) {
+    return rateLimitResponse(RATE_LIMITS.EMAIL_LOOKUP_IP_MISS, missKey)
   }
 
   const orders = await getOrdersByEmail(email)
-  if (orders.length === 0) recordAttempt(missKey, RATE_LIMITS.EMAIL_LOOKUP_IP_EMAIL_MISS)
+  if (orders.length === 0) recordAttempt(missKey, RATE_LIMITS.EMAIL_LOOKUP_IP_MISS)
 
   // Petakan ke bentuk non-sensitif saja
   const publicOrders: PublicTrackOrder[] = orders.map((o) => ({

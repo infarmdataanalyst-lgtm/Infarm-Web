@@ -1,7 +1,23 @@
 // src/app/api/reviews/reviewable-by-phone/route.ts
 // LANGKAH 1 fitur review by no_telepon: cari semua pesanan milik no_telepon, kumpulkan produk yang
 // BELUM diulas untuk tiap pesanan (cek order_invoice + product_id di tabel reviews). Pesanan yang
-// dibatalkan dikecualikan (tak bisa diulas). Output non-sensitif (foto+nama produk+invoice+nama untuk auto-fill).
+// dibatalkan dikecualikan (tak bisa diulas). Output non-sensitif: foto + nama produk + invoice.
+//
+// ⚠ ENDPOINT INI SUDAH TIDAK PUNYA PEMANGGIL. Halaman /review berpindah ke pencarian by email
+// (/api/reviews/reviewable-by-email). Berkasnya dipertahankan agar rute yang mungkin dipakai
+// integrasi luar tidak hilang mendadak, tetapi jangan menambah pemanggil baru ke sini.
+//
+// ── customerName DIHAPUS dari respons (menutup SEC-021) ──
+// Field itu dulu dikembalikan UTUH tanpa mask, berbeda dari track-by-phone yang konsisten memakai
+// maskName(). Dikombinasikan dengan brute-force nomor telepon, endpoint ini langsung memberi
+// pasangan (nomor telepon sah → nama lengkap pemiliknya) — justru lebih sensitif daripada nama
+// ter-mask di endpoint saudaranya.
+//
+// DIHAPUS, bukan di-mask, karena satu-satunya alasan field ini pernah ada adalah mengisi otomatis
+// input "Nama Tampilan" di halaman ulasan — input yang sudah tidak ada lagi sejak nama penulis
+// diisi server dari pesanan yang terverifikasi. Mengembalikan nama yang tak dipakai siapa pun
+// berarti membayar risiko PII tanpa memperoleh apa pun. Bentuk respons kini sama persis dengan
+// reviewable-by-email, yang memang sengaja tidak mengembalikan nama.
 //
 // Perlindungan: honeypot `website` + rate limit per-IP & per-nomor (lihat @/lib/rate-limit).
 // Menutup temuan K-1 audit keamanan 2026-07-24 (docs/security/audit-2026-07-24.md).
@@ -22,13 +38,13 @@ import {
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-// Satu produk yang bisa diulas (dari sebuah pesanan)
+// Satu produk yang bisa diulas (dari sebuah pesanan). TANPA identitas pemesan — baca catatan
+// SEC-021 di kepala berkas sebelum menambahkan field apa pun ke sini.
 type ReviewableItem = {
   orderInvoice: string
   productId: string
   name: string
   imageUrl: string | null
-  customerName: string // untuk auto-fill nama tampilan (bisa diedit user)
 }
 
 export async function POST(request: Request) {
@@ -90,7 +106,6 @@ export async function POST(request: Request) {
         productId: it.productId,
         name: it.name,
         imageUrl: it.imageUrl ?? null,
-        customerName: order.customerName,
       })
     }
   }

@@ -33,10 +33,23 @@ export const RATE_LIMITS = {
   // tanpa ikut memperketat jalur telepon.
   EMAIL_LOOKUP_IP: { max: 20, windowMs: 15 * MINUTE }, // throttle umum per sumber
   EMAIL_LOOKUP_EMAIL: { max: 15, windowMs: 60 * MINUTE }, // anti brute-force tertarget 1 email
-  // Kombinasi IP + email yang dicoba. Sama seperti versi telepon: HANYA percobaan GAGAL (email
-  // tanpa pesanan) yang dihitung, sehingga pemilik email yang me-reload halamannya sendiri tidak
-  // pernah tersentuh limit ini, sementara penebak berhenti di 5 percobaan meleset.
-  EMAIL_LOOKUP_IP_EMAIL_MISS: { max: 5, windowMs: 15 * MINUTE },
+
+  // === Percobaan GAGAL pencarian by email — DIKUNCI PADA SUMBER, BUKAN PADA EMAIL YANG DICOBA ===
+  //
+  // Dulu bernama EMAIL_LOOKUP_IP_EMAIL_MISS dan embernya dikunci pada `{ip}:{email}`. Itu cacat
+  // yang sama dengan SEC-038, hanya di jalur lain: yang DITEBAK penyerang justru dijadikan bagian
+  // kunci ember, sehingga setiap email baru yang ia coba mendapat ember yang masih kosong dan
+  // lapis ini tak pernah sekali pun menyentuhnya. Yang benar-benar mengikat hanyalah
+  // EMAIL_LOOKUP_IP — 20 permintaan per 15 menit, longgar untuk penyisiran daftar email.
+  //
+  // Kini kuncinya HANYA IP, dan hanya percobaan MELESET yang dihitung. Pembagian perannya jelas:
+  // EMAIL_LOOKUP_IP membatasi laju semua orang, sedangkan lapis ini menghukum pola yang khas
+  // penebak — meleset berkali-kali. Pemilik email yang me-reload halamannya sendiri selalu
+  // mendapat hasil, jadi ia tak pernah menambah hitungan ini sama sekali.
+  //
+  // Ambangnya lebih ketat daripada EMAIL_LOOKUP_IP dengan sengaja: 8 kali meleset dari satu sumber
+  // sudah lebih banyak daripada yang wajar dilakukan orang yang sekadar salah ketik emailnya.
+  EMAIL_LOOKUP_IP_MISS: { max: 8, windowMs: 15 * MINUTE },
 
   // Endpoint TULIS/destruktif by no_telepon (cancel-by-phone)
   PHONE_WRITE_IP: { max: 8, windowMs: 15 * MINUTE },

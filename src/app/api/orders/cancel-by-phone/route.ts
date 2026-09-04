@@ -76,24 +76,34 @@ export async function POST(request: Request) {
 
   // Query ULANG dari DB
   const order = await getOrderByOrderId(orderId)
-  if (!order) return NextResponse.json({ error: 'Pesanan tidak ditemukan.' }, { status: 404 })
 
-  // RE-VERIFIKASI kepemilikan — DUA identitas, keduanya wajib cocok. Lihat catatan di kepala
-  // berkas: sebelum SEC-037 ditutup, hanya no_telepon yang diperiksa di sini.
+  // === RE-VERIFIKASI kepemilikan — DUA identitas, keduanya wajib cocok ===
+  //
+  // Lihat catatan di kepala berkas: sebelum SEC-037 ditutup, hanya no_telepon yang diperiksa.
   //
   // Pesanan lama ber-email NULL tak akan pernah lolos: normalizeEmail(undefined) menghasilkan
   // string kosong sementara `email` dijamin tidak kosong oleh isValidEmail di atas. Itu memang
   // diinginkan — pesanan tanpa email tak punya pemilik yang bisa dibuktikan lewat jalur ini, dan
   // pemiliknya masih bisa memakai tautan pembatalan bertoken.
-  if (email !== normalizeEmail(order.customerEmail ?? '')) {
+  //
+  // ── SATU respons untuk KETIGA kegagalan (menutup SEC-040) ──
+  // Sebelumnya perbedaannya terus terang: 404 "Pesanan tidak ditemukan" versus 403 yang menyebut
+  // persis identitas mana yang tak cocok. Pemanggil karena itu bisa memastikan sebuah invoice
+  // nyata tanpa tahu apa pun tentang pemiliknya, lalu memusatkan tebakannya hanya ke invoice yang
+  // sudah terbukti ada. Lebih buruk lagi, pesan yang memisahkan "email salah" dari "telepon salah"
+  // mengubah satu tebakan gabungan menjadi dua tebakan terpisah yang jauh lebih murah.
+  //
+  // Kini ketiganya menghasilkan status DAN kalimat yang sama persis. Harga yang dibayar disadari:
+  // pemilik sah yang salah ketik tak lagi diberi tahu field mana yang keliru. Itu trade-off yang
+  // sama yang sudah diterima /api/oms/login, dan pada aksi destruktif seperti ini nilainya lebih
+  // besar daripada di form biasa.
+  const ownershipOk =
+    !!order &&
+    email === normalizeEmail(order.customerEmail ?? '') &&
+    normalizedPhone === normalizePhone(order.customerPhone ?? '')
+  if (!order || !ownershipOk) {
     return NextResponse.json(
-      { error: 'Email tidak cocok dengan pesanan ini.' },
-      { status: 403 },
-    )
-  }
-  if (normalizedPhone !== normalizePhone(order.customerPhone ?? '')) {
-    return NextResponse.json(
-      { error: 'Nomor telepon tidak cocok dengan pesanan ini.' },
+      { error: 'Email atau nomor telepon tidak cocok dengan pesanan ini.' },
       { status: 403 },
     )
   }
@@ -110,9 +120,17 @@ export async function POST(request: Request) {
     )
   }
 
-  const updated = await updateOrderStatus(orderId, 'Dibatalkan')
+  // COMPARE-AND-SWAP: status lama ikut menjadi syarat UPDATE (SEC-020). Pemeriksaan `current` di
+  // atas hanya melihat keadaan pada SAAT ITU; di antara pemeriksaan dan penulisan, permintaan
+  // kembar bisa menyelinap. Hanya satu yang akan mendapat baris kembali dari sini.
+  const updated = await updateOrderStatus(orderId, 'Dibatalkan', undefined, CANCELLABLE)
   if (!updated) {
-    return NextResponse.json({ error: 'Gagal memperbarui status pesanan.' }, { status: 500 })
+    // Kalah lomba (atau statusnya berubah dari sisi OMS sejak pemeriksaan di atas). Jangan
+    // meneruskan ke pengembalian stok — pemenangnya sudah melakukannya.
+    return NextResponse.json(
+      { error: 'Pesanan ini sudah dibatalkan atau statusnya berubah. Muat ulang halaman.' },
+      { status: 409 },
+    )
   }
 
   // Kembalikan stok yang dialokasikan untuk pesanan ini, ke gudang pemenuhnya
