@@ -216,6 +216,17 @@ export default function CheckoutPage() {
     })
   }, [checkoutCookieItems, productById])
 
+  // Peta productId → comboId dari cookie checkout (SEC-033). Sengaja TIDAK dititipkan ke
+  // CheckoutItem: comboId tak dipakai untuk menampilkan apa pun di halaman ini, ia hanya perlu
+  // ikut terkirim ke server agar harga paket bisa diverifikasi ulang dari DB.
+  const comboIdByProduct = useMemo(
+    () =>
+      new Map(
+        checkoutCookieItems.filter((ci) => ci.comboId).map((ci) => [ci.productId, ci.comboId!]),
+      ),
+    [checkoutCookieItems],
+  )
+
   // Kode sudah berjalan di browser (cookie hanya terbaca di klien).
   const hydrated = useSyncExternalStore(
     subscribeNothing,
@@ -448,6 +459,9 @@ export default function CheckoutPage() {
             quantity: item.quantity,
             price: item.price, // diabaikan server — harga otoritatif diambil dari DB/varian (K-3)
             variantId: item.variantId, // server pakai untuk harga & stok varian (Tahap 4)
+            // Penanda paket. Server memakainya untuk MENCARI harga combo di DB lalu mengalokasikan
+            // ulang sendiri — bukan untuk mempercayai harga di `price` (SEC-033).
+            comboId: comboIdByProduct.get(item.id),
           })),
           // Server menghitung ulang total dari harga DB + ongkir + diskon (totalAmount client diabaikan)
           totalAmount: total, // dikirim untuk kompatibilitas; server tetap hitung ulang

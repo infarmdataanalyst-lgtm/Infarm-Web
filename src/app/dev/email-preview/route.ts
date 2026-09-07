@@ -3,10 +3,18 @@
 // Membaca src/emails/order-confirmation.html lalu mengisi placeholder dengan data contoh,
 // agar bisa dilihat di browser (http://localhost:3000/dev/email-preview) seperti email asli.
 // Hanya untuk preview lokal — bukan bagian alur pengiriman email produksi.
+//
+// ── Kenapa ada gate NODE_ENV (SEC-027) ──
+// Route ini dulu tak punya gate sama sekali, jadi ikut hidup di produksi. Dampaknya kecil tapi
+// nyata: markup template bocor ke publik, dan tiap permintaan memicu readFile di fungsi
+// serverless. Polanya menyalin src/app/test-xendit/page.tsx — notFound(), bukan 403, supaya dari
+// luar route ini tak bisa dibedakan dari path yang memang tak ada.
 
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
+import { notFound } from 'next/navigation'
 import { NextResponse } from 'next/server'
+import { renderEmailTemplate } from '@/lib/email-template'
 
 // Butuh runtime Node.js (akses filesystem) & selalu baca file terbaru saat preview
 export const runtime = 'nodejs'
@@ -28,16 +36,20 @@ const SAMPLE: Record<string, string> = {
     '<td align="right" style="padding:8px 0; color:#9A9A9A;">&ndash;</td></tr>',
 }
 
+// Placeholder yang isinya memang markup buatan kita sendiri, jadi TIDAK boleh di-escape.
+// Daftar ini sengaja pendek dan eksplisit — menambah entri baru ke sini berarti menyatakan bahwa
+// nilainya tak akan pernah dirangkai langsung dari input pelanggan.
+const RAW_PLACEHOLDERS = ['item_list'] as const
+
 // GET: kembalikan HTML template yang placeholder-nya sudah terisi data contoh.
 export async function GET() {
+  // Preview developer tak punya alasan hidup di luar mesin pengembang.
+  if (process.env.NODE_ENV !== 'development') notFound()
+
   try {
     const filePath = path.join(process.cwd(), 'src', 'emails', 'order-confirmation.html')
-    let html = await readFile(filePath, 'utf-8')
-
-    // Ganti tiap {{key}} dengan nilai contoh (split/join = replace semua kemunculan)
-    for (const [key, value] of Object.entries(SAMPLE)) {
-      html = html.split(`{{${key}}}`).join(value)
-    }
+    const template = await readFile(filePath, 'utf-8')
+    const html = renderEmailTemplate(template, SAMPLE, RAW_PLACEHOLDERS)
 
     return new NextResponse(html, {
       headers: { 'Content-Type': 'text/html; charset=utf-8' },

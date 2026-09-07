@@ -95,10 +95,17 @@ export async function POST(request: Request) {
   const token = await createSessionToken(admin.id, maxAge)
 
   const res = NextResponse.json({ success: true, name: admin.name })
+  // sameSite 'strict', bukan 'lax' (SEC-026): 'lax' tetap mengirim cookie pada navigasi GET
+  // lintas-situs tingkat atas, jadi satu tautan dari luar sudah cukup membawa sesi admin ke
+  // permintaan yang tidak diminta admin. Back-office tak punya alur masuk sah dari situs lain,
+  // sehingga tak ada yang dikorbankan.
+  //
+  // Konsekuensi yang disengaja: admin yang mengklik tautan /oms/dashboard dari email atau chat
+  // akan mendarat dalam keadaan belum login pada navigasi PERTAMA, lalu normal setelah login.
   res.cookies.set(OMS_SESSION_COOKIE, token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    sameSite: 'strict',
     path: '/',
     maxAge,
   })

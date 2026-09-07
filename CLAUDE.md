@@ -305,6 +305,7 @@ src/
 │   ├── product-validation.ts     # Validasi form produk (SKU, nama, kategori, harga jual/asli, stok, berat, deskripsi, foto)
 │   ├── product-image-validation.ts # SERVER-ONLY: whitelist tipe + magic bytes + batas ukuran data-URL gambar (SEC-019)
 │   ├── review-validation.ts      # Batas panjang komentar & nama penulis ulasan — dipakai server & client (SEC-042)
+│   ├── email-template.ts         # SATU PINTU isi placeholder {{key}} template email + escape HTML (SEC-027)
 │   ├── oms-redirect.ts           # sanitizeOmsRedirect — modul BEBAS SECRET, satu-satunya bagian alur sesi OMS yang boleh diimpor client (SEC-016)
 │   ├── warehouse.ts              # SATU pintu pergudangan: mode (DB), resolve gudang (fallback),
 │   │                             #   stok efektif, origin id (server-only; TANPA jarak/Haversine)
@@ -1001,6 +1002,39 @@ Lubang ini ditutup oleh lapis 3, bukan oleh kode.
   opsional; yang ditolak hanya nilai yang diisi tapi malformed. Ini bukan sekadar kebersihan data:
   keduanya satu-satunya pegangan pembeli tamu atas pesanannya, dan nilai malformed membuat pesanan
   itu tak pernah bisa dilacak, dibatalkan, maupun diulas oleh pemiliknya sendiri.
+- **Endpoint OMS menolak permintaan LINTAS SITUS, bukan hanya yang tak terautentikasi** (SEC-026).
+  `requireAdmin()` dan `requireAdminRole()` memeriksa `Sec-Fetch-Site`/`Origin` lebih dulu dan
+  membalas **403 `CROSS_SITE_DENIED`**; cookie sesi OMS memakai `sameSite: 'strict'`.
+  ⚠️ Jangan pernah lagi menyebut "Content-Type application/json memicu preflight CORS" sebagai
+  peredam CSRF di project ini — itu KELIRU dan sempat tercatat di register temuan. Tak ada satu pun
+  route yang memvalidasi Content-Type, dan `request.json()` mengabaikan header itu, jadi form
+  lintas-situs ber-`enctype="text/plain"` lolos tanpa preflight sama sekali. Guard-nya kini
+  eksplisit; kalau menambah jalur admin baru, lewati salah satu dari kedua fungsi itu.
+- **Harga paket/combo dihitung ULANG di server dari tabel `product_combos`** (SEC-033). `comboId`
+  ikut dikirim dari keranjang → checkout → `orders/create`, tapi ia **hanya petunjuk**, bukan harga:
+  server mencari paketnya di DB, memastikan produk & kuantitasnya cocok persis, lalu mengalokasikan
+  harga dengan `allocateComboPrices` — fungsi yang SAMA dengan yang dipakai klien, sehingga
+  pembulatannya identik dan total server = total di layar. Kalau tak cocok, item jatuh ke harga
+  satuan (bukan 422 — pembeli yang mengubah kuantitas memang keluar dari paket). Terukur
+  2026-09-07: tanpa perbaikan `jumlah_total` 43.661, dengan perbaikan 34.161 untuk keranjang yang
+  sama; selisih Rp9.500 itu dulu ditagihkan ke pembeli tanpa ia tahu.
+- **Baca publik memakai `createPublicClient()` (anon, TUNDUK RLS), bukan service_role.** Sebelumnya
+  SETIAP baca Supabase di app berjalan sebagai service_role dan client anon-nya dead code, sehingga
+  RLS tak pernah menjadi lapisan pertahanan kedua di jalur publik (SEC-031, SEC-032). Sudah
+  dipindahkan: tiga fungsi baca ulasan di `mock-db/reviews.ts`. `createClient()` yang lama TIDAK
+  bisa dipakai di jalur ini — ia memanggil `cookies()`, dan Next.js melarang API dinamis di dalam
+  `unstable_cache` yang membungkus baca storefront.
+- **Setiap migration yang dijalankan WAJIB dicatat di `public.schema_migrations`** (SEC-036).
+  Tanpa CLI, migration dijalankan copy-paste manual dan tak ada yang tahu file mana sudah jalan —
+  itulah yang membuat RLS `order_items` mati berbulan-bulan tanpa terdeteksi. Cara mencatat ada di
+  `supabase/README.md`. Kalau ragu sebuah file sudah jalan: jangan dicatat. Ledger yang berbohong
+  lebih buruk daripada ledger kosong.
+- **Gerbang CI wajib hijau sebelum merge**: `.github/workflows/ci.yml` menjalankan `npm run lint`,
+  `npm run typecheck`, dan `npm audit --audit-level=high` (SEC-035). Playwright SENGAJA tidak ikut
+  di gerbang PR (butuh browser + server hidup + kredensial). `react-hooks/set-state-in-effect`
+  sengaja diturunkan ke **warning** — kesebelas kemunculannya sudah ditelusuri dan semuanya pola
+  yang benar (animasi rAF, IntersectionObserver, siklus objectURL, fetch ber-abort); alasannya
+  ditulis lengkap di `eslint.config.mjs`.
 - Verifikasi webhook signature Xendit sebelum memproses event apapun (saat integrasi)
 - Cookie keranjang tidak boleh menyimpan data sensitif — hanya ID produk, quantity, price
 

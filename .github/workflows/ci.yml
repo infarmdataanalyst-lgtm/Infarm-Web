@@ -1,0 +1,52 @@
+# .github/workflows/ci.yml
+# Gerbang otomatis sebelum kode masuk produksi (menutup SEC-035).
+#
+# Kenapa gerbang ini ada: Vercel men-deploy langsung dari git push. Tanpa gerbang, kode yang gagal
+# lint, gagal typecheck, atau membawa dependency ber-CVE High bisa masuk produksi tanpa satu pun
+# yang menahannya — dan baru ketahuan saat audit manual berikutnya.
+#
+# Yang SENGAJA TIDAK ada di sini: Playwright e2e. Ia butuh browser terpasang plus dev server hidup
+# plus kredensial Supabase, dan sebagian spec-nya menyentuh API pihak ketiga. Menaruhnya di
+# gerbang PR akan membuatnya lambat dan sering merah karena sebab di luar perubahan kodenya.
+# Jalankan lokal dengan `npm test`.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master, main]
+
+# Batalkan run lama pada branch yang sama saat ada push baru — hemat menit runner.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Lint, Typecheck, Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # `npm ci` (bukan `npm install`): patuh pada package-lock.json apa adanya, jadi hasil CI
+      # mencerminkan pohon dependency yang sama dengan yang akan dipakai Vercel.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # audit-level=high: Moderate ke bawah tidak memblokir. Ambangnya sengaja tidak lebih ketat —
+      # advisory Low/Moderate pada dependency dev terlalu sering muncul dan akan membuat gerbang
+      # ini diabaikan orang, yang jauh lebih buruk daripada tak punya gerbang sama sekali.
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
