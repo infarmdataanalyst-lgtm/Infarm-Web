@@ -164,6 +164,11 @@ export default function HeaderSearch() {
   }
 
   // Dropdown saran (dipakai desktop & overlay). Absolute terhadap kontainer relative pembungkus.
+  // DIPANGGIL sebagai fungsi ({Dropdown()}), bukan dirender sebagai <Dropdown />: ia bukan komponen
+  // — tak punya props maupun state sendiri. Sebagai elemen JSX, React memperlakukan tiap render
+  // induk sebagai TIPE komponen baru, sehingga subtree-nya di-unmount lalu dipasang ulang dan
+  // state di dalamnya (termasuk fokus input) hilang. Memanggilnya sebagai fungsi menyisipkan
+  // markup-nya langsung ke pohon induk dan masalah itu tak pernah ada.
   function Dropdown() {
     if (!showDropdown) return null
     return (
@@ -233,7 +238,7 @@ export default function HeaderSearch() {
             </button>
           )}
         </div>
-        <Dropdown />
+        {Dropdown()}
       </div>
 
       {/* === Mobile: tombol ikon (buka overlay) === */}
@@ -267,9 +272,9 @@ export default function HeaderSearch() {
                   ref={overlayInputRef}
                   className="w-full bg-transparent text-sm text-zinc-700 placeholder:text-zinc-500 focus:outline-none"
                 />
-                <TrailingIcon />
+                {TrailingIcon()}
               </div>
-              <Dropdown />
+              {Dropdown()}
             </div>
           </div>
           {/* Backdrop bawah: tap untuk menutup */}
