@@ -61,15 +61,25 @@ export function validateCategory(category: ProductCategory | ''): string | undef
   return undefined
 }
 
+// Rupiah TIDAK punya satuan pecahan yang dipakai, dan kolom DB-nya `integer`. Harga pecahan yang
+// lolos ke sini tidak ditolak Postgres melainkan DIBULATKAN diam-diam saat assignment, sehingga
+// harga tersimpan berbeda dari yang diketik admin tanpa pesan error apa pun (SEC-030). Karena itu
+// integer diperiksa di sini, sejajar dengan validateStock.
 export function validatePrice(price: number | ''): string | undefined {
   if (price === '' || Number.isNaN(Number(price))) return 'Harga tidak boleh kosong'
   const n = Number(price)
+  if (!Number.isInteger(n)) return 'Harga harus bilangan bulat (tanpa koma)'
   if (n < PRICE_MIN) return 'Harga minimal Rp 100'
   if (n > PRICE_MAX) return 'Harga melebihi batas maksimal'
   return undefined
 }
 
 // Harga asli opsional. Bila diisi wajib > harga jual (biar coretan bermakna).
+//
+// Number.isInteger dipanggil SEBELUM perbandingan lain karena ia sekaligus menutup NaN dan
+// Infinity: keduanya membuat `orig <= promo` maupun `orig > PRICE_MAX` bernilai false, jadi versi
+// lama meloloskan keduanya lewat jalur "tidak ada error". PRICE_MIN juga ikut ditegakkan di sini —
+// dulu terlewat, sehingga harga coret Rp 1 bisa masuk selama masih di atas harga jual.
 export function validateOriginalPrice(
   originalPrice: number | '' | undefined,
   price: number | '',
@@ -77,6 +87,8 @@ export function validateOriginalPrice(
   if (originalPrice === '' || originalPrice === undefined) return undefined // opsional
   const orig = Number(originalPrice)
   const promo = price === '' ? 0 : Number(price)
+  if (!Number.isInteger(orig)) return 'Harga asli harus bilangan bulat (tanpa koma)'
+  if (orig < PRICE_MIN) return 'Harga asli minimal Rp 100'
   if (orig <= promo) return 'Harga asli harus lebih besar dari harga jual'
   if (orig > PRICE_MAX) return 'Harga melebihi batas maksimal'
   return undefined
