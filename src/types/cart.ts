@@ -36,4 +36,10 @@ export type CartLineItem = {
   variantId?: string // varian terpilih (produk bervarian)
   variantName?: string // nama varian untuk tampilan, mis. "50 Biji"
   minOrderQty: number // minimum pembelian baris ini (1 = bebas); dasar disable tombol "−"
+  stock?: number // stok efektif; dasar disable tombol "+" & tanda "stok tidak cukup"
+  // Paket asal baris ini. Baris ber-comboId diperlakukan ATOMIK di keranjang: kuantitasnya dikunci
+  // dan menghapusnya mengeluarkan seluruh paket. Tanpa itu pembeli bisa merusak paket sehingga
+  // keranjang menampilkan harga paket sementara server menagih harga satuan (lanjutan SEC-033).
+  comboId?: string
+  comboName?: string
 }

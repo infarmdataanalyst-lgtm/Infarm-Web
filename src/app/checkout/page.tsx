@@ -30,6 +30,9 @@ import {
 } from '@/lib/checkout-draft'
 import { validateAddress } from '@/lib/checkout-validation'
 import { formatRupiah } from '@/lib/format'
+import { computeOrderPromos } from '@/lib/promo-cart'
+import { XENDIT_MIN_AMOUNT } from '@/lib/payment-limits'
+import type { Promotion } from '@/types/promotion'
 import { shippingWeightKg, type WeighableItem } from '@/lib/shipping-weight'
 import { type WarehouseShippingOption } from '@/lib/mengantar'
 import { dummyProducts } from '@/lib/data/dummy-products'
@@ -367,9 +370,54 @@ export default function CheckoutPage() {
     }
   }, [])
 
+  // === Promo aktif + plafon diskon ===
+  // Checkout WAJIB menariknya sendiri, tidak boleh mengandalkan cookie snapshot dari keranjang:
+  // promo bisa kedaluwarsa di antara pembeli menutup keranjang dan menekan bayar, dan yang
+  // menentukan tagihan adalah keadaan promo saat itu — sama seperti yang dievaluasi server.
+  const [promos, setPromos] = useState<Promotion[]>([])
+  const [maxDiscountPercent, setMaxDiscountPercent] = useState(50)
+  // Jam acuan evaluasi promo, diambil SEKALI saat daftar promo tiba.
+  // Date.now() tak boleh dipanggil saat render (aturan kemurnian React): nilainya berubah tiap
+  // render sehingga hasil useMemo tak stabil. Diambil bersamaan dengan promonya justru lebih benar
+  // secara semantik — keduanya potret keadaan pada saat yang sama.
+  const [promoNowMs, setPromoNowMs] = useState(0)
+  useEffect(() => {
+    let active = true
+    fetch('/api/promotions/active')
+      .then((res) => res.json())
+      .then((data: { promotions?: Promotion[]; maxDiscountPercent?: number }) => {
+        if (!active) return
+        setPromos(data.promotions ?? [])
+        setPromoNowMs(Date.now())
+        if (typeof data.maxDiscountPercent === 'number') {
+          setMaxDiscountPercent(data.maxDiscountPercent)
+        }
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [])
+
   // === Kalkulasi biaya: ongkir dari kurir terpilih (null bila belum pilih) ===
   const shipping = selectedCourier ? selectedCourier.price : null
-  const total = subtotal + (selectedCourier?.price ?? 0)
+
+  // Promo dihitung dengan fungsi yang SAMA PERSIS dengan yang dipakai /api/orders/create.
+  // Di sini ongkir sudah diketahui, jadi lantai nominal gateway bisa dievaluasi dengan benar dan
+  // hasilnya identik dengan yang nanti ditagih server. Sebelum ini checkout mengabaikan promo
+  // sepenuhnya, sementara keranjang sudah mengurangi totalnya — pembeli melihat dua angka berbeda.
+  const orderPromos = useMemo(
+    () =>
+      computeOrderPromos(promos, subtotal, selectedCourier?.price ?? 0, promoNowMs, {
+        maxDiscountPercent,
+        minTotal: XENDIT_MIN_AMOUNT,
+      }),
+    [promos, subtotal, selectedCourier, maxDiscountPercent],
+  )
+
+  const discount = orderPromos.discount
+  const shippingSubsidy = orderPromos.shippingSubsidy
+  const total = Math.max(0, subtotal + (selectedCourier?.price ?? 0) - discount - shippingSubsidy)
 
   // Tombol bayar aktif hanya bila alamat valid DAN kurir sudah dipilih
   // Kekurangan agar mencapai minimum belanja (0 = sudah terpenuhi)
@@ -693,7 +741,13 @@ export default function CheckoutPage() {
 
         {/* 5 — Ringkasan pesanan (rincian harga) */}
         <CheckoutCard className="lg:col-start-2">
-          <OrderSummary subtotal={subtotal} shipping={shipping} total={total} />
+          <OrderSummary
+            subtotal={subtotal}
+            shipping={shipping}
+            total={total}
+            discount={discount}
+            shippingSubsidy={shippingSubsidy}
+          />
         </CheckoutCard>
 
         {/* 6 — Total + tombol bayar sebagai kartu penutup kolom kanan. Hanya tampak di lg+;

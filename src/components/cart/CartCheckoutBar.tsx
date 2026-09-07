@@ -18,6 +18,9 @@ export default function CartCheckoutBar({
   onCheckout,
   subtotal,
   minOrderAmount,
+  discount = 0,
+  freeShipping = false,
+  stockBlocked = false,
 }: {
   allSelected: boolean
   selectedCount: number
@@ -26,11 +29,16 @@ export default function CartCheckoutBar({
   onCheckout: () => void
   subtotal: number // subtotal BARANG tercentang (tanpa ongkir/diskon) — dasar minimum belanja
   minOrderAmount: number // batas minimum dari pengaturan toko (0 = tak ada batas)
+  discount?: number // potongan promo yang sudah tercermin di selectedTotal
+  freeShipping?: boolean // ada promo gratis ongkir tercapai
+  // Ada baris tercentang yang stoknya tak mencukupi. Checkout dikunci di sini, bukan dibiarkan
+  // ditolak server: pembeli seharusnya tahu sebelum menekan bayar, bukan sesudahnya.
+  stockBlocked?: boolean
 }) {
   // Kekurangan agar mencapai minimum belanja. > 0 → checkout dikunci.
   const shortfall = Math.max(0, minOrderAmount - subtotal)
   const belowMinimum = selectedCount > 0 && shortfall > 0
-  const disabled = selectedCount === 0 || belowMinimum
+  const disabled = selectedCount === 0 || belowMinimum || stockBlocked
   const barRef = useStickyBarHeight<HTMLDivElement>()
 
   return (
@@ -58,10 +66,24 @@ export default function CartCheckoutBar({
           <span>Item ({selectedCount})</span>
         </label>
 
-        {/* Tengah: Total dinamis */}
+        {/* Tengah: Total dinamis.
+            Rincian diskon ditampilkan, bukan disembunyikan: sebelum ini bilah ini hanya
+            menampilkan satu angka yang sudah dipotong promo, sehingga pembeli tak pernah tahu
+            potongannya ada — dan tak punya cara menyadari saat potongan itu hilang. */}
         <div className="ml-auto text-right">
-          <p className="text-xs text-zinc-500">Total</p>
+          {discount > 0 && (
+            <p className="text-xs text-zinc-500">
+              <span className="line-through">{formatRupiah(subtotal)}</span>{' '}
+              <span className="font-medium text-brand-primary">
+                hemat {formatRupiah(discount)}
+              </span>
+            </p>
+          )}
+          {discount <= 0 && <p className="text-xs text-zinc-500">Total</p>}
           <p className="text-base font-bold text-zinc-900">{formatRupiah(selectedTotal)}</p>
+          {freeShipping && (
+            <p className="text-[11px] font-medium text-brand-primary">+ Gratis ongkir</p>
+          )}
         </div>
 
         {/* Kanan: Tombol checkout (mati bila tidak ada item tercentang) */}

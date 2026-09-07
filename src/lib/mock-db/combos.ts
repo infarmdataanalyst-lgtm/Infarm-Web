@@ -83,6 +83,49 @@ export async function readCombos(): Promise<ProductCombo[]> {
   return (data as ComboRow[]).map(rowToCombo)
 }
 
+// Jumlah paket TERJUAL per combo, dihitung dari order_items.combo_id.
+//
+// ── Basis hitung: HANYA pesanan LUNAS ──
+// Sengaja berbeda dari aggregateSales (yang menyuplai "N terjual" produk dan menghitung semua
+// pesanan kecuali Dibatalkan, termasuk yang tak pernah dibayar). Keputusan pemilik proyek
+// 2026-09-07: angka combo dibuat jujur sejak awal, tanpa ikut mengubah angka produk yang sudah
+// telanjur tampil di storefront. Karena itu kolomnya di OMS WAJIB berlabel "Terjual (Lunas)" —
+// tanpa label, dua angka di layar yang sama jadi tak bisa dibandingkan tanpa ada yang tahu kenapa.
+//
+// Satu pesanan dihitung SATU paket: pencocokan combo di orders/create menuntut kuantitas persis
+// sama dengan isi paket, jadi belum ada cara membeli dua set paket dalam satu pesanan.
+//
+// Map kosong bila kolom combo_id belum ada (migration 20260907130000 belum dijalankan) — halaman
+// OMS menampilkannya sebagai 0, bukan error.
+export async function getComboSalesCount(): Promise<Record<string, number>> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('order_items')
+    .select('combo_id, order_id, orders!inner(status_pembayaran)')
+    .not('combo_id', 'is', null)
+    .eq('orders.status_pembayaran', 'PAID')
+
+  if (error) {
+    // 42703 = kolom combo_id belum ada. Bukan kegagalan yang perlu meledak: laporan penjualan
+    // paket memang belum bisa dihitung sampai migration dijalankan.
+    console.error('Gagal menghitung penjualan combo:', error.message)
+    return {}
+  }
+
+  // Pasangan (combo, pesanan) yang unik — satu pesanan tak boleh terhitung berkali-kali hanya
+  // karena paketnya berisi beberapa produk.
+  const seen = new Set<string>()
+  const counts: Record<string, number> = {}
+  for (const row of (data ?? []) as { combo_id: string | null; order_id: string }[]) {
+    if (!row.combo_id) continue
+    const key = `${row.combo_id}::${row.order_id}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    counts[row.combo_id] = (counts[row.combo_id] ?? 0) + 1
+  }
+  return counts
+}
+
 // Membaca satu combo berdasarkan id (beserta itemnya). null bila tidak ditemukan.
 export async function getComboById(id: string): Promise<ProductCombo | null> {
   const supabase = createAdminClient()

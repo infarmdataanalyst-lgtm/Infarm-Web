@@ -30,6 +30,9 @@ function summarizeProducts(combo: ProductCombo): string {
 
 export default function PaketComboPage() {
   const [combos, setCombos] = useState<ProductCombo[]>([])
+  // Jumlah paket terjual per combo, HANYA dari pesanan Lunas (lihat getComboSalesCount).
+  // Kosong bila migration combo_id belum dijalankan → kolomnya menampilkan 0, bukan error.
+  const [salesCount, setSalesCount] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<StatusFilter>('all')
 
@@ -46,9 +49,10 @@ export default function PaketComboPage() {
     let active = true
     fetch('/api/combos/list')
       .then((res) => res.json())
-      .then((data: { combos?: ProductCombo[] }) => {
+      .then((data: { combos?: ProductCombo[]; salesCount?: Record<string, number> }) => {
         if (!active) return
         setCombos(data.combos ?? [])
+        setSalesCount(data.salesCount ?? {})
       })
       .catch(() => {})
       .finally(() => {
@@ -174,6 +178,10 @@ export default function PaketComboPage() {
                     <th className="px-5 py-3.5">Harga Normal</th>
                     <th className="px-5 py-3.5">Harga Combo</th>
                     <th className="px-5 py-3.5">Hemat</th>
+                    {/* Label "Lunas" WAJIB: basisnya sengaja beda dari "N terjual" produk, yang
+                        menghitung semua pesanan kecuali Dibatalkan. Tanpa label ini dua angka di
+                        OMS jadi tak bisa dibandingkan tanpa ada yang tahu kenapa. */}
+                    <th className="px-5 py-3.5">Terjual (Lunas)</th>
                     <th className="px-5 py-3.5">Status</th>
                     <th className="px-5 py-3.5 text-right">Aksi</th>
                   </tr>
@@ -194,6 +202,9 @@ export default function PaketComboPage() {
                         <td className="px-5 py-4">
                           <span className="font-semibold text-emerald-700">{formatRupiah(savings)}</span>
                           {percent > 0 && <span className="ml-1 text-xs text-emerald-600">({percent}%)</span>}
+                        </td>
+                        <td className="px-5 py-4 font-semibold text-gray-900">
+                          {salesCount[combo.id] ?? 0}
                         </td>
                         <td className="px-5 py-4">
                           {combo.isActive ? (

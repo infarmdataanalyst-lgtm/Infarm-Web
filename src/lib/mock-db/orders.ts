@@ -689,6 +689,9 @@ export async function saveOrder(input: CreateOrderInput): Promise<Order> {
     promotion_id: it.promotionId ?? null,
     // Varian produk yang dipilih (null bila tak bervarian). RPC pakai ini untuk stok & simpan variant_id.
     variant_id: it.variantId ?? null,
+    // Paket asal baris ini. Tanpa ini identitas combo hilang di perbatasan RPC dan tak ada cara
+    // melaporkan berapa paket terjual. Aman diabaikan RPC versi lama (kolomnya belum ada).
+    combo_id: it.comboId ?? null,
   }))
 
   // Coba beberapa kali untuk mengatasi tabrakan nomor_invoice acak (unique violation)
@@ -697,6 +700,11 @@ export async function saveOrder(input: CreateOrderInput): Promise<Order> {
   // p_warehouse_id) sehingga PostgREST menolak dengan PGRST202/42883 ("function not found").
   // Saat itu terjadi, param gudang dibuang dan pesanan tetap tersimpan seperti sebelumnya.
   let sendWarehouseParam = true
+  // Jaring pengaman KEDUA, terpisah: migration promo (20260907130000) menambah p_diskon,
+  // p_ongkos_kirim_ditanggung, dan p_promo_terpakai. Dipisah dari sendWarehouseParam supaya
+  // database yang sudah punya kolom gudang & ongkir tapi belum punya kolom promo tidak ikut
+  // kehilangan keduanya — penurunan bertahap, bukan sekaligus.
+  let sendPromoParams = true
   for (let attempt = 0; attempt < 5; attempt++) {
     const invoice = generateInvoiceNumber()
     const { error } = await supabase.rpc('create_order_with_items', {
@@ -725,6 +733,16 @@ export async function saveOrder(input: CreateOrderInput): Promise<Order> {
       // signature tak cocok, dan lebih baik pesanan tersimpan tanpa rincian ongkir daripada
       // checkout gagal total karena migration belum sempat di-apply.
       ...(sendWarehouseParam ? { p_ongkos_kirim: input.shippingCost ?? null } : {}),
+      // Angka promo (migration 20260907130000). ongkos_kirim di atas tetap tarif ASLI Mengantar;
+      // subsidi gratis ongkir dicatat terpisah di sini supaya tagihan kurir tetap bisa
+      // direkonsiliasi.
+      ...(sendPromoParams
+        ? {
+            p_diskon: input.discount ?? 0,
+            p_ongkos_kirim_ditanggung: input.shippingSubsidy ?? 0,
+            p_promo_terpakai: input.appliedPromos ?? [],
+          }
+        : {}),
     })
 
     if (!error) {
@@ -759,8 +777,14 @@ export async function saveOrder(input: CreateOrderInput): Promise<Order> {
     }
 
     // Stok kurang → RPC me-raise 'INSUFFICIENT_STOCK:<nama>'. Jangan retry.
+    //
+    // Versi RPC yang sempat terpasang mengirim 'INSUFFICIENT_STOCK:<nama>:<sisa>', sementara
+    // pengurai di sini hanya memotong pada token pertama — akibatnya pembeli membaca pesan
+    // "Stok produk Bayam:3 tidak mencukupi". Angka sisa stok dibuang di sini (bukan cuma di RPC
+    // baru) supaya database yang masih memakai RPC lama pun menghasilkan pesan yang benar.
     if (error.message?.includes('INSUFFICIENT_STOCK')) {
-      const name = error.message.split('INSUFFICIENT_STOCK:')[1]?.trim() || 'produk'
+      const raw = error.message.split('INSUFFICIENT_STOCK:')[1]?.trim() ?? ''
+      const name = raw.replace(/:\s*\d+\s*$/, '').trim() || 'produk'
       throw new OrderStockError(name)
     }
     // Tabrakan nomor invoice unik → coba lagi dengan nomor baru
@@ -774,10 +798,21 @@ export async function saveOrder(input: CreateOrderInput): Promise<Order> {
     // Keduanya menambah parameter, jadi gejalanya identik dan penanganannya sama: buang keduanya,
     // pesanan tetap tersimpan dengan kolom yang memang belum ada dibiarkan kosong.
     // PGRST202 = fungsi dengan signature itu tak ditemukan; 42883 = undefined_function.
-    if (sendWarehouseParam && (error.code === 'PGRST202' || error.code === '42883')) {
-      sendWarehouseParam = false
-      lastError = error
-      continue
+    //
+    // Diturunkan BERTAHAP: param promo dibuang lebih dulu, baru param gudang & ongkir. Database
+    // yang hanya ketinggalan migration promo dengan begitu tetap menyimpan warehouse_id dan
+    // ongkos_kirim seperti biasa.
+    if (error.code === 'PGRST202' || error.code === '42883') {
+      if (sendPromoParams) {
+        sendPromoParams = false
+        lastError = error
+        continue
+      }
+      if (sendWarehouseParam) {
+        sendWarehouseParam = false
+        lastError = error
+        continue
+      }
     }
     // Error lain → hentikan
     throw new Error(`Gagal menyimpan pesanan: ${error.message}`)
