@@ -4,9 +4,20 @@
 // ISOLASI: seluruh akses data ulasan lewat fungsi di file ini.
 // Di-back oleh Supabase (tabel public.reviews, FK ke products).
 //
-// SERVER-ONLY: memakai createAdminClient() (service_role). Jangan diimpor dari komponen 'use client'.
+// SERVER-ONLY: jangan diimpor dari komponen 'use client'.
+//
+// DUA CLIENT, dan pembagiannya disengaja (SEC-032):
+//   • createPublicClient() — anon, TUNDUK RLS. Dipakai tiga fungsi baca storefront yang hanya
+//     mengambil ulasan `visible = true`. Policy "Public dapat membaca ulasan tampil"
+//     (migration 20260622110000) mengizinkan persis baris yang sama, jadi service_role tak
+//     memberi kemampuan tambahan apa pun di jalur ini — ia hanya melucuti lapisan pertahanan
+//     kedua. Terverifikasi live 2026-09-07: service_role melihat 10 baris, anon 9; satu ulasan
+//     tersembunyi benar-benar ditahan database.
+//   • createAdminClient() — service_role, MENEMBUS RLS. Tetap dipakai untuk yang memang butuh:
+//     daftar OMS (ikut membaca ulasan tersembunyi), pengecekan produk yang sudah diulas, dan
+//     seluruh penulisan.
 
-import { createAdminClient } from '@/lib/supabase/server'
+import { createAdminClient, createPublicClient } from '@/lib/supabase/server'
 import type { ProductReview } from '@/types/product'
 
 const PLACEHOLDER_IMAGE = '/images/product-placeholder.png'
@@ -70,7 +81,7 @@ export type OmsReviewData = {
 
 // Mengambil ulasan yang tampil (visible) untuk satu produk, terbaru dulu.
 export async function getReviewsByProduct(productId: string): Promise<ProductReview[]> {
-  const supabase = createAdminClient()
+  const supabase = createPublicClient()
   const { data, error } = await supabase
     .from('reviews')
     .select('*')
@@ -100,7 +111,7 @@ export async function getReviewsByProduct(productId: string): Promise<ProductRev
 export async function getProductRatingSummary(
   productId: string,
 ): Promise<{ rating: number; reviewCount: number }> {
-  const supabase = createAdminClient()
+  const supabase = createPublicClient()
   const { data, error } = await supabase
     .from('reviews')
     .select('rating')
@@ -122,7 +133,7 @@ export async function getProductRatingSummary(
 export async function getRatingSummaryByProduct(): Promise<
   Record<string, { rating: number; reviewCount: number }>
 > {
-  const supabase = createAdminClient()
+  const supabase = createPublicClient()
   const { data, error } = await supabase
     .from('reviews')
     .select('product_id, rating')
