@@ -319,12 +319,20 @@ export default function CartPage() {
     // Guard: jangan lanjut bila subtotal barang belum mencapai minimum (tombol juga sudah
     // disabled; ini menutup jalur pemanggilan lain).
     if (selectedTotal < minOrderAmount) return
+    // comboId IKUT DIBAWA (SEC-033). Dulu field ini dibuang di sini, sehingga /checkout dan
+    // akhirnya /api/orders/create tak pernah tahu sebuah item bagian dari paket — server lalu
+    // menagih harga satuan padahal layar menampilkan harga paket. Nilainya bukan harga dan tidak
+    // dipercaya sebagai harga; server memakainya hanya untuk mencari paketnya di DB.
+    const comboIdByProduct = new Map(
+      cookieCart.filter((c) => c.comboId).map((c) => [c.productId, c.comboId as string]),
+    )
     const chosen = selectedItems.map((i) => ({
       productId: i.productId,
       quantity: i.quantity,
       price: i.price,
       variantId: i.variantId,
       variantName: i.variantName,
+      comboId: comboIdByProduct.get(i.productId),
     }))
     setCheckoutItems(chosen)
 

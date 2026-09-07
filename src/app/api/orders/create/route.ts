@@ -11,6 +11,8 @@ import { revalidatePath, revalidateTag } from 'next/cache'
 import { saveOrder, OrderStockError } from '@/lib/mock-db/orders'
 import { readProducts } from '@/lib/mock-db/products'
 import { readPromotions } from '@/lib/mock-db/promotions'
+import { getComboById } from '@/lib/mock-db/combos'
+import { allocateComboPrices } from '@/lib/promo-cart'
 import { getVariantsByIds } from '@/lib/mock-db/variants'
 import { getMinOrderAmount } from '@/lib/mock-db/settings'
 import { getEffectiveStock, resolveWarehouseForOrder, type StockRequirement } from '@/lib/warehouse'
@@ -33,6 +35,17 @@ import type { CreateOrderInput, OrderItem, OrderShippingAddress } from '@/types/
 export const runtime = 'nodejs'
 
 const LOG = '[orders-create]'
+
+// Item keranjang seperti yang DIKIRIM klien. `comboId` hanya ada di payload masuk, tidak di
+// OrderItem yang disimpan — order_items tak punya kolomnya, dan harga hasil alokasi combo sudah
+// tersimpan di kolom price tiap baris.
+type IncomingItem = OrderItem & { comboId?: string }
+
+// Membaca comboId sebuah item dengan aman (payload klien tak bisa dipercaya bentuknya).
+function comboIdOf(item: OrderItem): string | undefined {
+  const raw = (item as IncomingItem).comboId
+  return typeof raw === 'string' && raw.length > 0 ? raw : undefined
+}
 
 // Validasi payload di server (jangan percaya input client mentah-mentah)
 function isValidPayload(body: unknown): body is CreateOrderInput {
@@ -57,7 +70,11 @@ function isValidPayload(body: unknown): body is CreateOrderInput {
         typeof it.quantity === 'number' &&
         it.quantity >= 1 &&
         typeof it.price === 'number' &&
-        (it.variantId === undefined || it.variantId === null || typeof it.variantId === 'string')
+        (it.variantId === undefined || it.variantId === null || typeof it.variantId === 'string') &&
+        // comboId opsional. Nilainya TIDAK dipercaya sebagai harga — ia hanya petunjuk paket mana
+        // yang harus dicari ke DB (lihat blok "Harga paket/combo" di bawah).
+        ((item as IncomingItem).comboId === undefined ||
+          typeof (item as IncomingItem).comboId === 'string')
       )
     })
 
@@ -240,6 +257,41 @@ export async function POST(request: Request) {
     .filter((v): v is string => typeof v === 'string' && v.length > 0)
   const variantMap = await getVariantsByIds(variantIds)
 
+  // === Harga paket/combo — OTORITATIF dari DB (SEC-033) ===
+  //
+  // Sebelum ini server tak mengenal `comboId` sama sekali, sehingga tiap anggota paket jatuh ke
+  // `prod.promoPrice` di cabang terakhir. Akibatnya pembeli melihat harga paket di layar lalu
+  // DITAGIH harga satuan — arah kerugiannya terbalik dari kebanyakan temuan: yang dirugikan
+  // pembeli, bukan toko.
+  //
+  // Polanya menyalin dua cabang yang sudah terbukti di bawah (promo_price produk & harga varian):
+  // ambil baris otoritatif dari DB, pastikan anak benar-benar milik induknya, baru tetapkan harga.
+  const comboUnitPrice = new Map<string, number>() // kunci: `${comboId}::${productId}`
+  const claimedComboIds = [...new Set(body.items.map(comboIdOf).filter((v) => v !== undefined))]
+
+  for (const comboId of claimedComboIds) {
+    const combo = await getComboById(comboId)
+    if (!combo || !combo.isActive) continue // paket dihapus/dinonaktifkan sejak masuk keranjang
+
+    const lines = body.items.filter((it) => comboIdOf(it) === comboId)
+
+    // Combo tak mengenal varian; kalau item mengaku bagian paket TAPI membawa varian, bentuknya
+    // tak bisa diverifikasi — jangan tebak, biarkan jatuh ke harga varian.
+    if (lines.some((l) => l.variantId)) continue
+
+    // Kumpulan item harus cocok PERSIS dengan anggota paket: produk yang sama, kuantitas yang sama.
+    const wanted = new Map(combo.items.map((ci) => [ci.productId, ci.quantity]))
+    if (lines.length !== wanted.size) continue
+    if (!lines.every((l) => wanted.get(l.productId) === l.quantity)) continue
+
+    // Harga dialokasikan ulang di server dengan fungsi yang SAMA PERSIS dengan yang dipakai klien
+    // saat menyusun keranjang (allocateComboPrices), memakai comboPrice dari DB. Fungsi yang sama
+    // = pembulatan yang sama = total server identik dengan yang dilihat pembeli.
+    for (const alloc of allocateComboPrices(combo.items, combo.comboPrice)) {
+      comboUnitPrice.set(`${comboId}::${alloc.productId}`, alloc.price)
+    }
+  }
+
   let subtotal = 0
   const pricedItems: OrderItem[] = []
   for (const it of body.items) {
@@ -267,7 +319,23 @@ export async function POST(request: Request) {
       )
     }
 
-    if (it.variantId) {
+    // Paket yang lolos verifikasi di atas dihargai lebih dulu. Yang TIDAK lolos sengaja jatuh ke
+    // cabang berikutnya dengan harga satuan, BUKAN ditolak 422: pembeli yang menambah kuantitas
+    // setelah memasukkan paket memang sudah keluar dari paket itu, dan menggagalkan checkout-nya
+    // lebih merugikan daripada menagih harga satuan yang memang benar untuk isi keranjangnya.
+    const comboPrice = comboIdOf(it)
+      ? comboUnitPrice.get(`${comboIdOf(it)}::${it.productId}`)
+      : undefined
+
+    if (comboPrice !== undefined) {
+      subtotal += comboPrice * it.quantity
+      pricedItems.push({
+        productId: it.productId,
+        name: prod.name,
+        quantity: it.quantity,
+        price: comboPrice, // snapshot harga PAKET hasil alokasi server
+      })
+    } else if (it.variantId) {
       // === Produk BERVARIAN: harga OTORITATIF dari varian (bukan dari payload) ===
       const variant = variantMap.get(it.variantId)
       // Varian wajib ada & benar-benar milik produk ini → cegah manipulasi (harga/varian palsu).
