@@ -22,9 +22,27 @@
 // hanya karena env belum lengkap — dan agar nilai bawaannya adalah yang benar untuk pembeli nyata.
 const DEFAULT_MENGANTAR_HOST = 'https://app.mengantar.com'
 
+// Sudah pernah memperingatkan? Cukup sekali per proses — peringatan ini muncul di setiap panggilan
+// Mengantar, dan tanpa penanda ini log pengembangan akan tenggelam olehnya.
+let sudahPeringatkanHostBawaan = false
+
 // Host aktif, tanpa garis miring di akhir.
+//
+// Bila MENGANTAR_BASE_URL kosong DI LUAR deployment produksi, nilai bawaannya adalah host PRODUKSI —
+// dan panggilan BACA (cek ongkir, pencarian alamat) tidak dijaga oleh mengantarWriteHost(), jadi
+// mereka akan diam-diam menembak produksi tanpa satu pun tanda. Itu bukan kerugian uang, tapi
+// membuat "sedang menguji ke sandbox" jadi keyakinan yang tak berdasar. Peringatan ini membuat
+// keadaan itu terlihat, bukan mengubahnya: nilai bawaan TETAP produksi supaya pembeli sungguhan
+// tak pernah dilayani tarif sandbox hanya karena satu env terlewat di-set.
 export function mengantarHost(): string {
   const base = process.env.MENGANTAR_BASE_URL?.trim()
+  if (!base && !isProductionDeployment() && !sudahPeringatkanHostBawaan) {
+    sudahPeringatkanHostBawaan = true
+    console.warn(
+      '[mengantar-host] MENGANTAR_BASE_URL belum di-set — panggilan BACA jatuh ke host PRODUKSI ' +
+        `(${DEFAULT_MENGANTAR_HOST}). Untuk pengujian lokal set MENGANTAR_BASE_URL=https://sandbox.mengantar.com`,
+    )
+  }
   return (base || DEFAULT_MENGANTAR_HOST).replace(/\/+$/, '')
 }
 
@@ -98,4 +116,38 @@ export function mengantarWriteHost(): MengantarWriteHost {
     }
   }
   return { allowed: true, host }
+}
+
+// === Pencarian alamat ===
+//
+// BERBEDA dari cek ongkir: endpoint ini menaruh API KEY sebagai SEGMEN PATH
+// (`/api/public/<KEY>/address/search`), jadi URL yang dikembalikan fungsi ini RAHASIA —
+// jangan pernah menuliskannya ke log, pesan error, atau respons.
+//
+// SEJARAH (kenapa tidak lagi hardcode ke produksi):
+// Sampai 2026-09-07 path ini dipaku ke `https://app.mengantar.com/api/public/test/address/search`,
+// dengan komentar yang menyimpulkan "endpoint versi /test tidak memvalidasi API key". Kesimpulan
+// itu salah: `test` bukan penanda versi, melainkan menempati posisi API KEY — sebuah kunci demo
+// bersama. Mengantar mencabutnya pada 7 Sep 2026, terukur di sela dua jam (uji 11:20 masih lulus,
+// 13:22 sudah 403 "Not allowed"), dan kunci yang sengaja dikarang membalas 403 yang PERSIS sama —
+// bukti `test` kini diperlakukan sebagai kunci tak sah. Servernya sendiri sehat: allEstimatePublic
+// tetap 200 di kedua host.
+//
+// Karena itu pencarian alamat kini mengikuti mengantarHost() seperti panggilan Mengantar lain,
+// sehingga lokal/pengujian otomatis memakai sandbox dan produksi memakai host produksi.
+// Ini panggilan BACA — gratis dan tak berkonsekuensi, jadi tak perlu lewat mengantarWriteHost().
+export type MengantarAddressSearchUrl =
+  | { ok: true; url: string }
+  | { ok: false; reason: string }
+
+export function mengantarAddressSearchUrl(keyword: string): MengantarAddressSearchUrl {
+  const key = process.env.MENGANTAR_API_KEY?.trim()
+  if (!key) {
+    return { ok: false, reason: 'MENGANTAR_API_KEY belum di-set' }
+  }
+  const base = mengantarHost()
+  return {
+    ok: true,
+    url: `${base}/api/public/${encodeURIComponent(key)}/address/search?keyword=${encodeURIComponent(keyword)}`,
+  }
 }
