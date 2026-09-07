@@ -16,13 +16,14 @@ import { getRecentlyViewedIds, getAddedToCartIds } from '@/lib/recently-viewed'
 import {
   updateQuantity,
   removeFromCart,
+  removeComboFromCart,
   subscribeCart,
   getCartSnapshot,
   getServerCartSnapshot,
   setCheckoutItems,
   setCheckoutPromo,
 } from '@/lib/cart-client'
-import { computePromoProgress, computePromoRewards } from '@/lib/promo-cart'
+import { computeOrderPromos, computePromoProgress, computePromoRewards } from '@/lib/promo-cart'
 import CartItemsSkeleton from '@/components/cart/CartItemsSkeleton'
 
 // Store kosong untuk useSyncExternalStore — dipakai hanya sebagai penanda hidrasi (lihat
@@ -79,6 +80,13 @@ export default function CartPage() {
   // Promo aktif real dari Supabase (via API server-only)
   const [promos, setPromos] = useState<Promotion[]>([])
   const [loadingPromos, setLoadingPromos] = useState(true)
+  // Plafon diskon dari server (default aman bila endpoint promo gagal dimuat).
+  const [maxDiscountPercent, setMaxDiscountPercent] = useState(50)
+  // Jam acuan evaluasi promo, diambil SEKALI saat daftar promo tiba.
+  // Date.now() tak boleh dipanggil saat render (aturan kemurnian React): nilainya berubah tiap
+  // render sehingga hasil useMemo tak stabil. Diambil bersamaan dengan promonya justru lebih benar
+  // secara semantik — keduanya potret keadaan pada saat yang sama.
+  const [promoNowMs, setPromoNowMs] = useState(0)
 
   // Riwayat "pernah dilihat" & "pernah dimasukkan keranjang" — keduanya dari localStorage.
   //
@@ -156,8 +164,15 @@ export default function CartPage() {
     let active = true
     fetch('/api/promotions/active')
       .then((res) => res.json())
-      .then((data: { promotions?: Promotion[] }) => {
-        if (active) setPromos(data.promotions ?? [])
+      .then((data: { promotions?: Promotion[]; maxDiscountPercent?: number }) => {
+        if (!active) return
+        setPromos(data.promotions ?? [])
+        setPromoNowMs(Date.now())
+        // Plafon diskon dititipkan di endpoint promo supaya keranjang memakai angka yang SAMA
+        // dengan yang dipakai server saat menagih (lihat computeOrderPromos).
+        if (typeof data.maxDiscountPercent === 'number') {
+          setMaxDiscountPercent(data.maxDiscountPercent)
+        }
       })
       .catch(() => {})
       .finally(() => {
@@ -194,10 +209,24 @@ export default function CartPage() {
             'minOrderQty' in product && typeof product.minOrderQty === 'number'
               ? product.minOrderQty
               : 1,
+          // Stok hanya diketahui untuk produk OMS. Tanpa ini keranjang tak pernah menampilkan
+          // stok dan tombol "+" tak punya batas — pembeli baru tahu saat checkout ditolak 409.
+          ...('stock' in product && typeof product.stock === 'number'
+            ? { stock: product.stock }
+            : {}),
+          // Penanda paket: mengunci kuantitas & membuat penghapusan berlaku untuk seluruh paket.
+          ...(ci.comboId ? { comboId: ci.comboId } : {}),
         },
       ]
     })
   }, [cookieCart, excluded, omsProducts])
+
+  // Ada baris yang stoknya tak mencukupi → checkout dikunci sampai pembeli membetulkannya.
+  // Sebelumnya kekurangan stok hanya ketahuan di server, SESUDAH pembeli menekan bayar.
+  const adaStokKurang = useMemo(
+    () => items.some((i) => i.selected && typeof i.stock === 'number' && i.stock < i.quantity),
+    [items],
+  )
 
   // === Keadaan daftar keranjang: loading / empty / ready ===
   //
@@ -246,7 +275,23 @@ export default function CartPage() {
   // === Promo: progres tiap promo + agregasi hadiah yang tercapai (berdasar item tercentang) ===
   const promoProgress = useMemo(() => computePromoProgress(promos, selectedTotal), [promos, selectedTotal])
   const promoRewards = useMemo(() => computePromoRewards(promos, selectedTotal), [promos, selectedTotal])
-  const finalTotal = Math.max(0, selectedTotal - promoRewards.totalDiscount)
+
+  // ANGKA UANG diambil dari computeOrderPromos — fungsi yang SAMA PERSIS dengan yang dipakai
+  // /api/orders/create saat menagih. computePromoRewards di atas kini hanya menyuplai daftar produk
+  // hadiah & pesan progres, bukan lagi nominal diskon.
+  //
+  // ongkir 0 dan minTotal 0 di sini disengaja: keranjang belum tahu kurir mana yang akan dipilih,
+  // jadi lantai nominal gateway belum bisa dievaluasi dengan benar di sini. Yang menegakkannya
+  // adalah halaman checkout (sudah tahu ongkirnya) dan server.
+  const orderPromos = useMemo(
+    () =>
+      computeOrderPromos(promos, selectedTotal, 0, promoNowMs, {
+        maxDiscountPercent,
+        minTotal: 0,
+      }),
+    [promos, selectedTotal, maxDiscountPercent],
+  )
+  const finalTotal = Math.max(0, selectedTotal - orderPromos.discount)
 
   // === Produk gratis hadiah (free_product tercapai) → item terpisah Rp0 di keranjang ===
   // Turunan reaktif dari promoRewards: muncul saat subtotal ≥ min_purchase, hilang saat turun.
@@ -310,7 +355,27 @@ export default function CartPage() {
     updateQuantity(productId, Math.max(minQtyOf(productId, variantId), quantity), variantId)
   }
 
+  // Menghapus satu baris. Baris yang merupakan bagian PAKET mengeluarkan SELURUH paket.
+  //
+  // Kenapa seluruhnya, bukan barisnya saja: sisa anggota paket akan tetap membawa comboId dan tetap
+  // menampilkan harga alokasi paket (mis. Rp11.392), padahal isi keranjang tak lagi cocok dengan
+  // paket di database. Server menolak pencocokan itu, dan sebelum perbaikan ini ia diam-diam
+  // menagih harga satuan yang lebih mahal (Rp15.000) — pembeli membayar lebih tanpa diberi tahu.
+  // Paket memang satu kesatuan; memperlakukannya begitu di keranjang membuat keadaan yang tampil
+  // selalu sama dengan keadaan yang bisa diverifikasi server.
   function remove(productId: string, variantId?: string) {
+    const line = cookieCart.find((i) => i.productId === productId && i.variantId === variantId)
+    if (line?.comboId) {
+      const anggota = cookieCart.filter((i) => i.comboId === line.comboId).length
+      const setuju =
+        anggota <= 1 ||
+        window.confirm(
+          `Produk ini bagian dari sebuah paket. Menghapusnya akan mengeluarkan seluruh ${anggota} produk paket tersebut dari keranjang. Lanjutkan?`,
+        )
+      if (!setuju) return
+      removeComboFromCart(line.comboId)
+      return
+    }
     removeFromCart(productId, variantId)
   }
 
@@ -433,7 +498,10 @@ export default function CartPage() {
         selectedCount={selectedCount}
         selectedTotal={finalTotal}
         subtotal={selectedTotal}
+        discount={orderPromos.discount}
+        freeShipping={orderPromos.appliedPromos.some((p) => p.type === 'free_shipping')}
         minOrderAmount={minOrderAmount}
+        stockBlocked={adaStokKurang}
         onToggleSelectAll={toggleSelectAll}
         onCheckout={handleCheckout}
       />

@@ -29,6 +29,17 @@ export default function CartItemRow({
   // Minimum pembelian baris ini (dari data produk). 1 = tanpa batasan.
   const minQty = item.minOrderQty > 1 ? item.minOrderQty : 1
 
+  // Baris bagian dari paket → kuantitas DIKUNCI. Isi paket ditentukan paketnya, bukan pembeli:
+  // mengubah salah satu kuantitas membuat isi keranjang tak lagi cocok dengan paket di database,
+  // dan server lalu menagih harga satuan padahal layar menampilkan harga paket.
+  const isCombo = Boolean(item.comboId)
+
+  // Stok tak cukup untuk kuantitas baris ini. Sebelum ini keranjang tak menampilkan stok sama
+  // sekali dan tombol "+" tak punya batas — pembeli baru tahu saat checkout ditolak 409.
+  const stock = typeof item.stock === 'number' ? item.stock : null
+  const stokKurang = stock !== null && stock < quantity
+  const stokMentok = stock !== null && quantity >= stock
+
   // State teks lokal agar user bisa mengetik bebas (mis. mengosongkan field lalu ketik "10").
   // Disinkronkan bila quantity dari cookie berubah (mis. tombol +/-).
   const [draft, setDraft] = useState(String(quantity))
@@ -87,6 +98,20 @@ export default function CartItemRow({
           </span>
         )}
 
+        {/* Penanda bagian paket — menjelaskan kenapa kuantitasnya tak bisa diubah */}
+        {isCombo && (
+          <span className="mt-1 w-fit rounded bg-brand-surface px-2 py-0.5 text-xs font-medium text-brand-primary">
+            Bagian dari {item.comboName ?? 'paket'} · jumlah terkunci
+          </span>
+        )}
+
+        {/* Peringatan stok — muncul hanya bila stok benar-benar tak mencukupi baris ini */}
+        {stokKurang && (
+          <span className="mt-1 w-fit rounded bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700">
+            Stok tersisa {stock}, kurangi jumlahnya
+          </span>
+        )}
+
         {/* Nama varian terpilih (bila produk bervarian) */}
         {variantName && (
           <span className="mt-1 w-fit rounded bg-brand-surface px-2 py-0.5 text-xs font-medium text-brand-primary">
@@ -113,13 +138,15 @@ export default function CartItemRow({
             <TrashIcon />
           </button>
 
-          {/* Pengatur jumlah: - qty + */}
-          <div className="flex items-center rounded-lg border border-zinc-300">
+          {/* Pengatur jumlah: - qty +. Dikunci penuh untuk baris paket. */}
+          <div
+            className={`flex items-center rounded-lg border border-zinc-300 ${isCombo ? 'opacity-60' : ''}`}
+          >
             <button
               type="button"
               onClick={() => onDecrement(productId, variantId)}
               // Kunci saat sudah menyentuh batas minimum pembelian produk ini
-              disabled={quantity <= minQty}
+              disabled={isCombo || quantity <= minQty}
               aria-label="Kurangi jumlah"
               className="px-3 py-1 text-lg leading-none text-zinc-600 transition active:scale-95 disabled:opacity-40"
             >
@@ -132,6 +159,7 @@ export default function CartItemRow({
               pattern="[0-9]*"
               value={draft}
               onChange={(e) => setDraft(e.target.value.replace(/\D/g, ''))}
+              readOnly={isCombo}
               onFocus={(e) => e.target.select()}
               onBlur={commitDraft}
               onKeyDown={(e) => {
@@ -143,8 +171,10 @@ export default function CartItemRow({
             <button
               type="button"
               onClick={() => onIncrement(productId, variantId)}
+              // Terkunci untuk baris paket, dan saat kuantitas sudah menyentuh stok tersedia.
+              disabled={isCombo || stokMentok}
               aria-label="Tambah jumlah"
-              className="px-3 py-1 text-lg leading-none text-zinc-600 transition active:scale-95"
+              className="px-3 py-1 text-lg leading-none text-zinc-600 transition active:scale-95 disabled:opacity-40"
             >
               +
             </button>

@@ -10,6 +10,7 @@ import { DEFAULT_LOW_STOCK_THRESHOLD } from '@/lib/product-validation'
 export const MIN_ORDER_AMOUNT_KEY = 'min_order_amount'
 export const WAREHOUSE_MODE_KEY = 'warehouse_mode'
 export const LOW_STOCK_THRESHOLD_KEY = 'low_stock_threshold'
+export const MAX_DISCOUNT_PERCENT_KEY = 'max_discount_percent'
 export const STORE_NAME_KEY = 'store_name'
 export const STORE_DESCRIPTION_KEY = 'store_description'
 // Kapan seorang admin terakhir membuka panel notifikasi. Satu baris PER ADMIN, karena
@@ -89,6 +90,34 @@ export async function setMinOrderAmount(amount: number): Promise<number> {
     )
 
   if (error) throw new Error(`Gagal menyimpan pengaturan: ${error.message}`)
+  return safe
+}
+
+// === Plafon diskon promo ===
+
+// Batas atas diskon terhadap subtotal, dalam PERSEN.
+//
+// Kenapa perlu ada plafon sama sekali: promo bertipe discount_nominal DIJUMLAH, jadi beberapa promo
+// aktif bersamaan bisa menghasilkan potongan yang jauh melebihi margin — bahkan mendekati subtotal
+// itu sendiri. Plafon adalah rem terakhir yang tak bergantung pada ketelitian admin saat menyusun
+// promo. Dipakai sebagai `maxDiscountPercent` di computeOrderPromos().
+export const DEFAULT_MAX_DISCOUNT_PERCENT = 50
+export const MAX_MAX_DISCOUNT_PERCENT = 100
+
+// Membaca plafon diskon (persen, INTEGER 0-100). Gagal apa pun → DEFAULT_MAX_DISCOUNT_PERCENT.
+export async function getMaxDiscountPercent(): Promise<number> {
+  const raw = await getSetting(MAX_DISCOUNT_PERCENT_KEY)
+  const parsed = Number.parseInt(String(raw ?? ''), 10)
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > MAX_MAX_DISCOUNT_PERCENT) {
+    return DEFAULT_MAX_DISCOUNT_PERCENT
+  }
+  return parsed
+}
+
+// Menyimpan plafon diskon (persen). Di-clamp ke 0-100. Mengembalikan nilai yang tersimpan.
+export async function setMaxDiscountPercent(percent: number): Promise<number> {
+  const safe = Math.min(MAX_MAX_DISCOUNT_PERCENT, Math.max(0, Math.floor(percent)))
+  await setSetting(MAX_DISCOUNT_PERCENT_KEY, String(safe))
   return safe
 }
 

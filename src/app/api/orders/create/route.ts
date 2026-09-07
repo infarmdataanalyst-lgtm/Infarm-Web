@@ -12,9 +12,10 @@ import { saveOrder, OrderStockError } from '@/lib/mock-db/orders'
 import { readProducts } from '@/lib/mock-db/products'
 import { readPromotions } from '@/lib/mock-db/promotions'
 import { getComboById } from '@/lib/mock-db/combos'
-import { allocateComboPrices } from '@/lib/promo-cart'
+import { allocateComboPrices, computeOrderPromos } from '@/lib/promo-cart'
+import { XENDIT_MIN_AMOUNT } from '@/lib/payment-limits'
 import { getVariantsByIds } from '@/lib/mock-db/variants'
-import { getMinOrderAmount } from '@/lib/mock-db/settings'
+import { getMinOrderAmount, getMaxDiscountPercent } from '@/lib/mock-db/settings'
 import { getEffectiveStock, resolveWarehouseForOrder, type StockRequirement } from '@/lib/warehouse'
 import { getWarehouseById } from '@/lib/mock-db/warehouses'
 import { MENGANTAR_ORIGIN_ID_REGEX } from '@/lib/warehouse-validation'
@@ -269,20 +270,41 @@ export async function POST(request: Request) {
   const comboUnitPrice = new Map<string, number>() // kunci: `${comboId}::${productId}`
   const claimedComboIds = [...new Set(body.items.map(comboIdOf).filter((v) => v !== undefined))]
 
+  // Paket yang diklaim tapi TIDAK lolos verifikasi kini DITOLAK 422, bukan diam-diam dihargai
+  // satuan seperti sebelumnya (SEC-033 lanjutan).
+  //
+  // Kenapa berubah sikap: keranjang dulu membiarkan pembeli menghapus satu anggota paket, dan sisa
+  // itemnya tetap membawa comboId sambil MENAMPILKAN harga alokasi paket (mis. 11.392). Server
+  // menolak pencocokan lalu menagih harga satuan (15.000) — pembeli membayar lebih tanpa
+  // diberi tahu. Sejak keranjang memperlakukan paket sebagai satu kesatuan (stepper dikunci,
+  // menghapus satu anggota mengeluarkan seluruh paket), klien yang sah TIDAK MUNGKIN lagi
+  // mengirim paket rusak. Jadi kalau tetap terjadi, itu cookie basi atau manipulasi — dan
+  // menolak terang-terangan jauh lebih baik daripada menagih lebih diam-diam.
+  const comboRejected = (nama: string) =>
+    NextResponse.json(
+      {
+        error: `Paket ${nama} sudah berubah atau tidak lengkap. Muat ulang keranjang lalu coba lagi.`,
+        code: 'COMBO_INVALID',
+      },
+      { status: 422 },
+    )
+
   for (const comboId of claimedComboIds) {
     const combo = await getComboById(comboId)
-    if (!combo || !combo.isActive) continue // paket dihapus/dinonaktifkan sejak masuk keranjang
+    if (!combo || !combo.isActive) return comboRejected('yang dipilih') // dihapus/dinonaktifkan
 
     const lines = body.items.filter((it) => comboIdOf(it) === comboId)
 
-    // Combo tak mengenal varian; kalau item mengaku bagian paket TAPI membawa varian, bentuknya
-    // tak bisa diverifikasi — jangan tebak, biarkan jatuh ke harga varian.
-    if (lines.some((l) => l.variantId)) continue
+    // Combo tak mengenal varian; item yang mengaku bagian paket TAPI membawa varian tak bisa
+    // diverifikasi bentuknya sama sekali.
+    if (lines.some((l) => l.variantId)) return comboRejected(combo.name)
 
     // Kumpulan item harus cocok PERSIS dengan anggota paket: produk yang sama, kuantitas yang sama.
     const wanted = new Map(combo.items.map((ci) => [ci.productId, ci.quantity]))
-    if (lines.length !== wanted.size) continue
-    if (!lines.every((l) => wanted.get(l.productId) === l.quantity)) continue
+    if (lines.length !== wanted.size) return comboRejected(combo.name)
+    if (!lines.every((l) => wanted.get(l.productId) === l.quantity)) {
+      return comboRejected(combo.name)
+    }
 
     // Harga dialokasikan ulang di server dengan fungsi yang SAMA PERSIS dengan yang dipakai klien
     // saat menyusun keranjang (allocateComboPrices), memakai comboPrice dari DB. Fungsi yang sama
@@ -334,6 +356,7 @@ export async function POST(request: Request) {
         name: prod.name,
         quantity: it.quantity,
         price: comboPrice, // snapshot harga PAKET hasil alokasi server
+        comboId: comboIdOf(it), // → order_items.combo_id, dasar laporan penjualan paket
       })
     } else if (it.variantId) {
       // === Produk BERVARIAN: harga OTORITATIF dari varian (bukan dari payload) ===
@@ -392,6 +415,9 @@ export async function POST(request: Request) {
   const promotions = await readPromotions()
   const nowMs = Date.now()
   const addedFreeIds = new Set<string>()
+  // Peringatan yang ikut dikirim ke pembeli bersama respons sukses (bukan error — pesanannya tetap
+  // dibuat). Lihat blok hadiah tak tersedia di bawah.
+  const freeProductWarnings: { code: string; promotionId: string; productName: string }[] = []
   for (const promo of promotions) {
     if (promo.type !== 'free_product' || !promo.isActive || !promo.freeProductId) continue
     if (isPromotionExpired(promo.endAt, nowMs)) continue // sudah kedaluwarsa
@@ -399,7 +425,20 @@ export async function POST(request: Request) {
     if (subtotal < promo.minPurchase) continue // syarat belanja belum terpenuhi
     if (addedFreeIds.has(promo.freeProductId)) continue // hindari duplikat produk gratis
     const prod = byId.get(promo.freeProductId)
-    if (!prod || prod.archived || prod.stock <= 0) continue // hadiah tak tersedia → lewati diam-diam
+    // Hadiah tak tersedia. Dulu dilewati DIAM-DIAM: pembeli sudah memenuhi syarat, sudah melihat
+    // janji hadiah di keranjang, lalu tak menerimanya tanpa satu pun pesan. Kini dicatat sebagai
+    // peringatan yang ikut dikirim di respons dan ditampilkan di halaman sukses.
+    //
+    // Checkout SENGAJA tidak diblokir: menggagalkan pembelian gara-gara bonus yang kebetulan habis
+    // jauh lebih merugikan pembeli daripada memberitahunya dengan jujur.
+    if (!prod || prod.archived || prod.stock <= 0) {
+      freeProductWarnings.push({
+        code: 'FREE_PRODUCT_UNAVAILABLE',
+        promotionId: promo.id,
+        productName: prod?.name ?? promo.freeProductName ?? 'Produk hadiah',
+      })
+      continue
+    }
     addedFreeIds.add(promo.freeProductId)
     pricedItems.push({
       productId: promo.freeProductId,
@@ -558,10 +597,38 @@ export async function POST(request: Request) {
     )
   }
 
-  // Penolakannya sendiri sudah dilakukan JAUH DI ATAS, tepat setelah payload divalidasi — lihat
-  // blok berlabel SEC-013 di sana. Di sini yang tersisa hanya penegasan bahwa angkanya nol.
-  const discount = 0
-  const totalAmount = Math.max(0, subtotal + shippingCost - discount)
+  // === Promo: dihitung SERVER, tak pernah diterima dari client ===
+  //
+  // Nilai nominal dari client sudah ditolak jauh di atas (blok SEC-013). Di sini nilainya dihitung
+  // sendiri dari tabel promotions, memakai fungsi yang SAMA PERSIS dengan yang dipakai keranjang
+  // untuk menampilkan angkanya (computeOrderPromos di @/lib/promo-cart). Satu fungsi, dua
+  // pemanggil — selama subtotalnya sama, tampilan dan tagihan mustahil berbeda lagi.
+  //
+  // Sebelum ini `discount` dipaku 0 sementara keranjang sudah mengurangi totalnya sendiri, sehingga
+  // pembeli melihat satu angka lalu ditagih angka yang lebih besar.
+  const maxDiscountPercent = await getMaxDiscountPercent()
+  const promoResult = computeOrderPromos(promotions, subtotal, shippingCost, nowMs, {
+    maxDiscountPercent,
+    minTotal: XENDIT_MIN_AMOUNT,
+  })
+
+  if (promoResult.clampedByCap) {
+    console.warn(
+      `${LOG} diskon dipotong plafon ${maxDiscountPercent}% (subtotal=${subtotal}, diskon=${promoResult.discount})`,
+    )
+  }
+  if (promoResult.clampedByMinTotal) {
+    // Bukan kesalahan, tapi WAJIB terlihat: pembeli menerima diskon lebih kecil dari yang
+    // dijanjikan promo, dan alasannya ada di batas gateway — bukan di kesalahan hitung.
+    console.warn(
+      `${LOG} diskon dikurangi agar total tak di bawah batas gateway Rp${XENDIT_MIN_AMOUNT} ` +
+        `(subtotal=${subtotal}, ongkir=${shippingCost})`,
+    )
+  }
+
+  const discount = promoResult.discount
+  const shippingSubsidy = promoResult.shippingSubsidy
+  const totalAmount = Math.max(0, subtotal + shippingCost - discount - shippingSubsidy)
 
   // === Gudang pemenuh pesanan ===
   // Gudang berasal dari kurir yang DIPILIH BUYER (hasil perbandingan ongkir riil antar gudang di
@@ -611,6 +678,11 @@ export async function POST(request: Request) {
       // tak bisa dipisahkan lagi dari total.
       shippingCost,
       warehouseId: warehouse?.id,
+      // Angka promo hasil hitung server. shippingCost di atas SENGAJA tetap tarif asli Mengantar —
+      // subsidinya dicatat terpisah supaya tagihan kurir tetap bisa direkonsiliasi.
+      discount,
+      shippingSubsidy,
+      appliedPromos: promoResult.appliedPromos,
     })
 
     // Stok produk berkurang → segarkan cache storefront agar stok tampil akurat.
@@ -623,7 +695,17 @@ export async function POST(request: Request) {
     revalidateTag('sales', 'max')
 
     // invoice dikembalikan agar checkout bisa redirect ke ?invoice=...
-    return NextResponse.json({ success: true, invoice: saved.orderId, order: saved }, { status: 201 })
+    return NextResponse.json(
+      {
+        success: true,
+        invoice: saved.orderId,
+        order: saved,
+        // Kosong pada alur normal. Terisi bila ada hadiah promo yang tak bisa disertakan —
+        // halaman sukses menampilkannya supaya pembeli tak merasa dijanjikan lalu diabaikan.
+        ...(freeProductWarnings.length > 0 ? { warnings: freeProductWarnings } : {}),
+      },
+      { status: 201 },
+    )
   } catch (e) {
     // Stok tidak cukup → transaksi sudah di-rollback DB; beri tahu buyer produk mana
     if (e instanceof OrderStockError) {

@@ -14,6 +14,7 @@ export type OrderItem = {
   isPromoItem?: boolean // true = produk GRATIS hadiah promosi (type='free_product'); tak menambah subtotal
   promotionId?: string | null // id promosi penyebab produk ini gratis (null untuk item normal)
   variantId?: string | null // varian produk yang dipilih (null bila produk tak bervarian)
+  comboId?: string | null // paket asal baris ini → order_items.combo_id (dasar laporan penjualan combo)
   variantName?: string // nama varian di-resolve saat baca (mis. "50 Biji") — untuk tampilan invoice
 }
 
@@ -100,6 +101,12 @@ export type CreateOrderInput = {
   paymentStatus?: OrderPaymentStatus
   status?: OrderFulfillmentStatus
   warehouseId?: string // gudang hasil resolveWarehouseForOrder; kosong → RPC pakai gudang default
+  // === Promo (dihitung server lewat computeOrderPromos, TIDAK PERNAH dari client) ===
+  discount?: number // potongan harga barang → orders.diskon
+  shippingSubsidy?: number // ongkir yang ditanggung promo → orders.ongkos_kirim_ditanggung.
+  // ⚠️ shippingCost di atas TETAP tarif Mengantar yang sebenarnya — jangan dinolkan saat gratis
+  // ongkir. Kolom itu dipakai merekonsiliasi tagihan kurir; subsidinya dicatat terpisah di sini.
+  appliedPromos?: { id: string; name: string; type: string; value: number }[] // → promo_terpakai
 }
 
 // Agregasi produk terlaris — jumlah unit terjual & total pendapatan per produk.
