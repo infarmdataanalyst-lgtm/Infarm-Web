@@ -591,6 +591,97 @@ export async function readTrackingSyncCandidates(
   })
 }
 
+// Invoice pesanan yang pembayarannya SUDAH LEWAT TENGGAT dan tak akan pernah masuk.
+//
+// Dipakai penyapu kedaluwarsa (/api/cron/expire-orders). Mengembalikan nomor invoice saja, bukan
+// Order utuh: pemanggil hanya butuh tahu MANA yang perlu ditutup, lalu membaca detailnya satu per
+// satu — jumlahnya sedikit (pesanan basi per hari), jadi N+1 di sini jauh lebih murah daripada
+// memuat item + produk + varian untuk baris yang mungkin tak jadi disentuh.
+//
+// Tiga syarat, seluruhnya filter DB:
+//   1. `status_pembayaran = PENDING` — yang sudah Lunas/Gagal tak ada urusannya di sini.
+//   2. `order_status = PENDING` — SENGAJA hanya yang masih murni menunggu bayar. Pesanan yang
+//      sudah didorong maju admin (mis. PENDING/PROCESSING) TIDAK disentuh: admin melakukannya
+//      dengan sadar, dan membatalkannya otomatis akan menghapus keputusan manusia tanpa bertanya.
+//      Baris seperti itu memang perlu perhatian, tapi lewat mata admin, bukan lewat penyapu.
+//   3. `created_at < cutoff` — pemanggil yang menentukan tenggatnya (umur invoice + tenggang).
+//   4. `warehouse_id` TERISI — pagar keselamatan, bukan detail teknis. Lihat di bawah.
+//
+// ── Kenapa pesanan tanpa gudang SENGAJA dilewati ──
+// Pesanan warisan (sebelum sistem multi-gudang & audit stock_mutations) tak punya warehouse_id dan
+// tak punya satu pun baris mutasi. Kita TIDAK BISA membuktikan stoknya pernah dipotong dari gudang
+// mana pun. Kalau tetap disapu, restoreStock() akan mengkreditkannya ke gudang DEFAULT — menambah
+// stok yang mungkin tak pernah dikurangi di sana.
+//
+// Arah kesalahannya penting: melewatkan pesanan warisan berarti stok tercatat lebih SEDIKIT
+// daripada kenyataan (aman — paling banter kehilangan penjualan, dan ketahuan saat stok opname),
+// sedangkan menyapunya berarti stok tercatat lebih BANYAK (berbahaya — oversell, pembeli membayar
+// barang yang tak ada). Saat ragu, gagal ke arah yang aman.
+//
+// Baris warisan tetap perlu dibereskan, tapi oleh manusia yang bisa mencocokkan stok fisik —
+// bukan oleh penyapu yang berjalan tengah malam tanpa ada yang melihat.
+//
+// Terlama dulu, supaya batas `limit` memangkas yang paling baru, bukan yang paling lama tertahan.
+export async function readExpiredPendingInvoices(
+  cutoffIso: string,
+  limit = 100,
+): Promise<string[]> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('orders')
+    .select('nomor_invoice')
+    .eq('status_pembayaran', PAYMENT_TO_DB['Menunggu'])
+    .eq('order_status', STATUS_TO_DB['Menunggu Pembayaran'])
+    .lt('created_at', cutoffIso)
+    .not('warehouse_id', 'is', null)
+    .order('created_at', { ascending: true })
+    .limit(limit)
+
+  if (error) {
+    console.error('Gagal membaca pesanan kedaluwarsa:', error.message)
+    return []
+  }
+
+  const rows = (data as Pick<OrderRow, 'nomor_invoice'>[]) ?? []
+  return rows.map((row) => row.nomor_invoice).filter((invoice): invoice is string => !!invoice)
+}
+
+// Pesanan yang SUDAH Dibatalkan tetapi status pembayarannya masih tertinggal di "Menunggu".
+//
+// Terjadi karena pembatalan manual lewat OMS hanya menyentuh `order_status` — hanya jalur otomatis
+// (webhook / penyapu) yang mengubah KEDUA kolom. Akibatnya lencana pembayaran di OMS berbunyi
+// "Menunggu" pada pesanan yang sudah mati, seolah uangnya masih mungkin masuk.
+//
+// TIDAK ADA STOK yang bergerak saat baris ini dibereskan — pesanannya sudah dibatalkan, jadi
+// stoknya sudah dikembalikan saat itu. Yang diperbaiki murni pembukuan. Karena itu pula pesanan
+// warisan tanpa `warehouse_id` ikut disertakan: pagar gudang pada readExpiredPendingInvoices ada
+// untuk melindungi perhitungan stok, dan di sini tak ada perhitungan stok sama sekali.
+//
+// `created_at < cutoff` tetap dipakai supaya pesanan yang baru saja dibatalkan tidak diberi cap
+// Gagal mendahului callback pembayaran yang mungkin masih dalam perjalanan.
+export async function readCancelledWithPendingPayment(
+  cutoffIso: string,
+  limit = 100,
+): Promise<string[]> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('orders')
+    .select('nomor_invoice')
+    .eq('status_pembayaran', PAYMENT_TO_DB['Menunggu'])
+    .eq('order_status', STATUS_TO_DB['Dibatalkan'])
+    .lt('created_at', cutoffIso)
+    .order('created_at', { ascending: true })
+    .limit(limit)
+
+  if (error) {
+    console.error('Gagal membaca pesanan batal berstatus bayar tertinggal:', error.message)
+    return []
+  }
+
+  const rows = (data as Pick<OrderRow, 'nomor_invoice'>[]) ?? []
+  return rows.map((row) => row.nomor_invoice).filter((invoice): invoice is string => !!invoice)
+}
+
 // Membaca SEMUA pesanan milik satu nomor telepon (untuk lacak/batalkan by no_telepon).
 // phone di-cocokkan APA ADANYA (pemanggil wajib menormalkan dulu via normalizePhone).
 // Terbaru dulu. Array kosong bila tak ada / error. Server-only.

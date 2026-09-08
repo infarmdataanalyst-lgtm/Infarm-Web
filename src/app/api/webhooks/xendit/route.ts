@@ -22,13 +22,8 @@
 
 import { NextResponse } from 'next/server'
 import { revalidatePath, revalidateTag } from 'next/cache'
-import {
-  getOrderByOrderId,
-  getOrderUuidByInvoice,
-  updatePaymentStatus,
-} from '@/lib/mock-db/orders'
-import { restoreStock } from '@/lib/mock-db/products'
-import { recordOrderStockChanges } from '@/lib/stock-audit'
+import { getOrderByOrderId, updatePaymentStatus } from '@/lib/mock-db/orders'
+import { expireOrder, revalidateAfterExpiry } from '@/lib/order-expiry'
 import { bookShipmentForPaidOrder } from '@/lib/shipment-booking'
 import {
   parseXenditCallback,
@@ -172,62 +167,21 @@ async function handlePaid(
 // === Pembayaran kedaluwarsa / gagal ===
 
 async function handleFailed(order: Order, invoice: string, transactionId?: string) {
-  // Sudah dibatalkan sebelumnya (mis. oleh pembeli lewat /order-cancellation, atau callback
-  // duplikat) → stok SUDAH dikembalikan. Mengembalikannya lagi akan menggelembungkan stok.
-  if (order.status === 'Dibatalkan') {
-    console.log(`${LOG} invoice=${invoice} sudah Dibatalkan — stok tak dikembalikan lagi`)
-    return NextResponse.json({ received: true, handled: false, reason: 'ALREADY_CANCELLED' })
-  }
-  // Sudah lunas tapi datang callback EXPIRED (urutan callback tak dijamin) → jangan batalkan
-  // pesanan yang sudah dibayar.
-  if (order.paymentStatus === 'Lunas') {
-    console.warn(`${LOG} invoice=${invoice} sudah Lunas, callback gagal/kedaluwarsa diabaikan`)
-    return NextResponse.json({ received: true, handled: false, reason: 'ALREADY_PAID' })
-  }
+  // Penutupan pesanan & pelepasan stok TIDAK ditulis di sini melainkan di expireOrder, karena
+  // penyapu terjadwal (cron/expire-orders) harus melakukan hal yang sama persis. Callback ini
+  // jalur tercepat, bukan satu-satunya — dan dua jalur yang menyalin logika stok cepat atau
+  // lambat akan menyimpang.
+  const outcome = await expireOrder(order, invoice, 'webhook', transactionId)
 
-  const updated = await updatePaymentStatus(invoice, 'Gagal', {
-    orderStatus: 'Dibatalkan',
-    ...(transactionId ? { transactionId } : {}),
-  })
-  if (!updated) {
-    console.error(`${LOG} invoice=${invoice} gagal menyimpan status Gagal`)
+  if (!outcome.ok) {
     return NextResponse.json({ error: 'Gagal memperbarui pesanan.' }, { status: 500 })
   }
-
-  // WAJIB: lepaskan kembali stok yang sudah dipotong saat checkout. Tanpa ini stok bocor permanen
-  // setiap kali invoice kedaluwarsa — barang tercatat habis padahal tak pernah terjual.
-  // Pola identik dengan PATCH /api/orders/cancel.
-  await restoreStock(
-    order.items.map((i) => ({
-      productId: i.productId,
-      quantity: i.quantity,
-      variantId: i.variantId ?? undefined,
-    })),
-    order.warehouseId,
-  )
-
-  // Riwayat mutasi: pelakunya SISTEM (webhook), bukan admin → `changed_by` dibiarkan kosong.
-  const orderUuid = await getOrderUuidByInvoice(invoice)
-  await recordOrderStockChanges({
-    items: order.items.map((i) => ({
-      productId: i.productId,
-      ...(i.variantId ? { variantId: i.variantId } : {}),
-      quantity: i.quantity,
-    })),
-    ...(order.warehouseId ? { warehouseId: order.warehouseId } : {}),
-    orderInvoice: invoice,
-    ...(orderUuid ? { orderId: orderUuid } : {}),
-    direction: 'in',
-  })
+  if (!outcome.released) {
+    return NextResponse.json({ received: true, handled: false, reason: outcome.reason })
+  }
 
   // Stok kembali → segarkan cache storefront agar stok & jumlah terjual tampil akurat.
-  revalidatePath('/')
-  revalidatePath('/products')
-  for (const i of order.items) revalidatePath(`/produk/${i.productId}`)
-  revalidateTag('products', 'max')
-  revalidateTag('sales', 'max')
-  revalidatePath('/oms/dashboard')
+  revalidateAfterExpiry(order.items.map((i) => i.productId))
 
-  console.log(`${LOG} invoice=${invoice} → Gagal / Dibatalkan, stok dikembalikan`)
   return NextResponse.json({ received: true, handled: true, status: 'FAILED' })
 }
