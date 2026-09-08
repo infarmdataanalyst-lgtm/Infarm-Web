@@ -1,7 +1,13 @@
 // src/app/api/payments/invoice/route.ts
-// Membuat Invoice Xendit (halaman pembayaran) untuk sebuah pesanan yang SUDAH tersimpan.
+// Menyediakan halaman pembayaran Xendit untuk sebuah pesanan yang SUDAH tersimpan.
 //   POST /api/payments/invoice  { invoice: "INV-..." }
-//   → { invoiceUrl, invoiceId, expiryDate }
+//   → { invoiceUrl, invoiceId, expiryDate, reused? }
+//
+// ── Memakai ulang lebih dulu, menerbitkan belakangan ──
+// Bila pesanan masih memegang tagihan yang belum kedaluwarsa, tagihan ITU yang dikembalikan
+// (`reused: true`) tanpa memanggil Xendit sama sekali. Endpoint ini dipanggil dari halaman
+// checkout DAN dari tombol "Bayar Sekarang" di halaman sukses — tanpa pemakaian ulang, setiap
+// tekan menerbitkan tagihan baru untuk pesanan yang sama (API-XND-027).
 //
 // ── Yang TIDAK dipercaya dari client ──
 // Client hanya mengirim NOMOR INVOICE. Nominal, nama, dan nomor telepon dibaca dari tabel
@@ -22,6 +28,7 @@ import { NextResponse } from 'next/server'
 import { getOrderByOrderId, setOrderTransactionId } from '@/lib/mock-db/orders'
 import { createXenditInvoice } from '@/lib/xendit/invoice'
 import { RATE_LIMITS, enforceRateLimit, getClientIp } from '@/lib/rate-limit'
+import type { Order } from '@/types/order'
 
 // createAdminClient (Supabase) butuh runtime Node.js, bukan Edge
 export const runtime = 'nodejs'
@@ -38,6 +45,30 @@ const PUBLIC_ERRORS: Record<string, string> = {
   'http-error': 'Gagal membuat halaman pembayaran. Silakan coba lagi.',
   'no-invoice-url': 'Gagal membuat halaman pembayaran. Silakan coba lagi.',
   network: 'Gagal menghubungi layanan pembayaran. Silakan coba lagi.',
+}
+
+// Sisa waktu minimum agar tagihan lama layak dipakai ulang. Tagihan yang tinggal beberapa detik
+// secara teknis masih hidup, tapi mengarahkan pembeli ke sana berarti ia kedaluwarsa di tengah
+// pembeli memilih metode & menyalin nomor — lebih baik terbitkan yang baru sekalian.
+const REUSE_MIN_REMAINING_MS = 5 * 60 * 1000
+
+// Tagihan tersimpan yang masih layak dipakai ulang, atau null bila harus menerbitkan yang baru.
+function liveInvoiceOf(
+  order: Order,
+): { invoiceUrl: string; invoiceId: string; expiryDate: string } | null {
+  const url = order.invoiceUrl
+  const expiresAt = order.invoiceExpiresAt
+  // Belum pernah ditagih, atau migration 20260908120000 belum dijalankan sehingga kolomnya tak
+  // pernah terisi. Keduanya berarti: terbitkan seperti biasa.
+  if (!url || !expiresAt) return null
+
+  const expiryMs = Date.parse(expiresAt)
+  // Tanggal tak terbaca → perlakukan seolah tak ada. Menebak bahwa ia masih hidup berisiko
+  // mengarahkan pembeli ke halaman pembayaran yang sudah mati.
+  if (Number.isNaN(expiryMs)) return null
+  if (expiryMs - Date.now() < REUSE_MIN_REMAINING_MS) return null
+
+  return { invoiceUrl: url, invoiceId: order.transactionId ?? '', expiryDate: expiresAt }
 }
 
 // Asal URL situs, untuk menyusun success/failure redirect.
@@ -79,13 +110,6 @@ export async function POST(request: Request) {
   const invoice = typeof body.invoice === 'string' ? body.invoice.trim().replace(/^#/, '') : ''
   if (!invoice) return NextResponse.json({ error: 'Field `invoice` wajib diisi.' }, { status: 400 })
 
-  // Limit kedua: per nomor invoice, agar satu pesanan tak dipakai menerbitkan invoice berulang.
-  const limitedInvoice = enforceRateLimit(
-    `payments-invoice:invoice:${invoice}`,
-    RATE_LIMITS.PAYMENT_CREATE_INVOICE,
-  )
-  if (limitedInvoice) return limitedInvoice
-
   const order = await getOrderByOrderId(invoice)
   if (!order) {
     // Pesan sengaja sama untuk "tak ada" dan "tak boleh": nomor invoice adalah satu-satunya kunci
@@ -101,6 +125,32 @@ export async function POST(request: Request) {
   if (order.paymentStatus === 'Lunas') {
     return NextResponse.json({ error: 'Pesanan sudah dibayar.' }, { status: 409 })
   }
+
+  // === Pakai ulang tagihan yang masih hidup ===
+  //
+  // Tanpa ini, setiap tekan "Bayar Sekarang" menerbitkan tagihan BARU untuk pesanan yang sama
+  // (API-XND-027). Akibatnya satu pesanan bisa punya beberapa tagihan hidup sekaligus: pembeli
+  // bisa membuka tagihan lama dari tab/email dan membayar nominal yang sudah tak berlaku, dan
+  // rekonsiliasi di dashboard Xendit berubah jadi menebak mana yang sebenarnya dibayar.
+  //
+  // Dijawab dari DB, TANPA bertanya ke Xendit — lebih cepat bagi pembeli, dan tetap bekerja saat
+  // Xendit lambat atau tak terjangkau, yaitu justru saat orang paling sering menekan tombolnya
+  // berkali-kali.
+  const reusable = liveInvoiceOf(order)
+  if (reusable) {
+    console.log(`${LOG} invoice=${invoice} pakai ulang tagihan, kedaluwarsa ${reusable.expiryDate}`)
+    return NextResponse.json({ ...reusable, reused: true })
+  }
+
+  // Limit per nomor invoice sengaja diperiksa DI SINI, bukan di awal: yang perlu direm adalah
+  // PENERBITAN tagihan (panggilan berbayar ke Xendit), bukan permintaan yang dijawab dari DB.
+  // Kalau ditaruh di atas, pembeli yang menekan tombol enam kali akan ditolak padahal lima
+  // permintaan terakhirnya tak menyentuh Xendit sama sekali.
+  const limitedInvoice = enforceRateLimit(
+    `payments-invoice:invoice:${invoice}`,
+    RATE_LIMITS.PAYMENT_CREATE_INVOICE,
+  )
+  if (limitedInvoice) return limitedInvoice
 
   const result = await createXenditInvoice(order, resolveOrigin(request))
   if (!result.ok) {
@@ -120,7 +170,12 @@ export async function POST(request: Request) {
   // Gagal menyimpan TIDAK membatalkan respons: invoice sudah terbit dan pembeli berhak
   // membayarnya. Webhook tetap menemukan pesanan lewat `external_id` (= nomor invoice), bukan
   // lewat kolom ini. Tapi dicatat sekeras mungkin karena jejaknya jadi tak lengkap.
-  const saved = await setOrderTransactionId(invoice, result.invoice.invoiceId)
+  // Tautan & masa berlakunya ikut disimpan supaya penekanan tombol berikutnya dijawab dari DB
+  // tanpa menerbitkan tagihan kedua.
+  const saved = await setOrderTransactionId(invoice, result.invoice.invoiceId, {
+    url: result.invoice.invoiceUrl,
+    expiresAt: result.invoice.expiryDate,
+  })
   if (!saved) {
     console.error(
       `${LOG} invoice=${invoice} tagihan terbit (${result.invoice.invoiceId}) tapi GAGAL disimpan ke id_transaksi`,

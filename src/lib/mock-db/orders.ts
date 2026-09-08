@@ -94,6 +94,10 @@ type OrderRow = {
   no_tracking: string | null
   status_pembayaran: string
   id_transaksi: string | null
+  // Tagihan Xendit yang masih berlaku (migration 20260908120000) — optional, alasan sama seperti
+  // kolom baru lain di bawah. Dipakai agar satu pesanan tak menerbitkan tagihan berkali-kali.
+  invoice_url?: string | null
+  invoice_expires_at?: string | null
   // Kolom baru (migration 20260827120000). Optional di tipe ini supaya kode tetap jalan bila
   // migration belum di-apply — PostgREST tak mengembalikan kolom yang belum ada.
   ongkos_kirim?: number | null
@@ -269,6 +273,8 @@ function rowToOrder(row: OrderRow, items: OrderItem[], warehouseNames?: Map<stri
   if (row.shipment_error) order.shipmentError = row.shipment_error
   if (row.shipment_booked_at) order.shipmentBookedAt = row.shipment_booked_at
   if (row.id_transaksi) order.transactionId = row.id_transaksi
+  if (row.invoice_url) order.invoiceUrl = row.invoice_url
+  if (row.invoice_expires_at) order.invoiceExpiresAt = row.invoice_expires_at
   if (row.metode_pembayaran) order.paymentMethod = row.metode_pembayaran
   // `typeof number`, bukan truthy: ongkir 0 (promo gratis ongkir) sah dan harus tetap terbawa.
   // `if (row.ongkos_kirim)` akan membuangnya dan menyamakannya dengan "tak pernah dicatat".
@@ -1053,14 +1059,35 @@ function isUnknownColumnError(error: { code?: string; message?: string }): boole
 export async function setOrderTransactionId(
   orderId: string,
   transactionId: string,
+  // Tautan & masa berlaku tagihan. Opsional supaya pemanggil lama tetap bisa menyimpan id saja.
+  invoice?: { url: string; expiresAt: string },
 ): Promise<boolean> {
   const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from('orders')
-    .update({ id_transaksi: transactionId })
-    .eq('nomor_invoice', orderId)
-    .select('id')
-    .maybeSingle()
+
+  const patch: Record<string, string> = { id_transaksi: transactionId }
+  if (invoice?.url) patch.invoice_url = invoice.url
+  if (invoice?.expiresAt) patch.invoice_expires_at = invoice.expiresAt
+
+  const attempt = (body: Record<string, string>) =>
+    supabase.from('orders').update(body).eq('nomor_invoice', orderId).select('id').maybeSingle()
+
+  let { data, error } = await attempt(patch)
+
+  // Cadangan bila migration 20260908120000 belum di-apply. Migration dijalankan MANUAL lewat
+  // Dashboard, jadi selalu ada jendela waktu kode-sudah/DB-belum.
+  //
+  // Tanpa cadangan ini, dua kolom yang belum ada menggagalkan SELURUH update — termasuk
+  // `id_transaksi`, satu-satunya penghubung pesanan kita dengan objek pembayaran di dashboard
+  // Xendit. Kehilangan pemakaian ulang tagihan jauh lebih murah daripada kehilangan jejak itu.
+  if (error && 'invoice_url' in patch && isUnknownColumnError(error)) {
+    console.warn(
+      `Kolom invoice_url/invoice_expires_at belum di-migrate (${error.message}) — ` +
+        'id transaksi disimpan tanpa tautan tagihan; pemakaian ulang tagihan TIDAK aktif',
+    )
+    delete patch.invoice_url
+    delete patch.invoice_expires_at
+    ;({ data, error } = await attempt(patch))
+  }
 
   if (error) {
     console.error('Gagal menyimpan id transaksi di Supabase:', error.message)

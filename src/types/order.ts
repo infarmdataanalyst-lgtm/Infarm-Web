@@ -66,6 +66,12 @@ export type Order = {
   logistics?: OrderLogistics
   trackingNumber?: string // no_tracking (diisi setelah kurir pickup)
   transactionId?: string // id_transaksi (dari Xendit setelah pembayaran)
+  // Tagihan Xendit yang masih berlaku, disimpan agar tombol "Bayar Sekarang" yang ditekan
+  // berulang kali memakai ulang halaman pembayaran yang SAMA alih-alih menerbitkan tagihan baru
+  // (API-XND-027). Keduanya `undefined` untuk pesanan yang belum pernah ditagih, dan untuk seluruh
+  // pesanan lama bila migration 20260908120000 belum dijalankan.
+  invoiceUrl?: string
+  invoiceExpiresAt?: string // ISO 8601, dari `expiry_date` respons Xendit
   // = metode_pembayaran. Metode/channel yang BENAR-BENAR dipakai pembeli menurut Xendit
   // (mis. 'BCA', 'OVO', 'QRIS', 'ALFAMART'). Hanya diketahui setelah callback pembayaran masuk —
   // di jalur invoice pembeli memilih metodenya sendiri di halaman Xendit, jadi `undefined` selama
