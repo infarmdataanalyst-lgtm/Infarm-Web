@@ -12,12 +12,9 @@
 // KUNCINYA, bukan host-nya (berbeda dari Mengantar yang punya host sandbox terpisah).
 export const XENDIT_BASE_URL = 'https://api.xendit.co'
 
-// Path pembuatan Payment Request (Payments API v3).
-//
-// ⚠️ BELUM DIVERIFIKASI terhadap API sungguhan — belum ada satu pun panggilan Xendit yang pernah
-// dijalankan dari project ini. Sebagian dokumentasi Xendit memakai `/v3/payment_requests`.
-// Dikumpulkan sebagai konstanta di sini supaya koreksinya satu baris, bukan berburu ke seluruh kode.
-export const XENDIT_PAYMENT_REQUEST_PATH = '/payment_requests'
+// Catatan: XENDIT_PAYMENT_REQUEST_PATH ('/payment_requests') DIHAPUS bersama jalur Virtual Account
+// pada 2026-09-08 — tak ada lagi yang memanggilnya. Checkout memakai Invoice API, path-nya ada di
+// lib/xendit/invoice.ts. Lihat docs/checkout-flow.md → "jalur Virtual Account (DIHAPUS)".
 
 // === Kunci & lingkungan ===
 

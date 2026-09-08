@@ -7,7 +7,7 @@
 // ── Kenapa ada gate NODE_ENV (SEC-027) ──
 // Route ini dulu tak punya gate sama sekali, jadi ikut hidup di produksi. Dampaknya kecil tapi
 // nyata: markup template bocor ke publik, dan tiap permintaan memicu readFile di fungsi
-// serverless. Polanya menyalin src/app/test-xendit/page.tsx — notFound(), bukan 403, supaya dari
+// serverless. Polanya menyalin src/app/api/dev/simulate-payment — notFound(), bukan 403, supaya dari
 // luar route ini tak bisa dibedakan dari path yang memang tak ada.
 
 import { readFile } from 'node:fs/promises'

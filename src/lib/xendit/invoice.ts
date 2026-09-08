@@ -7,9 +7,16 @@
 //
 // ── Kenapa Invoice API, bukan Payment Request v3 ──
 // Keputusan pemilik proyek 2026-08-21: pembeli dibawa ke halaman pembayaran Xendit yang sudah
-// menyediakan SEMUA metode (VA, e-wallet, QRIS, retail) tanpa kita membangun UI apa pun. Jalur
-// Payment Request / Virtual Account (`lib/xendit/payment-request.ts`) TIDAK dihapus tapi kini tak
-// dipakai checkout — lihat ROADMAP.md.
+// menyediakan SEMUA metode (VA, e-wallet, QRIS, retail) tanpa kita membangun UI apa pun. Daftar
+// bank di halaman checkout hanya TAMPILAN informasi (`lib/payment-methods.ts`) — pemilihan
+// sesungguhnya terjadi di halaman Xendit.
+//
+// Jalur Payment Request / Virtual Account (`lib/xendit/payment-request.ts`, `/api/payments/create`,
+// `/test-xendit`) SUDAH DIHAPUS pada 2026-09-08. Ia tak pernah dipakai checkout, dan endpoint
+// pembuatnya ternyata tanpa penjaga otentikasi sama sekali (SEC-043) — kode mati yang menyimpan
+// kemampuan menerbitkan pembayaran adalah beban tanpa imbalan. Riwayat Git menyimpannya bila
+// suatu hari VA di dalam aplikasi benar-benar dibutuhkan; implementasinya toh harus ditulis ulang
+// karena belum ada kolom penampung nomor VA/bank/kedaluwarsa.
 //
 // ── external_id WAJIB `orders.nomor_invoice` ──
 // Webhook mencari pesanan dengan `getOrderByOrderId(external_id)` → `.eq('nomor_invoice', …)`.
