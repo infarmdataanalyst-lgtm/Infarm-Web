@@ -19,7 +19,7 @@ import { NextResponse } from 'next/server'
 import { revalidatePath } from 'next/cache'
 import { requireAdmin } from '@/lib/oms-guard'
 import { readTrackingSyncCandidates, updateOrderStatus } from '@/lib/mock-db/orders'
-import { fetchTrackingDetail } from '@/lib/mengantar-tracking'
+import { fetchTrackingDetail, trackingLabelsOf } from '@/lib/mengantar-tracking'
 import { planStatusAdvance } from '@/lib/tracking'
 import type { OrderFulfillmentStatus } from '@/types/order'
 
@@ -127,10 +127,10 @@ async function syncOne(candidate: {
 
   // Jalur & pagarnya (hanya maju, satu langkah per transisi, tak pernah sampai 'Selesai') ada di
   // planStatusAdvance — satu tempat, dipakai bersama bila nanti ada pemicu lain (mis. cron).
-  const path = planStatusAdvance(
-    candidate.status,
-    result.events.map((e) => e.label),
-  )
+  // trackingLabelsOf, BUKAN result.events saja: status paket terkini (`courierStatus`) ikut
+  // menggerakkan tahap, dan OMS harus memakai daftar yang SAMA PERSIS dengan halaman lacak pembeli.
+  // Kalau tidak, pembeli bisa melihat "Sampai Tujuan" sementara OMS masih berkata "Diproses".
+  const path = planStatusAdvance(candidate.status, trackingLabelsOf(result))
   if (path.length === 0) return { status: 'unchanged' }
 
   let current = candidate.status

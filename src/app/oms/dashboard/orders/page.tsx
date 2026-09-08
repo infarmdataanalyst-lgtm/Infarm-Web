@@ -600,7 +600,28 @@ function OrdersContent() {
                           yang memang belum waktunya dibooking. */}
                       <td className="px-5 py-4 font-mono text-xs text-gray-500">
                         {order.trackingNumber ? (
-                          order.trackingNumber
+                          // Tautan ke halaman lacak INTERNAL, bukan ke situs J&T (menutup API-MGT-034).
+                          //
+                          // Tiga alasan memilih halaman sendiri:
+                          //   1. Admin melihat PERSIS yang dilihat pembeli, jadi ia bisa menjawab
+                          //      pertanyaan tanpa menebak apa yang tampil di layar penanya.
+                          //   2. Tak bergantung pada URL pelacakan pihak ketiga yang bisa berubah
+                          //      sewaktu-waktu tanpa pemberitahuan.
+                          //   3. Sejak 2026-09-07 halaman itu membaca `status` paket terkini dari
+                          //      Mengantar (bukan cuma riwayat scan), jadi tautannya langsung
+                          //      berguna tanpa integrasi tambahan apa pun.
+                          //
+                          // Kuncinya nomor invoice, BUKAN nomor resi: /track mencari pesanan lewat
+                          // `?order=`, lalu resinya diambil dari baris pesanan itu.
+                          <a
+                            href={`/track?order=${encodeURIComponent(order.orderId)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={`Lacak paket ${order.trackingNumber}`}
+                            className="text-brand-primary underline decoration-dotted underline-offset-2 transition hover:decoration-solid"
+                          >
+                            {order.trackingNumber}
+                          </a>
                         ) : order.shipmentStatus === 'FAILED' ? (
                           <span
                             title={order.shipmentError ?? 'Booking kurir gagal'}

@@ -19,7 +19,7 @@ import TrackingDetail from '@/components/track/TrackingDetail'
 import OrderItemsCard from '@/components/track/OrderItemsCard'
 import { getOrderByOrderId } from '@/lib/mock-db/orders'
 import { displayStatus, isOrderCancelled, resolveStepIndex } from '@/lib/tracking'
-import { fetchTrackingDetail } from '@/lib/mengantar-tracking'
+import { fetchTrackingDetail, trackingLabelsOf } from '@/lib/mengantar-tracking'
 import { toTitleCase } from '@/lib/mengantar'
 import { maskName, maskPhone, maskStreet } from '@/lib/mask'
 import type { Order } from '@/types/order'
@@ -90,9 +90,14 @@ async function TrackResult({ order }: { order: Order }) {
   const trackingEvents = trackingResult?.ok ? trackingResult.events : []
   const trackingFailure = trackingResult && !trackingResult.ok ? trackingResult.reason : undefined
 
-  // Stepper mengikuti yang TERTINGGI antara status DB dan peristiwa kurir — paket yang sudah
-  // bergerak tak boleh tampil "Diproses" hanya karena tak ada yang memperbarui status di OMS.
-  const eventLabels = trackingEvents.map((e) => e.label)
+  // Stepper mengikuti yang TERTINGGI antara status DB dan kabar kurir — paket yang sudah bergerak
+  // tak boleh tampil "Diproses" hanya karena tak ada yang memperbarui status di OMS.
+  //
+  // "Kabar kurir" = peristiwa perjalanan DITAMBAH status paket terkini (`courierStatus`), disatukan
+  // oleh trackingLabelsOf. Riwayat saja tidak cukup: pada resi JO1030839137 di sandbox, riwayatnya
+  // berakhir "Returned to Sender" bertanggal 25 Jun 2026 sementara status paketnya "DELIVERED" per
+  // 4 Sep 15:25 — riwayat sandbox memang data contoh bawaan Mengantar, sama untuk semua resi.
+  const eventLabels = trackingLabelsOf(trackingResult)
   const currentStep = resolveStepIndex(order.status, eventLabels)
   // Badge memakai sumber yang SAMA dengan stepper, bukan `order.status` mentah — kalau tidak,
   // keduanya bisa saling bertentangan di layar yang sama.

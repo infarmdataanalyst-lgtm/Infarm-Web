@@ -68,7 +68,25 @@ export type TrackingEvent = {
 }
 
 export type TrackingResult =
-  | { ok: true; events: TrackingEvent[] } // events kosong = resi belum aktif di sistem kurir
+  | {
+      ok: true
+      events: TrackingEvent[] // kosong = resi belum aktif di sistem kurir
+      // Status paket TERKINI menurut Mengantar — field `status` pada objek pesanan, isinya sama
+      // dengan kolom "Status Paket" di dashboard mereka (mis. "DELIVERED", "ON DELIVERY").
+      //
+      // KENAPA IKUT DIBAWA: `history` adalah CATATAN PERJALANAN, `status` adalah VONIS TERKINI, dan
+      // keduanya bisa tidak sepakat. Terukur 2026-09-07 pada resi JO1030839137 di sandbox:
+      // `status` = "DELIVERED" (`lastStatusChange` 4 Sep 15:25, cocok dengan dashboard) sementara
+      // SELURUH 11 entri `history`-nya bertanggal 25 Jun 2026 — dua setengah bulan SEBELUM
+      // pesanannya dibuat. Tim Mengantar mengonfirmasi riwayat di sandbox adalah data contoh yang
+      // dipasang developer mereka, sama untuk semua resi. Tanpa membaca `status`, stepper pembeli
+      // berhenti di "Dikirim" untuk paket yang menurut kurir sudah sampai.
+      //
+      // Nilainya TIDAK diterjemahkan di sini: ia dialirkan ke COURIER_STATUS_MAP yang sama dengan
+      // teks peristiwa (lihat trackingLabelsOf), jadi hanya ada SATU kosakata status kurir di
+      // seluruh aplikasi. Nilai yang tak dikenal (mis. "active") otomatis tak menggerakkan apa pun.
+      courierStatus?: string
+    }
   | { ok: false; reason: TrackingFailureReason; detail: string }
 
 export type TrackingFailureReason =
@@ -221,6 +239,35 @@ function findEventArray(body: unknown, depth = 0): unknown[] | null {
   return null
 }
 
+// Mencari objek PESANAN di dalam respons — pembawa field `status` (kolom "Status Paket" di
+// dashboard Mengantar).
+//
+// Dicari lewat penanda yang SAMA dengan looksLikeOrder(), bukan dengan menebak jalur `data[0]`:
+// bentuk pembungkusnya berbeda antar endpoint, dan jalur yang di-hardcode akan gagal senyap begitu
+// pembungkusnya berubah. Penanda itu sendiri sudah terbukti — `cnote_no`, `COD_AMOUNT`,
+// `receiverScore`, `ticketStatus` semuanya ada di respons sungguhan (diverifikasi 2026-09-07).
+function findOrderObject(body: unknown, depth = 0): Record<string, unknown> | null {
+  if (depth > MAX_SEARCH_DEPTH) return null
+
+  if (Array.isArray(body)) {
+    for (const item of body) {
+      const hit = findOrderObject(item, depth + 1)
+      if (hit) return hit
+    }
+    return null
+  }
+
+  if (typeof body !== 'object' || body === null) return null
+  const row = body as Record<string, unknown>
+  if (looksLikeOrder(row)) return row
+
+  for (const value of Object.values(row)) {
+    const hit = findOrderObject(value, depth + 1)
+    if (hit) return hit
+  }
+  return null
+}
+
 // Mengubah satu entri mentah menjadi TrackingEvent. null bila tak ada teks yang bisa ditampilkan —
 // baris tanpa deskripsi tak ada gunanya bagi pembeli.
 function normalizeEvent(raw: unknown): TrackingEvent | null {
@@ -311,14 +358,22 @@ async function requestTracking(awb: string, key: string): Promise<TrackingResult
     }
 
     const rawEvents = findEventArray(parsed)
-    if (!rawEvents) {
+    const courierStatus = asString(findOrderObject(parsed)?.status)
+
+    // Respons dianggap TERBACA bila SALAH SATU dari keduanya ketemu.
+    //
+    // Sebelumnya tak adanya array peristiwa langsung dianggap 'bad-shape', dan itu membuang
+    // `status` yang sebenarnya sudah di tangan. Resi yang baru didaftarkan belum punya satu pun
+    // scan kurir, tapi status paketnya sudah ada — memperlakukannya sebagai kegagalan bentuk
+    // membuat halaman lacak menampilkan pesan galat padahal datanya baik-baik saja.
+    if (!rawEvents && !courierStatus) {
       // Respons sah tapi bentuknya belum kita kenali → catat contohnya supaya pemetaannya bisa
       // diperbaiki tanpa perlu memanggil ulang.
       console.warn(`${LOG} resi=${awb} bentuk respons tak dikenali: ${text.slice(0, 400)}`)
       return { ok: false, reason: 'bad-shape', detail: text.slice(0, 300) }
     }
 
-    const events = rawEvents
+    const events = (rawEvents ?? [])
       .map(normalizeEvent)
       .filter((e): e is TrackingEvent => e !== null)
 
@@ -329,10 +384,31 @@ async function requestTracking(awb: string, key: string): Promise<TrackingResult
     // salah parse menghasilkan urutan yang justru terlihat meyakinkan tapi salah.
     if (EVENTS_ARE_OLDEST_FIRST) events.reverse()
 
-    console.log(`${LOG} resi=${awb} ${events.length} peristiwa`)
-    return { ok: true, events }
+    console.log(
+      `${LOG} resi=${awb} ${events.length} peristiwa, status=${courierStatus || '(kosong)'}`,
+    )
+    return { ok: true, events, ...(courierStatus ? { courierStatus } : {}) }
   } catch (e) {
     // Hanya `name`: pesan error fetch di sebagian runtime memuat URL — yang di sini berisi API key.
     return { ok: false, reason: 'network', detail: e instanceof Error ? e.name : 'unknown' }
   }
+}
+
+// === Teks yang boleh menggerakkan tahap ===
+
+// Seluruh teks kurir yang boleh mendorong stepper: peristiwa perjalanan DITAMBAH status paket
+// terkini. Keduanya melewati COURIER_STATUS_MAP yang sama (lihat lib/tracking.ts), jadi hanya ada
+// satu kosakata status kurir di aplikasi ini.
+//
+// Disatukan di SINI, bukan disalin di tiap pemanggil, karena penggunanya ada dua yang harus selalu
+// sepakat: halaman /track (stepper + badge pembeli) dan /api/orders/sync-tracking (yang menaikkan
+// order_status di OMS). Dua daftar terpisah pasti berbeda cepat atau lambat, dan bedanya muncul
+// sebagai OMS yang berkata "Diproses" sementara pembeli melihat "Sampai Tujuan".
+//
+// Status ditaruh di AKHIR hanya demi keterbacaan log; urutan tak berpengaruh pada hasil karena
+// stepFromTrackingEvents mengambil tahap TERTINGGI, bukan yang terakhir.
+export function trackingLabelsOf(result: TrackingResult | null): string[] {
+  if (!result || !result.ok) return []
+  const labels = result.events.map((e) => e.label)
+  return result.courierStatus ? [...labels, result.courierStatus] : labels
 }
