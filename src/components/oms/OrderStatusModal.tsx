@@ -6,7 +6,7 @@
 // Menyimpan lewat PATCH /api/orders/update-status (validasi ulang di server).
 
 import { useState } from 'react'
-import { X, Loader2, Package } from 'lucide-react'
+import { X, Loader2, Package, AlertTriangle } from 'lucide-react'
 import { formatRupiah } from '@/lib/format'
 import { nextStatuses, isFinalStatus } from '@/lib/order-status-machine'
 import type { Order, OrderFulfillmentStatus } from '@/types/order'
@@ -31,10 +31,36 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
   const [trackingNumber, setTrackingNumber] = useState(order.trackingNumber ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  // Pengakuan bahwa penjemputan di Mengantar sudah dibatalkan — lihat `mustCancelPickup`.
+  const [pickupCancelled, setPickupCancelled] = useState(false)
 
   const requiresShipping = status === 'Dikirim'
   const changed = status !== current
   const invoice = order.orderId.startsWith('#') ? order.orderId : `#${order.orderId}`
+
+  // Resi yang SUDAH tersimpan pada pesanan (bukan isian form di atas) — itulah yang menentukan
+  // apakah kurir sudah punya perintah jemput.
+  const bookedAwb = order.trackingNumber?.trim() || ''
+  const isBooked = Boolean(bookedAwb) || order.shipmentStatus === 'BOOKED'
+
+  // Membatalkan pesanan yang kurirnya SUDAH dibooking menyisakan satu langkah di luar sistem ini:
+  // membatalkan penjemputannya di dashboard Mengantar. Mengubah status di sini tidak menyentuh
+  // booking kurir sama sekali (dan tidak menyentuh shipment_status), jadi bila langkah itu terlupa,
+  // kurir tetap datang menjemput paket yang pembatalannya sudah disetujui — sementara stoknya sudah
+  // dikembalikan. Itu persis kerugian yang ditutup SEC-044, hanya berpindah ke tangan admin.
+  //
+  // Centangnya tidak bisa memaksa siapa pun benar-benar melakukannya. Yang ia ubah: langkah yang
+  // mungkin terlupa menjadi langkah yang harus diakui secara sadar. Untuk prosedur yang dijalankan
+  // manusia di tengah kesibukan, itu bedanya besar.
+  const mustCancelPickup = status === 'Dibatalkan' && isBooked
+
+  // Berpindah status me-reset pengakuan: centang untuk 'Dibatalkan' tak boleh ikut terbawa bila
+  // admin berubah pikiran lalu kembali lagi.
+  function handleStatusChange(next: OrderFulfillmentStatus) {
+    setStatus(next)
+    setPickupCancelled(false)
+    setError('')
+  }
 
   async function handleSave() {
     setError('')
@@ -45,6 +71,10 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
     }
     if (requiresShipping && (!courier.trim() || !service.trim() || !trackingNumber.trim())) {
       setError('Nama ekspedisi, jenis layanan, dan no resi wajib diisi untuk status Dikirim.')
+      return
+    }
+    if (mustCancelPickup && !pickupCancelled) {
+      setError('Konfirmasi dulu bahwa penjemputan di Mengantar sudah dibatalkan.')
       return
     }
 
@@ -135,7 +165,7 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
               <select
                 id="order-status"
                 value={status}
-                onChange={(e) => setStatus(e.target.value as OrderFulfillmentStatus)}
+                onChange={(e) => handleStatusChange(e.target.value as OrderFulfillmentStatus)}
                 className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-100"
               >
                 {/* Opsi pertama = pertahankan status sekarang */}
@@ -195,6 +225,42 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
             </div>
           )}
 
+          {/* === Pengingat batalkan penjemputan (hanya saat membatalkan pesanan yang sudah dibooking) === */}
+          {mustCancelPickup && (
+            <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3.5">
+              <p className="flex items-start gap-2 text-sm font-semibold text-amber-900">
+                <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
+                <span>
+                  Pesanan ini sudah dibooking ke kurir
+                  {bookedAwb && (
+                    <>
+                      {' '}
+                      dengan resi <span className="font-mono">{bookedAwb}</span>
+                    </>
+                  )}
+                  .
+                </span>
+              </p>
+              <p className="mt-1.5 pl-6 text-xs leading-relaxed text-amber-800">
+                Membatalkan di sini <strong>tidak</strong> membatalkan penjemputannya. Batalkan juga
+                di dashboard Mengantar — kalau tidak, kurir tetap datang menjemput paket ini
+                sementara stoknya sudah dikembalikan.
+              </p>
+              <label className="mt-3 flex cursor-pointer items-start gap-2.5 pl-6 text-sm text-amber-900">
+                <input
+                  type="checkbox"
+                  checked={pickupCancelled}
+                  onChange={(e) => {
+                    setPickupCancelled(e.target.checked)
+                    setError('')
+                  }}
+                  className="mt-0.5 h-4 w-4 flex-none accent-amber-600"
+                />
+                <span>Saya sudah membatalkan penjemputan di dashboard Mengantar</span>
+              </label>
+            </div>
+          )}
+
           {/* Pesan error */}
           {error && (
             <p role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">
@@ -216,7 +282,7 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
             <button
               type="button"
               onClick={handleSave}
-              disabled={saving || !changed}
+              disabled={saving || !changed || (mustCancelPickup && !pickupCancelled)}
               className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {saving && <Loader2 className="h-4 w-4 animate-spin" />}
