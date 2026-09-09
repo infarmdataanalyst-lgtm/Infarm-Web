@@ -57,11 +57,19 @@ export async function bookShipmentForPaidOrder(
 
   // nama_ekspedisi & jenis_layanan ditulis ULANG dengan nilai dari Mengantar, supaya kolomnya
   // konsisten dengan kurir yang benar-benar mengangkut — bukan sisa nilai dari pilihan checkout.
+  //
+  // mengantar* = identitas pengiriman di sisi Mengantar, dibutuhkan untuk MEMBATALKAN penjemputan
+  // saat pembatalan pesanan disetujui admin. Sampai 2026-09-09 ketiganya dibuang di sini: nilainya
+  // ada di `result`, tak pernah disebut lagi, lalu lenyap begitu fungsi ini selesai. Akibatnya
+  // pembatalan penjemputan tak bisa otomatis — DELETE /order tidak menerima nomor resi.
   const saved = await updateShipment(invoice, {
     booked: true,
     trackingNumber: result.trackingNumber,
     courier: JT_COURIER_LABEL,
     service: result.serviceCode,
+    ...(result.mengantarObjectId ? { mengantarObjectId: result.mengantarObjectId } : {}),
+    ...(result.mengantarOrderId ? { mengantarOrderId: result.mengantarOrderId } : {}),
+    ...(result.mengantarBatchId ? { mengantarBatchId: result.mengantarBatchId } : {}),
   })
 
   if (!saved) {

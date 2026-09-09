@@ -88,6 +88,13 @@ export type Order = {
   shipmentStatus?: "BOOKED" | "FAILED"
   shipmentError?: string // alasan kegagalan terakhir (untuk admin OMS)
   shipmentBookedAt?: string // ISO, kapan resi terbit
+  // Identitas pengiriman di sisi MENGANTAR — bukan nomor invoice kita, bukan nomor resi.
+  // Diperlukan untuk membatalkan penjemputan (DELETE /order), yang hanya menerima kedua nilai ini
+  // dan menolak nomor resi. undefined pada pesanan yang dibooking sebelum 2026-09-09 sampai
+  // diisi backfill, dan pada pesanan yang memang belum pernah dibooking.
+  mengantarObjectId?: string // Mengantar `_id`      -> DELETE /order field `ids`
+  mengantarOrderId?: string // Mengantar `ORDER_ID`  -> DELETE /order field `orderIds`
+  mengantarBatchId?: string // Mengantar `batch_id`  -> DELETE /batch
 }
 
 // Payload dari checkout ke API (sebelum disimpan). nomor_invoice digenerate di server.

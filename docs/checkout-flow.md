@@ -57,16 +57,55 @@ alurnya diputuskan berjalan manual:
    868→875 dan Hidroton 147→149, masing-masing dengan `reason = 'order_cancelled'`.
    **Tolak** → tidak ada yang perlu dilakukan di sistem; admin cukup membalas di WhatsApp.
 
-⚠️ **LANGKAH YANG TIDAK PUNYA JARING PENGAMAN: membatalkan penjemputan di dashboard Mengantar.**
+⚠️ **LANGKAH YANG MASIH MANUAL: membatalkan penjemputan di dashboard Mengantar.**
 Mengubah status di OMS tidak menyentuh booking kurir sama sekali, dan tidak menyentuh
 `shipment_status` — pesanan yang sudah dibatalkan tetap menyandang resi dan status `BOOKED`.
 Kalau langkah ini terlupa, kurir tetap datang menjemput paket yang pembatalannya sudah disetujui,
 dan stok sudah terlanjur dikembalikan. Ini persis kerugian yang ditutup SEC-044, hanya berpindah
 dari tangan pembeli ke tangan admin.
 
-**Yang masih menunggu dibangun:** antrean permintaan di OMS, tombol Setujui/Tolak, pengingat wajib
-membatalkan penjemputan saat admin membatalkan pesanan ber-resi, dan penandaan "perlu refund"
-(refund masih sepenuhnya manual — tak ada satu pun kode refund di project ini).
+Sampai 2026-09-09 bagian ini berbunyi "TIDAK PUNYA JARING PENGAMAN", dengan alasan Mengantar tak
+menyediakan cara membatalkan. **Alasan itu salah.** Mengantar punya `DELETE /order` yang menerima
+`ids` (`_id`) atau `orderIds` (`ORDER_ID`) — bukan nomor resi. Yang benar-benar menghalangi adalah
+kita tak pernah menyimpan kedua nomor itu: keduanya ada di respons booking, dibaca sebentar, lalu
+dibuang. Migration `20260909120000` menutup itu, dan 11 pesanan lama sudah dipulihkan lewat
+`POST /api/oms/orders/backfill-mengantar-ids` (satu gagal: `INV-20260820-3346`, resinya data uji
+manual yang tak pernah ada di Mengantar).
+
+### Membatalkan penjemputan — status pengerjaan
+
+| | Keadaan |
+|---|---|
+| Kolom `mengantar_order_object_id` / `mengantar_order_id` / `mengantar_batch_id` | ✅ ada, terisi untuk seluruh pesanan ber-resi yang sah |
+| Booking baru menyimpan ketiganya | ✅ sejak `shipment-booking.ts` 2026-09-09 |
+| Pemanggilan `DELETE /order` saat admin membatalkan | ❌ **belum ada satu baris pun** |
+
+Jadi hari ini membatalkan pesanan lewat OMS **tetap tidak menghapus apa pun di Mengantar** —
+kuncinya sudah di tangan, tapi belum diputar. Checkbox konfirmasi di `OrderStatusModal` masih
+berarti "saya sudah membatalkannya sendiri di dashboard", bukan "sistem sudah membatalkannya".
+
+Dua hal yang harus dipastikan sebelum `DELETE` dipasang, dan keduanya menentukan bentuk
+penanganan gagalnya — dokumentasi Mengantar tidak menjawab keduanya untuk J&T:
+
+1. **Sampai kapan penghapusan diterima.** Satu-satunya batas waktu yang tertulis adalah untuk
+   anteraja ("dapat dihapus setelah 5 menit"), dan itu batas BAWAH. Kalau paket yang sudah dijemput
+   ternyata ditolak, CS perlu tahu tenggatnya — tanpa itu ia akan mengira penjemputan sudah batal
+   padahal belum.
+2. **Apakah saldo dikembalikan.** Ada tipe invoice `typeRefund` di `GET /invoices`, tapi tak ada
+   satu kalimat pun yang mengaitkannya dengan penghapusan order. Bisa diukur gratis: baca
+   `GET /invoices` sebelum dan sesudah.
+
+Rancangan yang disepakati: `DELETE` dipanggil **sebagai bagian dari** perubahan status ke
+`Dibatalkan`, bukan sebagai tombol terpisah — tombol terpisah adalah langkah kedua yang bisa
+terlupa, persis masalah yang sedang ditutup. Bila `DELETE` ditolak (paket keburu dijemput),
+pembatalan **tetap dilanjutkan** — uangnya sudah masuk dan pembeli sudah meminta — tapi pesanan
+ditandai perlu tindakan manual, mengikuti pola `shipment_status = 'FAILED'` yang sudah dipakai saat
+booking gagal. Menggagalkan pembatalan gara-gara kurir keburu jalan hanya memindahkan masalahnya
+kembali ke pembeli.
+
+**Yang masih menunggu dibangun:** antrean permintaan di OMS, tombol Setujui/Tolak, pemanggilan
+`DELETE /order` di atas, dan penandaan "perlu refund" (refund masih sepenuhnya manual — tak ada
+satu pun kode refund di project ini).
 
 Nomor WhatsApp CS ada di `WHATSAPP_CS_NUMBER` (`src/lib/data/contact.ts`). Selama kosong, tombolnya
 **tidak dirender** dan digantikan teks instruksi berisi nomor invoice — tombol mati yang tampak
@@ -427,8 +466,33 @@ POST {MENGANTAR_BASE_URL}/api/public/{MENGANTAR_API_KEY}/order
                "parcelContent": "…", "weight": 1, "quantity": 1 }] }
 ```
 
-Respons: `{ success, data: [ { cnote_no, ORDER_ID, SERVICE_CODE, … } ], batch, batch_id, courier,
-errors: [], ordersClosedDestination: [] }`
+Respons: `{ success, data: [ { _id, cnote_no, ORDER_ID, SERVICE_CODE, batch_id, … } ], batch,
+batch_id, courier, errors: [], ordersClosedDestination: [] }`
+
+**Tiga nomor, tiga kegunaan berbeda — ketiganya disimpan sejak migration `20260909120000`:**
+
+| Field | Kolom `orders` | Dipakai untuk |
+|---|---|---|
+| `cnote_no` | `no_tracking` | melacak (`GET /order?tracking_id=`), tercetak di label paket |
+| `_id` | `mengantar_order_object_id` | **membatalkan** (`DELETE /order`, field `ids`) |
+| `ORDER_ID` | `mengantar_order_id` | membatalkan, jalur alternatif (field `orderIds`) |
+| `batch_id` | `mengantar_batch_id` | `DELETE /batch` — membatalkan sebatch sekaligus |
+
+⚠️ **`DELETE /order` tidak menerima nomor resi.** Menyimpan `cnote_no` saja — yang dilakukan kode
+ini sampai 2026-09-09 — membuat pembatalan mustahil tanpa lebih dulu menanyakan `_id`-nya balik ke
+Mengantar. Lihat "Membatalkan penjemputan — status pengerjaan" di bagian pembatalan pesanan.
+
+⚠️ **`batch_id`, bukan `batch`.** `batch` adalah kode terbaca (`"26013014BBQFMM"`); `DELETE /batch`
+meminta ObjectId. Versi awal menyimpan `batch` — kolomnya terisi rapi tapi pembatalan batch akan
+tetap gagal, kegagalan yang paling sulit terlihat.
+
+```
+DELETE {MENGANTAR_BASE_URL}/api/public/{MENGANTAR_API_KEY}/order
+{ "courier": "JT", "ids": ["6a8fa18a0088b39607d5a991"] }
+```
+
+Respons: `{ success, message, deletedCount, deletedOrderIds, deletedOrderIdsHumanReadable }`.
+**Belum pernah dipanggil dari kode ini** — batas waktunya belum diuji (lihat bagian pembatalan).
 
 - **⚠️ `courier` harus `"JT"` KAPITAL.** Huruf kecil `"jt"` ditolak `400 {"message":"Invalid courier"}`
   — sudah diuji. Kebetulan sama dengan key di cek ongkir, jadi satu konstanta.

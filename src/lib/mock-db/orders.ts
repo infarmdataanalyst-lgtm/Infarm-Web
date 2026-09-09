@@ -110,6 +110,11 @@ type OrderRow = {
   shipment_status?: string | null
   shipment_error?: string | null
   shipment_booked_at?: string | null
+  // Identitas pengiriman di sisi Mengantar (migration 20260909120000) — optional, alasan sama.
+  // Dipakai untuk MEMBATALKAN penjemputan; DELETE /order tak menerima nomor resi.
+  mengantar_order_object_id?: string | null
+  mengantar_order_id?: string | null
+  mengantar_batch_id?: string | null
   created_at: string
 }
 
@@ -272,6 +277,9 @@ function rowToOrder(row: OrderRow, items: OrderItem[], warehouseNames?: Map<stri
   }
   if (row.shipment_error) order.shipmentError = row.shipment_error
   if (row.shipment_booked_at) order.shipmentBookedAt = row.shipment_booked_at
+  if (row.mengantar_order_object_id) order.mengantarObjectId = row.mengantar_order_object_id
+  if (row.mengantar_order_id) order.mengantarOrderId = row.mengantar_order_id
+  if (row.mengantar_batch_id) order.mengantarBatchId = row.mengantar_batch_id
   if (row.id_transaksi) order.transactionId = row.id_transaksi
   if (row.invoice_url) order.invoiceUrl = row.invoice_url
   if (row.invoice_expires_at) order.invoiceExpiresAt = row.invoice_expires_at
@@ -1108,8 +1116,20 @@ export async function setOrderTransactionId(
 //
 // Status alur pesanan (`order_status`) TIDAK diubah di sini — itu wewenang updateOrderStatus.
 // Booking berhasil tidak sama dengan barang sudah dikirim; kurir baru menjemput nanti.
+//
+// Ketiga identitas Mengantar OPSIONAL: booking yang berhasil tanpa salah satunya tetap disimpan,
+// karena resinya sudah terbit dan paketnya tetap akan dijemput. Yang hilang hanya kemampuan
+// membatalkan penjemputan TANPA pencarian balik dari resi.
 export type ShipmentUpdate =
-  | { booked: true; trackingNumber: string; courier: string; service: string }
+  | {
+      booked: true
+      trackingNumber: string
+      courier: string
+      service: string
+      mengantarObjectId?: string // _id — dipakai DELETE /order
+      mengantarOrderId?: string // ORDER_ID — alternatifnya
+      mengantarBatchId?: string // batch_id — dipakai DELETE /batch
+    }
   | { booked: false; error: string }
 
 export async function updateShipment(
@@ -1126,6 +1146,12 @@ export async function updateShipment(
     patch.no_tracking = update.trackingNumber
     patch.nama_ekspedisi = update.courier
     patch.jenis_layanan = update.service
+    // Identitas pembatalan Mengantar. Hanya ditulis bila ada — menulis null akan MENGHAPUS nilai
+    // yang mungkin sudah diisi backfill, dan booking ulang atas pesanan yang sudah ber-resi memang
+    // sudah dicegah di hulu (bookShipmentForPaidOrder), jadi tak ada alasan menimpanya dengan kosong.
+    if (update.mengantarObjectId) patch.mengantar_order_object_id = update.mengantarObjectId
+    if (update.mengantarOrderId) patch.mengantar_order_id = update.mengantarOrderId
+    if (update.mengantarBatchId) patch.mengantar_batch_id = update.mengantarBatchId
   } else {
     patch.shipment_status = 'FAILED'
     // Dipotong agar satu respons pihak ketiga yang panjang tak membengkakkan baris pesanan.
@@ -1139,17 +1165,26 @@ export async function updateShipment(
     .select('id')
     .maybeSingle()
 
-  // Jaring pengaman bila kolom shipment_* belum di-migrate: ulangi tanpa kolom itu supaya resi
-  // tetap tersimpan (yang paling berguna bagi pembeli), bukan gagal total.
+  // Jaring pengaman bila kolom tambahan belum di-migrate: ulangi hanya dengan kolom inti supaya
+  // resi tetap tersimpan (yang paling berguna bagi pembeli), bukan gagal total.
   // PGRST204 = kolom tak dikenal PostgREST; 42703 = kolom tak ada di Postgres.
+  //
+  // Dua rombongan kolom yang bisa belum ada, dan keduanya dibuang sekaligus karena PostgREST hanya
+  // menyebut kolom PERTAMA yang tak dikenalnya — mencoba menebak rombongan mana yang bermasalah
+  // berarti bisa dua kali gagal untuk satu booking:
+  //   shipment_*      (status/error/booked_at)
+  //   mengantar_*     (_id/ORDER_ID/batch_id — migration 20260909120000)
   if (error?.code === 'PGRST204' || error?.code === '42703') {
     console.error(
-      `${'[orders]'} kolom shipment_* belum di-migrate — status booking ${orderId} tidak tercatat`,
+      `${'[orders]'} kolom shipment_*/mengantar_* belum di-migrate — status booking & identitas pembatalan ${orderId} tidak tercatat (${error.message})`,
     )
     const fallback = { ...patch }
     delete fallback.shipment_status
     delete fallback.shipment_error
     delete fallback.shipment_booked_at
+    delete fallback.mengantar_order_object_id
+    delete fallback.mengantar_order_id
+    delete fallback.mengantar_batch_id
     if (Object.keys(fallback).length === 0) return getOrderByOrderId(orderId)
     ;({ data, error } = await supabase
       .from('orders')
@@ -1166,6 +1201,76 @@ export async function updateShipment(
   if (!data) return null
 
   return getOrderByOrderId(orderId)
+}
+
+// === Pemulihan identitas Mengantar (backfill) ===
+//
+// Pesanan yang dibooking SEBELUM migration 20260909120000 hanya menyimpan nomor resi, sementara
+// pembatalan penjemputan menuntut `_id`/`ORDER_ID`. Kedua fungsi di bawah dipakai endpoint backfill
+// untuk mengisinya kembali dari resi. Setelah semua pesanan lama terisi, keduanya tak terpakai lagi
+// — tapi TIDAK dihapus: booking yang responsnya tak memuat identitas (lihat peringatan di
+// mengantar-shipment.ts) tetap butuh jalur pemulihan ini.
+
+export type OrderMissingMengantarIds = { orderId: string; trackingNumber: string }
+
+// Pesanan yang PUNYA resi tapi BELUM punya `_id` Mengantar.
+//
+// Yang diperiksa hanya `mengantar_order_object_id`: itulah nilai yang dipakai DELETE /order.
+// Baris yang punya ORDER_ID tapi tak punya _id tetap dianggap perlu dilengkapi — memakai
+// `orderIds` sebagai jalur utama berarti bergantung pada cabang API yang belum pernah kita buktikan.
+export async function readOrdersMissingMengantarIds(
+  limit = 100,
+): Promise<OrderMissingMengantarIds[]> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('orders')
+    .select('nomor_invoice, no_tracking')
+    .not('no_tracking', 'is', null)
+    .is('mengantar_order_object_id', null)
+    .order('created_at', { ascending: true })
+    .limit(limit)
+
+  if (error) {
+    console.error('[orders] gagal membaca pesanan tanpa identitas Mengantar:', error.message)
+    return []
+  }
+
+  return ((data as Pick<OrderRow, 'nomor_invoice' | 'no_tracking'>[]) ?? [])
+    .filter((row) => Boolean(row.no_tracking?.trim()))
+    .map((row) => ({ orderId: row.nomor_invoice, trackingNumber: row.no_tracking!.trim() }))
+}
+
+export type MengantarIds = {
+  mengantarObjectId?: string
+  mengantarOrderId?: string
+  mengantarBatchId?: string
+}
+
+// Menulis identitas Mengantar pada satu pesanan. true bila ada baris yang tersentuh.
+//
+// Field kosong DILEWATI, bukan ditulis null: respons Mengantar bisa memuat sebagian saja, dan
+// menimpa nilai yang sudah benar dengan null akan membuat backfill kedua justru MERUSAK hasil
+// backfill pertama. Tak ada satu pun field terisi → tak ada UPDATE sama sekali.
+export async function setMengantarIds(orderId: string, ids: MengantarIds): Promise<boolean> {
+  const patch: Record<string, string> = {}
+  if (ids.mengantarObjectId) patch.mengantar_order_object_id = ids.mengantarObjectId
+  if (ids.mengantarOrderId) patch.mengantar_order_id = ids.mengantarOrderId
+  if (ids.mengantarBatchId) patch.mengantar_batch_id = ids.mengantarBatchId
+  if (Object.keys(patch).length === 0) return false
+
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('orders')
+    .update(patch)
+    .eq('nomor_invoice', orderId)
+    .select('id')
+    .maybeSingle()
+
+  if (error) {
+    console.error(`[orders] gagal menyimpan identitas Mengantar ${orderId}:`, error.message)
+    return false
+  }
+  return Boolean(data)
 }
 
 // === Agregasi produk terlaris ===

@@ -86,6 +86,17 @@ export type TrackingResult =
       // teks peristiwa (lihat trackingLabelsOf), jadi hanya ada SATU kosakata status kurir di
       // seluruh aplikasi. Nilai yang tak dikenal (mis. "active") otomatis tak menggerakkan apa pun.
       courierStatus?: string
+      // Identitas pengiriman di sisi Mengantar, dibaca dari objek pesanan yang SAMA dengan
+      // `courierStatus`. Dipakai untuk MEMBATALKAN penjemputan (DELETE /order) — endpoint itu
+      // menerima `_id`/`ORDER_ID` dan menolak nomor resi.
+      //
+      // KENAPA IKUT DI SINI, bukan panggilan tersendiri: responsnya sudah memuat ketiganya, jadi
+      // fungsi terpisah berarti memanggil endpoint yang sama dua kali untuk data yang sama. Ini
+      // juga membuat pemulihan identitas pesanan lama (yang dibooking sebelum kolomnya ada) ikut
+      // menikmati cache di berkas ini.
+      mengantarObjectId?: string // _id
+      mengantarOrderId?: string // ORDER_ID
+      mengantarBatchId?: string // batch_id
     }
   | { ok: false; reason: TrackingFailureReason; detail: string }
 
@@ -358,7 +369,20 @@ async function requestTracking(awb: string, key: string): Promise<TrackingResult
     }
 
     const rawEvents = findEventArray(parsed)
-    const courierStatus = asString(findOrderObject(parsed)?.status)
+    // Objek pesanannya dipegang, bukan langsung dipetik `status`-nya: identitas pembatalan
+    // (_id / ORDER_ID / batch_id) berada di objek yang sama, dan mencarinya dua kali hanya
+    // mengulang penelusuran yang sama.
+    const orderObject = findOrderObject(parsed)
+    const courierStatus = asString(orderObject?.status)
+    const ids = {
+      ...(asString(orderObject?._id) ? { mengantarObjectId: asString(orderObject?._id) } : {}),
+      ...(asString(orderObject?.ORDER_ID)
+        ? { mengantarOrderId: asString(orderObject?.ORDER_ID) }
+        : {}),
+      ...(asString(orderObject?.batch_id)
+        ? { mengantarBatchId: asString(orderObject?.batch_id) }
+        : {}),
+    }
 
     // Respons dianggap TERBACA bila SALAH SATU dari keduanya ketemu.
     //
@@ -387,7 +411,7 @@ async function requestTracking(awb: string, key: string): Promise<TrackingResult
     console.log(
       `${LOG} resi=${awb} ${events.length} peristiwa, status=${courierStatus || '(kosong)'}`,
     )
-    return { ok: true, events, ...(courierStatus ? { courierStatus } : {}) }
+    return { ok: true, events, ...(courierStatus ? { courierStatus } : {}), ...ids }
   } catch (e) {
     // Hanya `name`: pesan error fetch di sebagian runtime memuat URL — yang di sini berisi API key.
     return { ok: false, reason: 'network', detail: e instanceof Error ? e.name : 'unknown' }

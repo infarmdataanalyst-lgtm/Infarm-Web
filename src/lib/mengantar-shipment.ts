@@ -15,9 +15,20 @@
 //     pickup: { type, volume, address_id, time_id },
 //     orders: [ { goodsValue, customerName, customerPhone, customerAddress,
 //                 customerAddressDataId, parcelContent, weight, quantity } ] }
-// Respons: { success, data: [ { cnote_no, ORDER_ID, SERVICE_CODE, … } ],
+// Respons: { success, data: [ { _id, cnote_no, ORDER_ID, SERVICE_CODE, batch_id, … } ],
 //            batch, batch_id, courier, errors: [], ordersClosedDestination: [] }
 // Nomor resi = data[0].cnote_no (mis. "JO9253592535").
+//
+// ── TIGA nomor, dan ketiganya harus disimpan ──
+// Satu pengiriman punya tiga identitas di Mengantar, dan masing-masing dipakai di tempat berbeda:
+//   cnote_no  nomor resi — untuk MELACAK (GET /order?tracking_id=…), tercetak di label paket
+//   _id       kunci basis data Mengantar — untuk MEMBATALKAN (DELETE /order, field `ids`)
+//   ORDER_ID  nomor pembukuan Mengantar — alternatif pembatalan (DELETE /order, field `orderIds`)
+//
+// DELETE /order TIDAK menerima nomor resi. Jadi menyimpan resi saja — yang dilakukan kode ini
+// sampai 2026-09-09 — membuat penjemputan mustahil dibatalkan tanpa lebih dulu menanyakan balik
+// `_id`-nya ke Mengantar. Ketiganya sudah ada di respons ini; membuangnya berarti membayar satu
+// panggilan pencarian tiap kali pembatalan terjadi, tepat saat Mengantar paling tak boleh gagal.
 //
 // KODE KURIR = "JT" KAPITAL. Huruf kecil "jt" ditolak dengan 400 {"message":"Invalid courier"} —
 // sudah diuji. Kebetulan sama dengan key kurir di respons cek ongkir, jadi satu konstanta saja.
@@ -52,8 +63,11 @@ export type ShipmentResult =
       ok: true
       trackingNumber: string // cnote_no — nomor resi
       serviceCode: string // SERVICE_CODE (mis. 'REG')
-      mengantarOrderId?: string // ORDER_ID internal Mengantar
-      batchId?: string
+      // Ketiganya OPSIONAL: booking yang berhasil tanpa salah satunya tetap booking yang berhasil,
+      // dan menggagalkannya berarti membuang resi yang sudah terlanjur terbit di sisi kurir.
+      mengantarObjectId?: string // _id — dipakai DELETE /order (`ids`)
+      mengantarOrderId?: string // ORDER_ID — alternatif DELETE /order (`orderIds`)
+      mengantarBatchId?: string // batch_id — dipakai DELETE /batch
     }
   | { ok: false; reason: ShipmentFailureReason; detail: string }
 
@@ -102,7 +116,9 @@ async function buildWeightKg(order: Order): Promise<number> {
 function extractShipment(body: unknown): {
   trackingNumber: string
   serviceCode: string
+  mengantarObjectId?: string
   mengantarOrderId?: string
+  mengantarBatchId?: string
 } | null {
   if (typeof body !== 'object' || body === null) return null
   const b = body as Record<string, unknown>
@@ -114,10 +130,31 @@ function extractShipment(body: unknown): {
   const awb = typeof row.cnote_no === 'string' ? row.cnote_no.trim() : ''
   if (!awb) return null
 
+  // Nilai apa adanya bila string tak kosong. Tak ada penebakan bentuk (mis. "24 hex") — kalau
+  // Mengantar suatu saat mengubah formatnya, menyimpan nilai yang mereka kirim tetap lebih berguna
+  // daripada membuangnya karena tak lolos pola yang kita karang sendiri.
+  const teks = (v: unknown): string | undefined =>
+    typeof v === 'string' && v.trim() ? v.trim() : undefined
+
+  const objectId = teks(row._id)
+  const orderId = teks(row.ORDER_ID)
+  const batchId = teks(row.batch_id)
+
+  // Dicatat bila TAK ADA satu pun identitas pembatalan. Booking tetap dianggap berhasil (resinya
+  // sah dan paketnya akan dijemput), tapi pesanan itu hanya bisa dibatalkan lewat pencarian balik
+  // dari resi — dan itu perlu diketahui saat terjadi, bukan saat pembatalan gagal berbulan kemudian.
+  if (!objectId && !orderId) {
+    console.warn(
+      `${LOG} respons booking tanpa _id maupun ORDER_ID — pembatalan penjemputan pesanan ini akan butuh pencarian balik dari resi ${awb}`,
+    )
+  }
+
   return {
     trackingNumber: awb,
     serviceCode: typeof row.SERVICE_CODE === 'string' && row.SERVICE_CODE ? row.SERVICE_CODE : 'REG',
-    ...(typeof row.ORDER_ID === 'string' && row.ORDER_ID ? { mengantarOrderId: row.ORDER_ID } : {}),
+    ...(objectId ? { mengantarObjectId: objectId } : {}),
+    ...(orderId ? { mengantarOrderId: orderId } : {}),
+    ...(batchId ? { mengantarBatchId: batchId } : {}),
   }
 }
 
@@ -246,17 +283,27 @@ export async function createShipmentOrder(order: Order): Promise<ShipmentResult>
       return { ok: false, reason: 'no-awb', detail: `tanpa cnote_no: ${text.slice(0, 200)}` }
     }
 
-    const batchId =
+    // batch_id ada di DUA tempat: di dalam item, dan di akar respons. Yang di item didahulukan
+    // karena itulah batch pengiriman INI; yang di akar hanya cadangan bila item tak membawanya.
+    //
+    // ⚠️ Yang dipakai `batch_id` (ObjectId), BUKAN `batch` (kode terbaca, mis. "26013014BBQFMM").
+    // Versi sebelumnya menyimpan `batch`, dan itu bukan nilai yang diminta DELETE /batch — kolomnya
+    // akan terisi rapi tapi pembatalan batch tetap gagal, kegagalan yang paling sulit dilihat.
+    const rootBatchId =
       typeof parsed === 'object' && parsed !== null
-        ? (parsed as Record<string, unknown>).batch
+        ? (parsed as Record<string, unknown>).batch_id
         : undefined
+    const batchId =
+      shipment.mengantarBatchId ??
+      (typeof rootBatchId === 'string' && rootBatchId.trim() ? rootBatchId.trim() : undefined)
 
     return {
       ok: true,
       trackingNumber: shipment.trackingNumber,
       serviceCode: shipment.serviceCode,
+      ...(shipment.mengantarObjectId ? { mengantarObjectId: shipment.mengantarObjectId } : {}),
       ...(shipment.mengantarOrderId ? { mengantarOrderId: shipment.mengantarOrderId } : {}),
-      ...(typeof batchId === 'string' && batchId ? { batchId } : {}),
+      ...(batchId ? { mengantarBatchId: batchId } : {}),
     }
   } catch (e) {
     // Hanya `name`, bukan `message`: pesan error fetch di sebagian runtime memuat URL — yang di

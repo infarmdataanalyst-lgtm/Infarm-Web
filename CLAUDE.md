@@ -867,14 +867,29 @@ Yang termasuk **panggilan TULIS berbayar**:
 
 | Panggilan | Akibatnya |
 |---|---|
-| `POST {host}/api/public/{KEY}/order` | Memotong saldo Mengantar + menerbitkan resi nyata. **Tak bisa dibatalkan dari sisi kita** |
+| `POST {host}/api/public/{KEY}/order` | Memotong saldo Mengantar + menerbitkan resi nyata |
 | `POST {host}/api/public/{KEY}/time` | Membuat slot penjemputan di akun Mengantar |
+| `DELETE {host}/api/public/{KEY}/order` | Menghapus pengiriman di Mengantar. Tak menagih, tapi **permanen** dan resinya ikut mati |
+| `DELETE {host}/api/public/{KEY}/batch` | Sama, untuk satu batch sekaligus |
 | `POST /api/dev/simulate-payment` | Menandai LUNAS lalu **memicu booking kurir** — sama mahalnya dengan pembayaran sungguhan |
 | Xendit `api.xendit.co` | Membuat invoice/charge = uang sungguhan |
 
+> **Koreksi 2026-09-09.** Baris `POST /order` di atas dulu berbunyi *"Tak bisa dibatalkan dari sisi
+> kita"*. **Itu keliru** — Mengantar menyediakan `DELETE /order`, dan dokumentasinya sudah ada sejak
+> awal. Kekeliruan itu sempat menjadi dasar untuk menyerah pada satu celah nyata: `docs/checkout-flow.md`
+> menyebut pembatalan penjemputan sebagai "langkah yang tidak punya jaring pengaman" justru karena
+> mengutip kalimat ini. Bila menemukan klaim "tak bisa dilakukan" tentang API pihak ketiga di repo
+> ini, periksa dokumentasinya lebih dulu sebelum membangun penanganan manual di atasnya.
+>
+> Yang **belum** dipastikan: sampai kapan Mengantar masih menerima penghapusan (setelah paket
+> dijemput kurir, kemungkinan ditolak) dan apakah saldonya dikembalikan. Dokumentasi diam soal
+> keduanya untuk J&T. Karena itu `DELETE` tetap masuk daftar wajib-konfirmasi di atas.
+
 Yang **bebas dipanggil** (gratis, tanpa API key, tanpa efek samping): cek ongkir
-`allEstimatePublic`, search alamat `/api/public/test/address/search`, dan seluruh endpoint lokal
-`/api/...` milik app ini yang hanya membaca.
+`allEstimatePublic`, search alamat `/api/public/test/address/search`, seluruh endpoint lokal
+`/api/...` milik app ini yang hanya membaca, dan pelacakan
+`GET {host}/api/public/{KEY}/order?tracking_id=` — `GET` pada path itu adalah operasi BACA, hanya
+saja hook `guard-paid-api.cjs` ikut memblokirnya karena mencocokkan path tanpa melihat method.
 
 **Verifikasi kontrak API dilakukan dengan MEMBACA** — kode, dokumen, respons yang sudah pernah
 tercatat di `docs/` — **bukan** dengan memanggil endpoint berbayar berulang kali sampai bentuknya
