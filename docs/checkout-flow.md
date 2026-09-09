@@ -78,34 +78,53 @@ manual yang tak pernah ada di Mengantar).
 |---|---|
 | Kolom `mengantar_order_object_id` / `mengantar_order_id` / `mengantar_batch_id` | ✅ ada, terisi untuk seluruh pesanan ber-resi yang sah |
 | Booking baru menyimpan ketiganya | ✅ sejak `shipment-booking.ts` 2026-09-09 |
-| Pemanggilan `DELETE /order` saat admin membatalkan | ❌ **belum ada satu baris pun** |
+| Pemanggilan `DELETE /order` saat admin membatalkan | ✅ sejak 2026-09-09 |
 
-Jadi hari ini membatalkan pesanan lewat OMS **tetap tidak menghapus apa pun di Mengantar** —
-kuncinya sudah di tangan, tapi belum diputar. Checkbox konfirmasi di `OrderStatusModal` masih
-berarti "saya sudah membatalkannya sendiri di dashboard", bukan "sistem sudah membatalkannya".
+Membatalkan pesanan ber-resi di OMS kini **ikut menghapus penjemputannya di Mengantar**, di dalam
+permintaan yang sama:
 
-Dua hal yang harus dipastikan sebelum `DELETE` dipasang, dan keduanya menentukan bentuk
-penanganan gagalnya — dokumentasi Mengantar tidak menjawab keduanya untuk J&T:
+```
+admin pilih Dibatalkan  →  PATCH /api/orders/update-status
+  1. updateOrderStatus → CANCELLED
+  2. restoreStock + recordOrderStockChanges
+  3. cancelPickupFor()  →  DELETE /order
+       ├─ berhasil  → shipment_status = 'CANCELLED'
+       └─ gagal     → shipment_status = 'CANCEL_FAILED' + shipment_error
+                      pembatalan TETAP berlaku
+```
 
-1. **Sampai kapan penghapusan diterima.** Satu-satunya batas waktu yang tertulis adalah untuk
-   anteraja ("dapat dihapus setelah 5 menit"), dan itu batas BAWAH. Kalau paket yang sudah dijemput
-   ternyata ditolak, CS perlu tahu tenggatnya — tanpa itu ia akan mengira penjemputan sudah batal
-   padahal belum.
-2. **Apakah saldo dikembalikan.** Ada tipe invoice `typeRefund` di `GET /invoices`, tapi tak ada
-   satu kalimat pun yang mengaitkannya dengan penghapusan order. Bisa diukur gratis: baca
-   `GET /invoices` sebelum dan sesudah.
+**Urutannya disengaja: status ditulis dulu, penghapusan menyusul.** Dua kegagalan yang mungkin
+terjadi tidak setara. `DELETE` berhasil tapi tulis DB gagal → pengiriman lenyap sementara pesanan
+masih tampak aktif, **tanpa jejak apa pun**. Tulis DB berhasil tapi `DELETE` gagal → pesanan batal
+dan penjemputan hidup: buruk juga, tapi tercatat sebagai `CANCEL_FAILED` dan bisa ditindaklanjuti.
+Kegagalan yang terlihat selalu lebih baik daripada kegagalan senyap.
 
-Rancangan yang disepakati: `DELETE` dipanggil **sebagai bagian dari** perubahan status ke
-`Dibatalkan`, bukan sebagai tombol terpisah — tombol terpisah adalah langkah kedua yang bisa
-terlupa, persis masalah yang sedang ditutup. Bila `DELETE` ditolak (paket keburu dijemput),
-pembatalan **tetap dilanjutkan** — uangnya sudah masuk dan pembeli sudah meminta — tapi pesanan
-ditandai perlu tindakan manual, mengikuti pola `shipment_status = 'FAILED'` yang sudah dipakai saat
-booking gagal. Menggagalkan pembatalan gara-gara kurir keburu jalan hanya memindahkan masalahnya
-kembali ke pembeli.
+**Kegagalan `DELETE` tidak pernah menggagalkan pembatalan.** Pembeli sudah meminta, uangnya sudah
+masuk, stok sudah kembali. Menolak membatalkan gara-gara kurir keburu jalan hanya memindahkan
+masalahnya kembali ke pembeli.
 
-**Yang masih menunggu dibangun:** antrean permintaan di OMS, tombol Setujui/Tolak, pemanggilan
-`DELETE /order` di atas, dan penandaan "perlu refund" (refund masih sepenuhnya manual — tak ada
-satu pun kode refund di project ini).
+**Idempoten lewat catatan kita sendiri, bukan lewat jawaban Mengantar.** Terukur 2026-09-09:
+`DELETE` membalas `"Orders already deleted"` untuk `_id` karangan **maupun** `_id` yang barusan
+berhasil dihapus. Jawabannya karena itu tak bisa dipakai menyimpulkan apa pun saat mengulang —
+`cancelPickupFor()` melewati panggilan bila `shipment_status` sudah `CANCELLED`.
+
+### Yang terverifikasi di sandbox (2026-09-09)
+
+| | Hasil |
+|---|---|
+| Penghapusan bekerja | ✅ `deletedCount: 1` pada kiriman berumur 13 hari |
+| Ongkir dikembalikan | ✅ otomatis, Rp4.080, status `Cleared` dalam hitungan detik |
+| Bentuk penolakan | HTTP **200** + `success:false` — bukan status HTTP error |
+| Percobaan ulang bisa dibedakan | ❌ tidak, pesannya identik |
+| Setelah paket dijemput kurir | ❓ belum terjawab — sandbox tak pernah menggerakkan paket |
+
+⚠️ Baris `success:false` itu penting: memeriksa `res.ok` saja akan **meloloskan penolakan sebagai
+keberhasilan**. Begitu pula `deletedCount: 0` dengan `success: true` — diperlakukan gagal
+(`not-deleted`), karena itulah bentuk yang paling mungkin diambil "sudah terlambat dibatalkan".
+
+**Yang masih menunggu dibangun:** antrean permintaan di OMS, tombol Setujui/Tolak, dan penandaan
+"perlu refund" (refund uang pembeli masih sepenuhnya manual — tak ada satu pun kode refund di
+project ini; yang otomatis hanyalah ongkir yang kembali ke saldo Mengantar).
 
 Nomor WhatsApp CS ada di `WHATSAPP_CS_NUMBER` (`src/lib/data/contact.ts`). Selama kosong, tombolnya
 **tidak dirender** dan digantikan teks instruksi berisi nomor invoice — tombol mati yang tampak
@@ -492,7 +511,8 @@ DELETE {MENGANTAR_BASE_URL}/api/public/{MENGANTAR_API_KEY}/order
 ```
 
 Respons: `{ success, message, deletedCount, deletedOrderIds, deletedOrderIdsHumanReadable }`.
-**Belum pernah dipanggil dari kode ini** — batas waktunya belum diuji (lihat bagian pembatalan).
+Dipanggil `src/lib/mengantar-cancel.ts`, lewat alur pembatalan OMS. Terverifikasi terhadap sandbox
+2026-09-09; batas waktunya setelah paket dijemput masih belum diketahui (lihat bagian pembatalan).
 
 - **⚠️ `courier` harus `"JT"` KAPITAL.** Huruf kecil `"jt"` ditolak `400 {"message":"Invalid courier"}`
   — sudah diuji. Kebetulan sama dengan key di cek ongkir, jadi satu konstanta.

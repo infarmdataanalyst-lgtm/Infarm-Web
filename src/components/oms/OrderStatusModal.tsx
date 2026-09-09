@@ -6,7 +6,7 @@
 // Menyimpan lewat PATCH /api/orders/update-status (validasi ulang di server).
 
 import { useState } from 'react'
-import { X, Loader2, Package, AlertTriangle } from 'lucide-react'
+import { X, Loader2, Package, AlertTriangle, Truck } from 'lucide-react'
 import { formatRupiah } from '@/lib/format'
 import { nextStatuses, isFinalStatus } from '@/lib/order-status-machine'
 import type { Order, OrderFulfillmentStatus } from '@/types/order'
@@ -31,8 +31,11 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
   const [trackingNumber, setTrackingNumber] = useState(order.trackingNumber ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  // Pengakuan bahwa penjemputan di Mengantar sudah dibatalkan — lihat `mustCancelPickup`.
-  const [pickupCancelled, setPickupCancelled] = useState(false)
+  // Hasil penghapusan penjemputan di Mengantar, DIISI HANYA BILA GAGAL. Selama terisi, modal
+  // sengaja TIDAK ditutup — lihat handleSave.
+  const [cancelFailure, setCancelFailure] = useState<{ reason: string; detail: string } | null>(null)
+  // Pesanan yang sudah tersimpan, ditahan sampai admin menutup peringatan di atas.
+  const [savedOrder, setSavedOrder] = useState<Order | null>(null)
 
   const requiresShipping = status === 'Dikirim'
   const changed = status !== current
@@ -43,23 +46,28 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
   const bookedAwb = order.trackingNumber?.trim() || ''
   const isBooked = Boolean(bookedAwb) || order.shipmentStatus === 'BOOKED'
 
-  // Membatalkan pesanan yang kurirnya SUDAH dibooking menyisakan satu langkah di luar sistem ini:
-  // membatalkan penjemputannya di dashboard Mengantar. Mengubah status di sini tidak menyentuh
-  // booking kurir sama sekali (dan tidak menyentuh shipment_status), jadi bila langkah itu terlupa,
-  // kurir tetap datang menjemput paket yang pembatalannya sudah disetujui — sementara stoknya sudah
-  // dikembalikan. Itu persis kerugian yang ditutup SEC-044, hanya berpindah ke tangan admin.
+  // Membatalkan pesanan yang kurirnya sudah dibooking kini IKUT menghapus penjemputannya di
+  // Mengantar — server yang melakukannya, di dalam permintaan yang sama (update-status/route.ts).
   //
-  // Centangnya tidak bisa memaksa siapa pun benar-benar melakukannya. Yang ia ubah: langkah yang
-  // mungkin terlupa menjadi langkah yang harus diakui secara sadar. Untuk prosedur yang dijalankan
-  // manusia di tengah kesibukan, itu bedanya besar.
-  const mustCancelPickup = status === 'Dibatalkan' && isBooked
+  // Sampai 2026-09-09 blok ini berupa CENTANG WAJIB berbunyi "saya sudah membatalkan di dashboard
+  // Mengantar": sebuah JANJI admin, karena saat itu tak ada cara memanggil pembatalan dari kode.
+  // Setelah DELETE /order tersambung, janji itu jadi salah — dan centang yang menyuruh orang
+  // melakukan sesuatu yang sudah dikerjakan sistem hanya mengajari admin mengabaikan peringatan.
+  //
+  // Yang menggantikannya: keterangan apa yang AKAN terjadi sebelum menyimpan, lalu hasilnya
+  // ditampilkan setelah menyimpan. Peringatan yang menuntut tindakan hanya muncul bila
+  // penghapusannya benar-benar gagal.
+  const willCancelPickup = status === 'Dibatalkan' && isBooked
 
-  // Berpindah status me-reset pengakuan: centang untuk 'Dibatalkan' tak boleh ikut terbawa bila
-  // admin berubah pikiran lalu kembali lagi.
   function handleStatusChange(next: OrderFulfillmentStatus) {
     setStatus(next)
-    setPickupCancelled(false)
     setError('')
+  }
+
+  // Menutup peringatan kegagalan: barulah pesanan yang sudah tersimpan diteruskan ke daftar
+  // (yang sekaligus menutup modal ini).
+  function acknowledgeFailure() {
+    if (savedOrder) onUpdated(savedOrder)
   }
 
   async function handleSave() {
@@ -73,11 +81,6 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
       setError('Nama ekspedisi, jenis layanan, dan no resi wajib diisi untuk status Dikirim.')
       return
     }
-    if (mustCancelPickup && !pickupCancelled) {
-      setError('Konfirmasi dulu bahwa penjemputan di Mengantar sudah dibatalkan.')
-      return
-    }
-
     setSaving(true)
     try {
       const res = await fetch('/api/orders/update-status', {
@@ -91,11 +94,35 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
             : {}),
         }),
       })
-      const data = (await res.json()) as { order?: Order; error?: string }
+      const data = (await res.json()) as {
+        order?: Order
+        error?: string
+        shipmentCancellation?: {
+          attempted: boolean
+          ok?: boolean
+          reason?: string
+          detail?: string
+        }
+      }
       if (!res.ok || !data.order) {
         setError(data.error ?? 'Gagal memperbarui status pesanan.')
         return
       }
+
+      // Pembatalannya SUDAH tersimpan di server pada titik ini — status, stok, dan mutasinya.
+      // Yang gagal hanyalah penghapusan penjemputan di Mengantar. Karena itu modal ditahan, bukan
+      // dibatalkan: satu-satunya jejak lain dari kegagalan ini adalah kolom database yang tak
+      // pernah dibuka siapa pun, dan kurir tetap akan datang kalau tak ada yang menindaklanjuti.
+      const batal = data.shipmentCancellation
+      if (batal?.attempted && batal.ok === false) {
+        setSavedOrder(data.order)
+        setCancelFailure({
+          reason: batal.reason ?? 'unknown',
+          detail: batal.detail ?? '',
+        })
+        return
+      }
+
       onUpdated(data.order)
     } catch {
       setError('Terjadi kesalahan jaringan. Coba lagi.')
@@ -225,39 +252,51 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
             </div>
           )}
 
-          {/* === Pengingat batalkan penjemputan (hanya saat membatalkan pesanan yang sudah dibooking) === */}
-          {mustCancelPickup && (
-            <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3.5">
-              <p className="flex items-start gap-2 text-sm font-semibold text-amber-900">
-                <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
+          {/* === Apa yang akan terjadi pada penjemputannya (sebelum menyimpan) === */}
+          {willCancelPickup && !cancelFailure && (
+            <div className="mt-4 rounded-lg border border-sky-200 bg-sky-50 p-3.5">
+              <p className="flex items-start gap-2 text-sm font-semibold text-sky-900">
+                <Truck className="mt-0.5 h-4 w-4 flex-none" />
                 <span>
-                  Pesanan ini sudah dibooking ke kurir
+                  Penjemputan kurir ikut dibatalkan
                   {bookedAwb && (
                     <>
                       {' '}
-                      dengan resi <span className="font-mono">{bookedAwb}</span>
+                      — resi <span className="font-mono">{bookedAwb}</span>
                     </>
                   )}
-                  .
                 </span>
               </p>
-              <p className="mt-1.5 pl-6 text-xs leading-relaxed text-amber-800">
-                Membatalkan di sini <strong>tidak</strong> membatalkan penjemputannya. Batalkan juga
-                di dashboard Mengantar — kalau tidak, kurir tetap datang menjemput paket ini
-                sementara stoknya sudah dikembalikan.
+              <p className="mt-1.5 pl-6 text-xs leading-relaxed text-sky-800">
+                Pengirimannya dihapus di Mengantar dan ongkos kirimnya kembali ke saldo. Bila
+                penghapusan gagal — misalnya paketnya sudah keburu dijemput — pembatalan pesanan
+                tetap berlaku dan Anda akan diberi tahu di sini.
               </p>
-              <label className="mt-3 flex cursor-pointer items-start gap-2.5 pl-6 text-sm text-amber-900">
-                <input
-                  type="checkbox"
-                  checked={pickupCancelled}
-                  onChange={(e) => {
-                    setPickupCancelled(e.target.checked)
-                    setError('')
-                  }}
-                  className="mt-0.5 h-4 w-4 flex-none accent-amber-600"
-                />
-                <span>Saya sudah membatalkan penjemputan di dashboard Mengantar</span>
-              </label>
+            </div>
+          )}
+
+          {/* === Penghapusan penjemputan GAGAL — butuh tindakan manual === */}
+          {cancelFailure && (
+            <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3.5">
+              <p className="flex items-start gap-2 text-sm font-semibold text-amber-900">
+                <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
+                <span>Pesanan sudah dibatalkan, tapi penjemputannya BELUM.</span>
+              </p>
+              <p className="mt-1.5 pl-6 text-xs leading-relaxed text-amber-800">
+                Buka dashboard Mengantar dan hapus pengiriman
+                {bookedAwb && (
+                  <>
+                    {' '}
+                    beresi <span className="font-mono">{bookedAwb}</span>
+                  </>
+                )}{' '}
+                secara manual. Kalau tidak, kurir tetap datang menjemput paket ini sementara stoknya
+                sudah dikembalikan.
+              </p>
+              <p className="mt-2 pl-6 font-mono text-[11px] leading-relaxed text-amber-700">
+                {cancelFailure.reason}
+                {cancelFailure.detail ? `: ${cancelFailure.detail}` : ''}
+              </p>
             </div>
           )}
 
@@ -271,23 +310,38 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
 
         {/* Footer aksi */}
         <div className="flex justify-end gap-3 border-t border-gray-100 px-5 py-4">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-600 transition hover:bg-gray-50"
-          >
-            Batal
-          </button>
-          {!final && (
+          {cancelFailure ? (
+            // Perubahannya SUDAH tersimpan; satu-satunya jalan keluar adalah mengakui peringatan
+            // di atas. Tombol "Batal" sengaja tidak ditampilkan — tak ada lagi yang bisa dibatalkan,
+            // dan menawarkannya hanya menyarankan bahwa peringatan itu boleh diabaikan.
             <button
               type="button"
-              onClick={handleSave}
-              disabled={saving || !changed || (mustCancelPickup && !pickupCancelled)}
-              className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={acknowledgeFailure}
+              className="rounded-lg bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-amber-700"
             >
-              {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-              {saving ? 'Menyimpan…' : 'Simpan Perubahan'}
+              Mengerti, saya hapus manual
             </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-600 transition hover:bg-gray-50"
+              >
+                Batal
+              </button>
+              {!final && (
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={saving || !changed}
+                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {saving ? 'Menyimpan…' : 'Simpan Perubahan'}
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>

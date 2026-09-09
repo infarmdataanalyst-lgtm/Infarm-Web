@@ -85,7 +85,12 @@ export type Order = {
   warehouseName?: string
   // Hasil booking kurir Mengantar. undefined = belum pernah dicoba (pesanan lama / belum dibayar).
   // FAILED = pembayaran sudah masuk tapi resi gagal terbit -> WAJIB ditindaklanjuti admin.
-  shipmentStatus?: "BOOKED" | "FAILED"
+  // CANCELLED = penjemputan berhasil dihapus di Mengantar (ongkir kembali ke saldo).
+  // CANCEL_FAILED = pesanan sudah dibatalkan tapi penghapusannya gagal → PERLU DIHAPUS MANUAL,
+  // kalau tidak kurir tetap datang menjemput paket yang pembatalannya sudah disetujui.
+  // Sengaja terpisah dari FAILED: FAILED berarti "booking gagal, perlu dibooking ULANG" —
+  // tindakan yang berlawanan.
+  shipmentStatus?: "BOOKED" | "FAILED" | "CANCELLED" | "CANCEL_FAILED"
   shipmentError?: string // alasan kegagalan terakhir (untuk admin OMS)
   shipmentBookedAt?: string // ISO, kapan resi terbit
   // Identitas pengiriman di sisi MENGANTAR — bukan nomor invoice kita, bukan nomor resi.

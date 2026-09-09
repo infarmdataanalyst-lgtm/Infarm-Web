@@ -7,11 +7,17 @@
 
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/oms-guard'
-import { getOrderByOrderId, getOrderUuidByInvoice, updateOrderStatus } from '@/lib/mock-db/orders'
+import {
+  getOrderByOrderId,
+  getOrderUuidByInvoice,
+  setShipmentCancellation,
+  updateOrderStatus,
+} from '@/lib/mock-db/orders'
 import { restoreStock } from '@/lib/mock-db/products'
 import { recordOrderStockChanges } from '@/lib/stock-audit'
 import { canTransition } from '@/lib/order-status-machine'
-import type { OrderFulfillmentStatus } from '@/types/order'
+import { cancelShipmentOrder } from '@/lib/mengantar-cancel'
+import type { Order, OrderFulfillmentStatus } from '@/types/order'
 
 // createAdminClient (Supabase) butuh runtime Node.js, bukan Edge
 export const runtime = 'nodejs'
@@ -23,6 +29,61 @@ const VALID_STATUSES: OrderFulfillmentStatus[] = [
   'Selesai',
   'Dibatalkan',
 ]
+
+// Hasil upaya penghapusan penjemputan, dikembalikan ke OMS supaya admin melihatnya SEKARANG —
+// bukan hanya tersimpan di kolom database yang tak pernah dibuka siapa pun.
+export type ShipmentCancellationReport =
+  | { attempted: false; reason: 'NO_SHIPMENT' | 'ALREADY_CANCELLED' }
+  | { attempted: true; ok: true; deletedCount: number }
+  | { attempted: true; ok: false; reason: string; detail: string; needsManual: true }
+
+// Menghapus penjemputan di Mengantar untuk pesanan yang BARU SAJA dibatalkan.
+//
+// ── Kenapa dipanggil SETELAH status ditulis, bukan sebelum ──
+// Dua kegagalan yang mungkin terjadi tidak setara:
+//   - DELETE berhasil tapi tulis DB gagal → pengiriman lenyap sementara pesanan masih tampak
+//     aktif. TIDAK ADA JEJAKNYA sama sekali; tak seorang pun akan tahu sampai pembeli bertanya.
+//   - Tulis DB berhasil tapi DELETE gagal → pesanan batal, penjemputan masih hidup. Buruk juga,
+//     tapi TERCATAT (CANCEL_FAILED) dan bisa ditindaklanjuti.
+// Yang kedua jauh lebih baik daripada kegagalan senyap, jadi keputusan pembatalan dicatat lebih
+// dulu dan penghapusan menyusul.
+//
+// ── Kenapa kegagalan TIDAK menggagalkan pembatalan ──
+// Pembeli sudah meminta, uangnya sudah masuk, dan stok sudah dikembalikan. Menggagalkan pembatalan
+// gara-gara kurir keburu jalan hanya memindahkan masalahnya kembali ke pembeli — padahal yang
+// dibutuhkan justru sebaliknya: pembatalannya sah, dan admin diberi tahu ada satu langkah manual.
+async function cancelPickupFor(order: Order): Promise<ShipmentCancellationReport> {
+  const punyaPengiriman =
+    Boolean(order.trackingNumber?.trim()) || order.shipmentStatus === 'BOOKED'
+  if (!punyaPengiriman) return { attempted: false, reason: 'NO_SHIPMENT' }
+
+  // IDEMPOTEN — dan ini bukan sekadar kerapian.
+  //
+  // Terukur 2026-09-09: DELETE /order membalas "Orders already deleted" untuk `_id` karangan MAUPUN
+  // `_id` yang barusan berhasil dihapus. Mengantar tidak membedakan keduanya, jadi jawabannya tak
+  // bisa dipakai untuk menyimpulkan apa pun saat mengulang. Catatan kita sendirilah yang menjawab:
+  // kalau sudah CANCELLED, penghapusannya memang sudah berhasil dan tak perlu diulang.
+  if (order.shipmentStatus === 'CANCELLED') {
+    return { attempted: false, reason: 'ALREADY_CANCELLED' }
+  }
+
+  const hasil = await cancelShipmentOrder({
+    ...(order.mengantarObjectId ? { objectId: order.mengantarObjectId } : {}),
+    ...(order.mengantarOrderId ? { orderId: order.mengantarOrderId } : {}),
+  })
+
+  if (hasil.ok) {
+    await setShipmentCancellation(order.orderId, { cancelled: true })
+    return { attempted: true, ok: true, deletedCount: hasil.deletedCount }
+  }
+
+  const detail = `${hasil.reason}: ${hasil.detail}`
+  await setShipmentCancellation(order.orderId, { cancelled: false, error: detail })
+  console.error(
+    `[update-status] ${order.orderId} DIBATALKAN tapi penjemputan (resi ${order.trackingNumber ?? '-'}) GAGAL DIHAPUS — ${detail}`,
+  )
+  return { attempted: true, ok: false, reason: hasil.reason, detail: hasil.detail, needsManual: true }
+}
 
 // PATCH: perbarui status pesanan setelah verifikasi sesi admin + validasi transisi.
 export async function PATCH(request: Request) {
@@ -110,6 +171,13 @@ export async function PATCH(request: Request) {
       ...(orderUuid ? { orderId: orderUuid } : {}),
       direction: 'in',
     })
+
+    // Penghapusan penjemputan dijalankan PALING AKHIR — setelah status, stok, dan mutasinya
+    // tercatat. Urutan ini disengaja: ketiga langkah di atas adalah keadaan pesanan kita sendiri
+    // dan harus utuh apa pun yang terjadi di Mengantar. Kegagalan di sini tidak membatalkan
+    // satu pun dari mereka, dan tidak menggagalkan respons.
+    const shipmentCancellation = await cancelPickupFor(order)
+    return NextResponse.json({ success: true, order: updated, shipmentCancellation })
   }
 
   return NextResponse.json({ success: true, order: updated })

@@ -270,9 +270,19 @@ function rowToOrder(row: OrderRow, items: OrderItem[], warehouseNames?: Map<stri
     order.logistics = { courier: row.nama_ekspedisi ?? '', service: row.jenis_layanan ?? '' }
   }
   if (row.no_tracking) order.trackingNumber = row.no_tracking
-  // Status booking kurir. Hanya dua nilai yang dikenal app; nilai lain (atau kolom yang belum
-  // di-migrate) dibiarkan undefined agar UI menampilkannya sebagai "belum dibooking".
-  if (row.shipment_status === "BOOKED" || row.shipment_status === "FAILED") {
+  // Status pengiriman. Hanya nilai yang dikenal app yang diteruskan; nilai lain (atau kolom yang
+  // belum di-migrate) dibiarkan undefined agar UI menampilkannya sebagai "belum dibooking".
+  //
+  // Daftar ini WAJIB sejalan dengan constraint orders_shipment_status_check di database
+  // (migration 20260909130000). Menambah nilai di satu sisi saja menghasilkan kegagalan yang sulit
+  // dilacak: kalau hanya di sini, database menolak tulisannya (23514); kalau hanya di database,
+  // nilainya tersimpan tapi hilang saat dibaca dan pesanan tampak "belum pernah dibooking".
+  if (
+    row.shipment_status === "BOOKED" ||
+    row.shipment_status === "FAILED" ||
+    row.shipment_status === "CANCELLED" ||
+    row.shipment_status === "CANCEL_FAILED"
+  ) {
     order.shipmentStatus = row.shipment_status
   }
   if (row.shipment_error) order.shipmentError = row.shipment_error
@@ -1201,6 +1211,50 @@ export async function updateShipment(
   if (!data) return null
 
   return getOrderByOrderId(orderId)
+}
+
+// === Hasil pembatalan penjemputan ===
+
+// Dipanggil SETELAH DELETE /order ke Mengantar, oleh alur pembatalan OMS.
+//
+// `cancelled: true` juga MENGOSONGKAN shipment_error: baris ini sudah selesai urusannya, dan pesan
+// galat lama yang tertinggal akan membuat admin mengira masih ada yang perlu dikerjakan.
+export type ShipmentCancellationUpdate =
+  | { cancelled: true }
+  | { cancelled: false; error: string }
+
+export async function setShipmentCancellation(
+  orderId: string,
+  update: ShipmentCancellationUpdate,
+): Promise<boolean> {
+  const supabase = createAdminClient()
+  const patch: Record<string, string | null> = update.cancelled
+    ? { shipment_status: 'CANCELLED', shipment_error: null }
+    : { shipment_status: 'CANCEL_FAILED', shipment_error: update.error.slice(0, 500) }
+
+  const { data, error } = await supabase
+    .from('orders')
+    .update(patch)
+    .eq('nomor_invoice', orderId)
+    .select('id')
+    .maybeSingle()
+
+  if (error) {
+    // 23514 = pelanggaran CHECK constraint → migration 20260909130000 belum dijalankan, sehingga
+    // kolomnya masih hanya menerima BOOKED/FAILED. Dicetak sekeras mungkin karena akibatnya
+    // TIDAK terlihat di UI: pembatalan pesanannya sendiri sudah berhasil, hanya jejak penghapusan
+    // penjemputannya yang hilang — dan justru jejak itulah yang mencegah panggilan berulang.
+    if (error.code === '23514') {
+      console.error(
+        `[orders] shipment_status "${patch.shipment_status}" DITOLAK constraint untuk ${orderId} — ` +
+          'jalankan migration 20260909130000_shipment_status_cancelled.sql',
+      )
+    } else {
+      console.error(`[orders] gagal menyimpan hasil pembatalan ${orderId}:`, error.message)
+    }
+    return false
+  }
+  return Boolean(data)
 }
 
 // === Pemulihan identitas Mengantar (backfill) ===
