@@ -9,7 +9,7 @@
 import { NextResponse } from 'next/server'
 import { getOrderByOrderId } from '@/lib/mock-db/orders'
 import { normalizePhone, isValidPhone } from '@/lib/phone'
-import type { OrderFulfillmentStatus } from '@/types/order'
+import { evaluateBuyerCancel } from '@/lib/order-cancellation'
 import {
   RATE_LIMITS,
   enforceRateLimit,
@@ -26,9 +26,6 @@ import {
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
-
-// Status yang masih boleh dibatalkan mandiri (sama dengan alur token di /api/orders/cancel)
-const CANCELLABLE: OrderFulfillmentStatus[] = ['Menunggu Pembayaran', 'Diproses']
 
 export async function POST(request: Request) {
   let body: Record<string, unknown>
@@ -95,7 +92,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ match: false })
   }
 
+  // Aturan yang SAMA dengan endpoint yang benar-benar membatalkan. Kalau langkah verifikasi ini
+  // memakai aturannya sendiri, pembeli bisa lolos di sini lalu ditolak saat menekan "Ya, Batalkan"
+  // — dan penolakan di detik terakhir jauh lebih menjengkelkan daripada penjelasan sejak awal.
   const status = order.status ?? 'Diproses'
-  const cancellable = CANCELLABLE.includes(status)
-  return NextResponse.json({ match: true, cancellable, status })
+  const verdict = evaluateBuyerCancel(order)
+  return NextResponse.json({
+    match: true,
+    cancellable: verdict.ok,
+    status,
+    ...(verdict.ok ? {} : { code: verdict.code, reason: verdict.message }),
+  })
 }

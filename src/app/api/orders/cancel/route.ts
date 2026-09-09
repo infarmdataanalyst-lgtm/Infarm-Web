@@ -10,6 +10,7 @@ import { getOrderByOrderId, getOrderUuidByInvoice, updateOrderStatus } from '@/l
 import { restoreStock } from '@/lib/mock-db/products'
 import { recordOrderStockChanges } from '@/lib/stock-audit'
 import { verifyCancelToken } from '@/lib/order-token'
+import { evaluateBuyerCancel } from '@/lib/order-cancellation'
 import type { Order, OrderFulfillmentStatus } from '@/types/order'
 
 // createAdminClient (Supabase) butuh runtime Node.js, bukan Edge
@@ -48,7 +49,9 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Pesanan tidak ditemukan.' }, { status: 404 })
   }
 
-  return NextResponse.json({ order: toPublicOrder(order) })
+  // Vonis ikut dikirim supaya halaman pembatalan tahu harus menampilkan tombol batal atau jalur CS,
+  // tanpa perlu menebak sendiri dari status, dan tanpa perlu diberi nomor resi yang tak dipakainya.
+  return NextResponse.json({ order: toPublicOrder(order), cancel: evaluateBuyerCancel(order) })
 }
 
 // PATCH: batalkan pesanan setelah memverifikasi token & memastikan status masih bisa dibatalkan.
@@ -80,20 +83,14 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: 'Pesanan tidak ditemukan.' }, { status: 404 })
   }
 
-  const current = order.status ?? 'Diproses'
-  if (current === 'Dibatalkan') {
+  // Validasi di SERVER (jangan percaya UI). Aturannya di `evaluateBuyerCancel` — dipakai bersama
+  // dengan /api/orders/cancel-by-phone DAN dengan halaman pembatalan, supaya ketiganya mustahil
+  // berbeda pendapat. Termasuk pagar terpenting: pesanan yang resinya sudah terbit TIDAK bisa
+  // dibatalkan sendiri, meski statusnya masih 'Diproses'.
+  const verdict = evaluateBuyerCancel(order)
+  if (!verdict.ok) {
     return NextResponse.json(
-      { error: 'Pesanan ini sudah dibatalkan sebelumnya.', order: toPublicOrder(order) },
-      { status: 409 },
-    )
-  }
-  // Validasi status di SERVER (jangan percaya UI): tolak bila sudah lewat tahap aman.
-  if (!CANCELLABLE_STATUSES.includes(current)) {
-    return NextResponse.json(
-      {
-        error: 'Pesanan tidak dapat dibatalkan karena sudah dalam proses pengemasan/pengiriman.',
-        order: toPublicOrder(order),
-      },
+      { error: verdict.message, code: verdict.code, order: toPublicOrder(order) },
       { status: 409 },
     )
   }

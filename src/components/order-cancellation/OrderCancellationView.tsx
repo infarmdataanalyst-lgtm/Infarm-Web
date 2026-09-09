@@ -14,6 +14,9 @@ import Image from 'next/image'
 import { X, Loader2, AlertTriangle, Ban, CheckCircle2 } from 'lucide-react'
 import { formatRupiah } from '@/lib/format'
 import type { OrderItem, OrderFulfillmentStatus, OrderPaymentStatus } from '@/types/order'
+import type { BuyerCancelVerdict } from '@/lib/order-cancellation'
+import { waCancelRequestLink } from '@/lib/data/contact'
+import WhatsAppIcon from '@/components/ui/WhatsAppIcon'
 
 // Order versi publik (tanpa data pribadi) yang dikembalikan API /api/orders/cancel
 type CancellationOrder = {
@@ -24,9 +27,6 @@ type CancellationOrder = {
   status: OrderFulfillmentStatus
   paymentStatus: OrderPaymentStatus
 }
-
-// Status yang masih boleh dibatalkan mandiri (kondisi "aman" sesuai spesifikasi)
-const CANCELLABLE_STATUSES: OrderFulfillmentStatus[] = ['Menunggu Pembayaran', 'Diproses']
 
 // Opsi alasan pembatalan
 const CANCEL_REASONS = [
@@ -59,6 +59,8 @@ export default function OrderCancellationView({
   const hasParams = Boolean(orderId && token)
   const [phase, setPhase] = useState<Phase>(hasParams ? 'loading' : 'error')
   const [order, setOrder] = useState<CancellationOrder | null>(null)
+  // Boleh-tidaknya dibatalkan DIPUTUSKAN SERVER dan dikirim bersama pesanannya.
+  const [verdict, setVerdict] = useState<BuyerCancelVerdict | null>(null)
   const [errorMessage, setErrorMessage] = useState(
     hasParams ? '' : 'Tautan pembatalan tidak lengkap. Buka tautan resmi dari halaman pesanan Anda.',
   )
@@ -90,6 +92,7 @@ export default function OrderCancellationView({
 
         const loaded = data.order as CancellationOrder
         setOrder(loaded)
+        setVerdict((data.cancel as BuyerCancelVerdict) ?? null)
         // Bila pesanan memang sudah dibatalkan sebelumnya, langsung tampilkan state sukses.
         setPhase(loaded.status === 'Dibatalkan' ? 'success' : 'ready')
       } catch {
@@ -103,7 +106,10 @@ export default function OrderCancellationView({
     return () => controller.abort()
   }, [orderId, token])
 
-  const isCancellable = order ? CANCELLABLE_STATUSES.includes(order.status) : false
+  // Vonis datang dari SERVER (GET /api/orders/cancel), bukan disimpulkan dari status di sini.
+  // Halaman ini tak pernah menerima nomor resi — dan memang tak perlu: yang dibutuhkannya cuma
+  // jawaban boleh/tidak, beserta alasannya bila tidak.
+  const isCancellable = verdict?.ok ?? false
   const reasonText = reason === 'Lainnya' ? customReason.trim() : reason
   const canSubmit = isCancellable && reasonText.length > 0 && !submitting
 
@@ -248,13 +254,38 @@ export default function OrderCancellationView({
                 <div className="mt-4 flex gap-3 rounded-2xl border border-orange-200 bg-orange-50 p-4 text-orange-800">
                   <AlertTriangle className="mt-0.5 h-5 w-5 flex-none" />
                   <p className="text-sm leading-relaxed">
-                    Maaf, pesanan ini tidak dapat dibatalkan secara mandiri karena paket sudah dalam
-                    proses pengemasan atau telah diserahkan ke pihak kurir logistik.
+                    {/* Kalimatnya dari server, supaya alasan yang dibaca pembeli persis alasan yang
+                        dipakai server menolak — bukan tebakan umum yang bisa saja tak sesuai. */}
+                    {verdict && !verdict.ok
+                      ? verdict.message
+                      : 'Maaf, pesanan ini tidak dapat dibatalkan secara mandiri.'}
                   </p>
                 </div>
+
+                {/* Jalur pengajuan — hanya untuk pesanan yang menunggu keputusan admin. Pesanan
+                    yang sudah terkirim atau sudah dibatalkan tak punya yang perlu diajukan. */}
+                {verdict?.ok === false &&
+                  verdict.code === 'NEEDS_CS' &&
+                  (waCancelRequestLink(order.orderId) ? (
+                    <a
+                      href={waCancelRequestLink(order.orderId) as string}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-[#25D366] py-3 text-sm font-semibold text-white transition hover:brightness-95 active:scale-[0.99]"
+                    >
+                      <WhatsAppIcon />
+                      Ajukan Pembatalan lewat WhatsApp
+                    </a>
+                  ) : (
+                    <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-relaxed text-amber-800">
+                      Hubungi admin kami untuk mengajukan pembatalan, sertakan nomor pesanan{' '}
+                      <strong>#{order.orderId}</strong>.
+                    </p>
+                  ))}
+
                 <Link
                   href="/track-order"
-                  className="mt-5 flex w-full items-center justify-center rounded-xl bg-slate-100 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-200"
+                  className="mt-4 flex w-full items-center justify-center rounded-xl bg-slate-100 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-200"
                 >
                   Kembali ke Pelacakan
                 </Link>

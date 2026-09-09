@@ -26,6 +26,7 @@ import { restoreStock } from '@/lib/mock-db/products'
 import { recordOrderStockChanges } from '@/lib/stock-audit'
 import { normalizePhone, isValidPhone } from '@/lib/phone'
 import { normalizeEmail, isValidEmail } from '@/lib/email'
+import { evaluateBuyerCancel } from '@/lib/order-cancellation'
 import type { OrderFulfillmentStatus } from '@/types/order'
 import { RATE_LIMITS, enforceRateLimit, getClientIp } from '@/lib/rate-limit'
 
@@ -108,16 +109,13 @@ export async function POST(request: Request) {
     )
   }
 
-  const current = order.status ?? 'Diproses'
-  if (current === 'Dibatalkan') {
-    return NextResponse.json({ error: 'Pesanan ini sudah dibatalkan sebelumnya.' }, { status: 409 })
-  }
-  // Validasi status di SERVER — tolak bila sudah lewat tahap aman (mis. Dikirim/Selesai)
-  if (!CANCELLABLE.includes(current)) {
-    return NextResponse.json(
-      { error: 'Pesanan tidak dapat dibatalkan karena sudah dalam proses pengiriman/selesai.' },
-      { status: 409 },
-    )
+  // Validasi di SERVER, memakai aturan yang SAMA dengan /api/orders/cancel dan dengan halaman
+  // pembatalan (`evaluateBuyerCancel`). Termasuk pagar terpenting: pesanan yang resinya sudah
+  // terbit tak bisa dibatalkan sendiri meski statusnya masih 'Diproses' — booking kurir dijalankan
+  // saat pembayaran masuk, jauh sebelum admin menandainya 'Dikirim'.
+  const verdict = evaluateBuyerCancel(order)
+  if (!verdict.ok) {
+    return NextResponse.json({ error: verdict.message, code: verdict.code }, { status: 409 })
   }
 
   // COMPARE-AND-SWAP: status lama ikut menjadi syarat UPDATE (SEC-020). Pemeriksaan `current` di

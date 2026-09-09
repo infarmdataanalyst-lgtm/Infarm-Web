@@ -32,6 +32,9 @@ import { Search, Ban, CheckCircle2, AlertTriangle } from 'lucide-react'
 import { getGuestEmail } from '@/lib/guest-email'
 import { isValidEmail, normalizeEmail } from '@/lib/email'
 import { isValidPhone } from '@/lib/phone'
+import { evaluateBuyerCancel } from '@/lib/order-cancellation'
+import { waCancelRequestLink } from '@/lib/data/contact'
+import WhatsAppIcon from '@/components/ui/WhatsAppIcon'
 
 type PublicTrackOrder = {
   orderId: string
@@ -437,9 +440,16 @@ function Honeypot({ value, onChange }: { value: string; onChange: (v: string) =>
   )
 }
 
-// Kartu ringkas pesanan di langkah 1 (info non-sensitif) + tombol pilih
+// Kartu ringkas pesanan di langkah 1 (info non-sensitif) + aksi yang SESUAI keadaannya.
+//
+// Aksinya ditentukan `evaluateBuyerCancel` — fungsi yang SAMA dengan yang dipakai kedua endpoint
+// pembatalan. Kalau kartu ini menebak sendiri, pembeli bisa menekan tombol yang pasti ditolak
+// server, dan penolakan yang bisa diramalkan sejak awal adalah kegagalan desain, bukan keamanan.
 function OrderSummaryCard({ order, onPick }: { order: PublicTrackOrder; onPick: () => void }) {
   const cancelled = order.status === 'Dibatalkan'
+  const verdict = evaluateBuyerCancel(order)
+  const waLink = verdict.ok ? null : waCancelRequestLink(order.orderId)
+
   return (
     <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
       <div className="flex items-start justify-between gap-3">
@@ -451,13 +461,44 @@ function OrderSummaryCard({ order, onPick }: { order: PublicTrackOrder; onPick: 
           {order.status}
         </span>
       </div>
-      <button
-        type="button"
-        onClick={onPick}
-        className="mt-3 w-full rounded-xl border border-rose-200 bg-rose-50 py-2.5 text-sm font-semibold text-rose-700 transition hover:bg-rose-100 active:scale-[0.99]"
-      >
-        Pilih & Batalkan
-      </button>
+
+      {verdict.ok ? (
+        <button
+          type="button"
+          onClick={onPick}
+          className="mt-3 w-full rounded-xl border border-rose-200 bg-rose-50 py-2.5 text-sm font-semibold text-rose-700 transition hover:bg-rose-100 active:scale-[0.99]"
+        >
+          Pilih & Batalkan
+        </button>
+      ) : (
+        <div className="mt-3 space-y-2.5">
+          <p className="rounded-xl bg-gray-50 px-3.5 py-2.5 text-xs leading-relaxed text-gray-600">
+            {verdict.message}
+          </p>
+
+          {/* Hanya keadaan NEEDS_CS yang menawarkan jalur pengajuan. Pesanan yang sudah terkirim
+              atau sudah dibatalkan tak punya yang perlu diajukan. */}
+          {verdict.code === 'NEEDS_CS' &&
+            (waLink ? (
+              <a
+                href={waLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#25D366] py-2.5 text-sm font-semibold text-white transition hover:brightness-95 active:scale-[0.99]"
+              >
+                <WhatsAppIcon />
+                Ajukan Pembatalan lewat WhatsApp
+              </a>
+            ) : (
+              // Nomor CS belum dikonfigurasi. Menampilkan tombol mati akan membuat pembeli mengira
+              // pengajuannya terkirim — lebih baik katakan terus terang apa yang harus ia lakukan.
+              <p className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs leading-relaxed text-amber-800">
+                Hubungi admin kami untuk mengajukan pembatalan, sertakan nomor pesanan{' '}
+                <strong>{fmtInvoice(order.orderId)}</strong>.
+              </p>
+            ))}
+        </div>
+      )}
     </div>
   )
 }

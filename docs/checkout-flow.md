@@ -14,10 +14,43 @@
   di halaman Order Confirmed; `verifyCancelToken` dicek di API
 - Endpoint `src/app/api/orders/cancel/route.ts`:
   - `GET ?id=&token=` → verifikasi token, kembalikan detail order (tanpa data pribadi)
-  - `PATCH` → verifikasi token + validasi status di server, set status `Dibatalkan`,
-    lalu `restoreStock` (lepas stok kembali). Status yang boleh dibatalkan: `Menunggu Pembayaran`,
-    `Diproses`. Status `Dikirim`/`Selesai` ditolak (terkunci)
+  - `PATCH` → verifikasi token + validasi di server, set status `Dibatalkan`,
+    lalu `restoreStock` (lepas stok kembali)
 - Halaman `src/app/order-cancellation/page.tsx` (server tipis) → `OrderCancellationView` (client)
+
+### Siapa boleh membatalkan, dan kapan — `src/lib/order-cancellation.ts`
+
+Aturannya **satu fungsi murni**, `evaluateBuyerCancel`, dipakai EMPAT tempat: `orders/cancel`,
+`orders/cancel-by-phone`, `orders/verify-cancel`, dan tampilannya (`/cancel-order` +
+`OrderCancellationView`). Jangan menuliskan daftar status sendiri di tempat baru — sebelum ini tiga
+berkas memegang salinan masing-masing, dan salinan berarti kesempatan untuk menyimpang.
+
+| Keadaan pesanan | Vonis | Yang dilihat pembeli |
+|---|---|---|
+| Belum bayar, atau `Diproses` **tanpa** resi | boleh | tombol batal seperti biasa |
+| `Diproses` **dengan** resi | `NEEDS_CS` | tombol "Ajukan Pembatalan lewat WhatsApp" |
+| `Dikirim` / `Selesai` | `ALREADY_SHIPPED` | banner terkunci |
+| Sudah `Dibatalkan` | `ALREADY_CANCELLED` | banner terkunci |
+
+⚠️ **Garis batasnya RESI, bukan `order_status` — jangan dikembalikan ke daftar status.**
+Booking kurir dijalankan tepat setelah pembayaran masuk (`bookShipmentForPaidOrder` dipanggil
+webhook Xendit), sementara `order_status` baru berpindah ke `Dikirim` ketika admin menandainya.
+Ada jendela — bisa berjam-jam — saat pesanan masih `Diproses` PADAHAL resinya sudah tercetak dan
+kurir mungkin sudah menjemput.
+
+Aturan lama (hanya melihat `order_status`) mengizinkan pembeli membatalkan sendiri selama jendela
+itu. Pembatalan mengembalikan stok dan menandai pesanan batal, tetapi **TIDAK membatalkan booking
+di Mengantar** — paketnya tetap berjalan. Kerugiannya berlapis: barang keluar, stok dikreditkan
+balik seolah barang masih ada, dan uang pembeli wajib dikembalikan (refund masih manual).
+
+**Yang BELUM ada, jangan dianggap beres:** `NEEDS_CS` baru mengarahkan pembeli ke WhatsApp admin —
+belum ada antrean permintaan, belum ada tombol setujui/tolak di OMS, dan belum ada pembatalan
+booking ke Mengantar saat CS menyetujui. Persetujuan hari ini berarti admin membatalkan lewat OMS
+lalu membatalkan penjemputannya manual di dashboard Mengantar.
+
+Nomor WhatsApp CS ada di `WHATSAPP_CS_NUMBER` (`src/lib/data/contact.ts`). Selama kosong, tombolnya
+**tidak dirender** dan digantikan teks instruksi berisi nomor invoice — tombol mati yang tampak
+hidup jauh lebih buruk daripada tak ada tombol.
 
 ## Layanan Pesanan Guest (lacak / batalkan / review) — sudah terpasang
 
