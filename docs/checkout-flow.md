@@ -43,10 +43,30 @@ itu. Pembatalan mengembalikan stok dan menandai pesanan batal, tetapi **TIDAK me
 di Mengantar** — paketnya tetap berjalan. Kerugiannya berlapis: barang keluar, stok dikreditkan
 balik seolah barang masih ada, dan uang pembeli wajib dikembalikan (refund masih manual).
 
-**Yang BELUM ada, jangan dianggap beres:** `NEEDS_CS` baru mengarahkan pembeli ke WhatsApp admin —
-belum ada antrean permintaan, belum ada tombol setujui/tolak di OMS, dan belum ada pembatalan
-booking ke Mengantar saat CS menyetujui. Persetujuan hari ini berarti admin membatalkan lewat OMS
-lalu membatalkan penjemputannya manual di dashboard Mengantar.
+### Proses persetujuan pembatalan — SEMENTARA lewat WhatsApp (keputusan 2026-09-09)
+
+Antrean permintaan + tombol Setujui/Tolak di OMS **sengaja belum dibuat**. Untuk volume sekarang,
+alurnya diputuskan berjalan manual:
+
+1. Pembeli menekan **"Ajukan Pembatalan lewat WhatsApp"** di `/cancel-order` atau
+   `/order-cancellation`. Pesannya sudah terisi lengkap dengan nomor invoice.
+2. Admin memeriksa: apakah paketnya benar-benar sudah dijemput kurir?
+3. **Setuju** → admin membuka OMS → Pesanan → ubah status jadi **Dibatalkan**.
+   `PATCH /api/orders/update-status` otomatis memanggil `restoreStock` dan mencatat mutasinya atas
+   nama admin. Terverifikasi nyata: 8 pembatalan pada 2026-09-08 mengembalikan Paket Perawatan Cabe
+   868→875 dan Hidroton 147→149, masing-masing dengan `reason = 'order_cancelled'`.
+   **Tolak** → tidak ada yang perlu dilakukan di sistem; admin cukup membalas di WhatsApp.
+
+⚠️ **LANGKAH YANG TIDAK PUNYA JARING PENGAMAN: membatalkan penjemputan di dashboard Mengantar.**
+Mengubah status di OMS tidak menyentuh booking kurir sama sekali, dan tidak menyentuh
+`shipment_status` — pesanan yang sudah dibatalkan tetap menyandang resi dan status `BOOKED`.
+Kalau langkah ini terlupa, kurir tetap datang menjemput paket yang pembatalannya sudah disetujui,
+dan stok sudah terlanjur dikembalikan. Ini persis kerugian yang ditutup SEC-044, hanya berpindah
+dari tangan pembeli ke tangan admin.
+
+**Yang masih menunggu dibangun:** antrean permintaan di OMS, tombol Setujui/Tolak, pengingat wajib
+membatalkan penjemputan saat admin membatalkan pesanan ber-resi, dan penandaan "perlu refund"
+(refund masih sepenuhnya manual — tak ada satu pun kode refund di project ini).
 
 Nomor WhatsApp CS ada di `WHATSAPP_CS_NUMBER` (`src/lib/data/contact.ts`). Selama kosong, tombolnya
 **tidak dirender** dan digantikan teks instruksi berisi nomor invoice — tombol mati yang tampak
