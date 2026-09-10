@@ -106,6 +106,69 @@ function describeXenditError(status: number, text: string): string {
   return `${status} ${[code, message].filter(Boolean).join(': ') || text.slice(0, 200)}`
 }
 
+// === Membaca tagihan ===
+
+export type InvoicePayment = {
+  /** `payment_id` — id pembayaran di sisi Xendit. Berawalan `ewc_` untuk e-wallet. */
+  paymentId: string
+  /** `payment_channel` (mis. 'SHOPEEPAY', 'BCA'). Kosong bila belum dibayar. */
+  channel: string
+  /** `paid_at` ISO. Menentukan `void` (hari sama) vs `refunds` (H+1). */
+  paidAt: string
+  status: string
+}
+
+// Membaca satu tagihan untuk mendapatkan id PEMBAYARANNYA.
+//
+// ── Kenapa dibaca saat dibutuhkan, bukan disimpan saat webhook masuk ──
+// `orders.id_transaksi` menyimpan id TAGIHAN, bukan id pembayaran. Untuk mengembalikan dana yang
+// dibutuhkan adalah `payment_id` — nomor berbeda, dan tak pernah kita simpan.
+//
+// Pola yang sama pada Mengantar diselesaikan dengan MENYIMPANNYA, karena pembatalan penjemputan
+// berpacu dengan kurir dan berjalan otomatis. Di sini keadaannya berbeda dan pilihannya sengaja
+// berbeda pula: pengembalian dana jarang, selalu dimulai manusia, dan tak berkejaran dengan apa
+// pun. Membaca saat dibutuhkan berarti nilainya selalu segar, berlaku juga untuk seluruh pesanan
+// lama, dan tak menuntut migration maupun backfill.
+//
+// Ini panggilan BACA — tak memindahkan uang dan tak mengubah apa pun di Xendit.
+export async function fetchInvoicePayment(
+  invoiceId: string,
+): Promise<{ ok: true; payment: InvoicePayment } | { ok: false; detail: string }> {
+  const id = invoiceId.trim()
+  if (!id) return { ok: false, detail: 'id tagihan kosong' }
+
+  const credentials = xenditCredentials()
+  if (!credentials.ok) return { ok: false, detail: credentials.detail }
+
+  try {
+    const res = await fetch(xenditUrl(`${INVOICE_PATH}/${encodeURIComponent(id)}`), {
+      headers: { Authorization: credentials.authHeader },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+    const text = await res.text()
+    if (!res.ok) return { ok: false, detail: describeXenditError(res.status, text) }
+
+    const root = JSON.parse(text) as Record<string, unknown>
+    const paymentId = asString(root.payment_id)
+    if (!paymentId) {
+      // Tagihan yang belum dibayar memang tak punya ini — dan tak ada yang perlu dikembalikan.
+      return { ok: false, detail: `tagihan ${id} tak punya payment_id (status ${asString(root.status) ?? '?'})` }
+    }
+
+    return {
+      ok: true,
+      payment: {
+        paymentId,
+        channel: asString(root.payment_channel) ?? '',
+        paidAt: asString(root.paid_at) ?? '',
+        status: asString(root.status) ?? '',
+      },
+    }
+  } catch (e) {
+    return { ok: false, detail: e instanceof Error ? e.name : 'unknown' }
+  }
+}
+
 // === Mematikan tagihan ===
 
 export type ExpireInvoiceResult =

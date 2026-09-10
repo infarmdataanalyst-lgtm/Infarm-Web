@@ -108,6 +108,7 @@ type OrderRow = {
   refund_note?: string | null
   refund_at?: string | null
   refund_by?: string | null
+  refund_reference?: string | null
   // Kolom baru (migration 20260827120000). Optional di tipe ini supaya kode tetap jalan bila
   // migration belum di-apply — PostgREST tak mengembalikan kolom yang belum ada.
   ongkos_kirim?: number | null
@@ -320,6 +321,7 @@ function rowToOrder(row: OrderRow, items: OrderItem[], warehouseNames?: Map<stri
   if (row.refund_note) order.refundNote = row.refund_note
   if (row.refund_at) order.refundAt = row.refund_at
   if (row.refund_by) order.refundBy = row.refund_by
+  if (row.refund_reference) order.refundReference = row.refund_reference
   if (row.metode_pembayaran) order.paymentMethod = row.metode_pembayaran
   // `typeof number`, bukan truthy: ongkir 0 (promo gratis ongkir) sah dan harus tetap terbawa.
   // `if (row.ongkos_kirim)` akan membuangnya dan menyamakannya dengan "tak pernah dicatat".
@@ -1344,7 +1346,7 @@ export async function readOrdersNeedingRefund(limit = 200): Promise<Order[]> {
 }
 
 export type RefundResolution =
-  | { status: 'SUDAH_REFUND'; amount: number; note: string; by: string }
+  | { status: 'SUDAH_REFUND'; amount: number; note: string; by: string; reference?: string }
   | { status: 'TIDAK_PERLU'; note: string; by: string }
 
 // Menutup satu baris daftar kerja refund.
@@ -1365,6 +1367,11 @@ export async function resolveRefund(
     // TIDAK_PERLU tak memindahkan uang, jadi nominalnya dikosongkan alih-alih ditulis 0 — nol
     // berarti "dikembalikan, tapi habis dipotong biaya", makna yang sama sekali berbeda.
     refund_amount: resolution.status === 'SUDAH_REFUND' ? Math.round(resolution.amount) : null,
+    // Hanya terisi bila SISTEM yang mengembalikan (id refund/void Xendit). Pengembalian manual
+    // meninggalkannya null — dan itu keadaan yang akan tetap umum, karena transfer bank tak bisa
+    // dikembalikan lewat Xendit sama sekali.
+    refund_reference:
+      resolution.status === 'SUDAH_REFUND' && resolution.reference ? resolution.reference : null,
   }
 
   // Hanya baris yang MASIH menunggu yang boleh ditutup. Ini compare-and-swap: dua admin yang

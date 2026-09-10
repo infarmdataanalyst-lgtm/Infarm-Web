@@ -78,6 +78,17 @@ function jalurPengembalian(order: Order): {
   }
 }
 
+// Apakah pesanan ini bisa dikembalikan OTOMATIS lewat Xendit.
+//
+// Hanya e-wallet/QRIS/kartu. Transfer bank tak bisa sama sekali, dan metode yang tak tercatat
+// TIDAK dianggap bisa — menawarkan tombol yang pasti gagal hanya mengajari admin mengabaikannya.
+// Server memeriksa ulang; ini sekadar menyembunyikan tombol yang tak berlaku.
+function bisaOtomatis(order: Order): boolean {
+  const info = paymentMethodInfo(order.paymentMethod)
+  if (!info) return false
+  return info.family !== 'transfer-bank' && info.family !== 'lain'
+}
+
 // Pengambilan data murni — tidak menyentuh state sama sekali, supaya bisa dipanggil dari effect
 // maupun dari penangan tombol tanpa keduanya menduplikasi penanganan galatnya.
 async function ambilRefunds(): Promise<{ orders?: Order[]; error?: string }> {
@@ -103,6 +114,10 @@ export default function RefundPage() {
   const [note, setNote] = useState('')
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
+  // Pesanan yang pengembalian otomatisnya sedang berjalan. Selama terisi, SELURUH tombol otomatis
+  // dimatikan — bukan hanya barisnya sendiri. Menekan dua sekaligus berarti dua permintaan uang
+  // berjalan bersamaan tanpa ada yang tahu hasil yang pertama.
+  const [autoId, setAutoId] = useState<string | null>(null)
 
   // Pemuatan pertama. Sengaja TIDAK memanggil setState secara sinkron di badan effect (dan
   // membatalkan diri saat komponen dilepas) — pola yang sama dipakai NotificationBell.
@@ -129,6 +144,50 @@ export default function RefundPage() {
     else setOrders(hasil.orders ?? [])
     setLoading(false)
   }, [])
+
+  // Pengembalian otomatis lewat Xendit. Sengaja memakai konfirmasi bawaan browser: ini
+  // satu-satunya tombol di seluruh OMS yang mengirim uang keluar, dan tak bisa ditarik kembali.
+  async function kembalikanOtomatis(order: Order) {
+    const label = paymentMethodLabel(order.paymentMethod) ?? 'metode aslinya'
+    const yakin = window.confirm(
+      `Kembalikan ${formatRupiah(order.totalAmount)} ke ${label} untuk pesanan ${order.orderId}?\n\n` +
+        'Uang benar-benar dikirim ke pembeli dan TIDAK BISA ditarik kembali.',
+    )
+    if (!yakin) return
+
+    setAutoId(order.orderId)
+    setError('')
+    try {
+      const res = await fetch('/api/oms/refunds/xendit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: order.orderId }),
+      })
+      const data = (await res.json()) as {
+        error?: string
+        metode?: string
+        reference?: string
+        periksaDashboard?: boolean
+      }
+      if (!res.ok) {
+        setError(
+          data.periksaDashboard
+            ? `${data.error ?? 'Gagal.'} — JANGAN diulang sebelum memeriksa dashboard Xendit; dananya mungkin sudah terkirim.`
+            : (data.error ?? 'Gagal mengembalikan dana.'),
+        )
+        return
+      }
+      await muatUlang()
+    } catch {
+      // Jaringan putus di sisi KITA, setelah permintaan mungkin sudah sampai. Perlakukan sebagai
+      // "tidak diketahui", bukan gagal — mengulanginya berisiko mengirim uang dua kali.
+      setError(
+        'Koneksi terputus sebelum hasilnya diketahui. Periksa dashboard Xendit dulu — dananya mungkin sudah terkirim.',
+      )
+    } finally {
+      setAutoId(null)
+    }
+  }
 
   function buka(order: Order) {
     setOpenId(order.orderId)
@@ -275,7 +334,21 @@ export default function RefundPage() {
                   </div>
 
                   {!terbuka ? (
-                    <div className="mt-3 flex justify-end">
+                    <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+                      {/* Tombol otomatis HANYA untuk e-wallet & sejenisnya. Transfer bank tak bisa
+                          dikembalikan lewat Xendit sama sekali — menampilkan tombolnya di sana
+                          berarti menawarkan sesuatu yang pasti gagal. */}
+                      {bisaOtomatis(order) && (
+                        <button
+                          type="button"
+                          onClick={() => void kembalikanOtomatis(order)}
+                          disabled={autoId !== null}
+                          className="inline-flex items-center gap-2 rounded-lg bg-sky-700 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {autoId === order.orderId && <Loader2 className="h-4 w-4 animate-spin" />}
+                          {autoId === order.orderId ? 'Mengembalikan…' : 'Kembalikan lewat Xendit'}
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => buka(order)}

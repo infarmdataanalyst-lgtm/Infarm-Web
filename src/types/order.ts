@@ -93,6 +93,10 @@ export type Order = {
   refundNote?: string // bank & rekening tujuan, nomor referensi transfer, atau alasan TIDAK_PERLU
   refundAt?: string // ISO 8601
   refundBy?: string // nama admin yang menjalankan
+  // Nomor referensi dari Xendit, diisi SISTEM saat pengembalian otomatis berhasil.
+  // undefined = dikembalikan manual oleh manusia (dan itu akan tetap umum: transfer bank tak
+  // bisa dikembalikan lewat Xendit sama sekali).
+  refundReference?: string
   // = metode_pembayaran. Metode/channel yang BENAR-BENAR dipakai pembeli menurut Xendit
   // (mis. 'BCA', 'OVO', 'QRIS', 'ALFAMART'). Hanya diketahui setelah callback pembayaran masuk —
   // di jalur invoice pembeli memilih metodenya sendiri di halaman Xendit, jadi `undefined` selama
