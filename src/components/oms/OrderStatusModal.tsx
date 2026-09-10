@@ -18,6 +18,19 @@ type OrderStatusModalProps = {
   onUpdated: (order: Order) => void // dipanggil setelah update sukses (untuk refresh tabel + toast)
 }
 
+// Satu pekerjaan manual yang tersisa setelah pembatalan tersimpan. `detail` adalah pesan mentah
+// dari pihak ketiga — ditampilkan apa adanya karena itulah yang berguna saat admin harus
+// menjelaskannya ke Mengantar atau Xendit.
+type PostCancelIssue = { judul: string; penjelasan: string; detail: string }
+
+// Bentuk laporan tindakan pihak ketiga di respons PATCH /api/orders/update-status.
+type ThirdPartyReport = {
+  attempted: boolean
+  ok?: boolean
+  reason?: string
+  detail?: string
+}
+
 // Modal update status untuk satu pesanan.
 export default function OrderStatusModal({ order, onClose, onUpdated }: OrderStatusModalProps) {
   const current = order.status ?? 'Menunggu Pembayaran'
@@ -32,9 +45,13 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
   const [trackingNumber, setTrackingNumber] = useState(order.trackingNumber ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  // Hasil penghapusan penjemputan di Mengantar, DIISI HANYA BILA GAGAL. Selama terisi, modal
-  // sengaja TIDAK ditutup — lihat handleSave.
-  const [cancelFailure, setCancelFailure] = useState<{ reason: string; detail: string } | null>(null)
+  // Tindakan pihak ketiga yang GAGAL setelah pembatalan tersimpan. Selama daftar ini tak kosong,
+  // modal sengaja TIDAK ditutup — lihat handleSave.
+  //
+  // Berupa DAFTAR, bukan satu nilai: pembatalan menyentuh dua pihak ketiga sekaligus (menghapus
+  // penjemputan di Mengantar, mematikan tagihan di Xendit) dan keduanya bisa gagal pada pembatalan
+  // yang sama. Menampilkan hanya yang pertama akan menyembunyikan pekerjaan manual yang kedua.
+  const [issues, setIssues] = useState<PostCancelIssue[]>([])
   // Pesanan yang sudah tersimpan, ditahan sampai admin menutup peringatan di atas.
   const [savedOrder, setSavedOrder] = useState<Order | null>(null)
 
@@ -98,12 +115,8 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
       const data = (await res.json()) as {
         order?: Order
         error?: string
-        shipmentCancellation?: {
-          attempted: boolean
-          ok?: boolean
-          reason?: string
-          detail?: string
-        }
+        shipmentCancellation?: ThirdPartyReport
+        invoiceExpiry?: ThirdPartyReport
       }
       if (!res.ok || !data.order) {
         setError(data.error ?? 'Gagal memperbarui status pesanan.')
@@ -111,16 +124,33 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
       }
 
       // Pembatalannya SUDAH tersimpan di server pada titik ini — status, stok, dan mutasinya.
-      // Yang gagal hanyalah penghapusan penjemputan di Mengantar. Karena itu modal ditahan, bukan
+      // Yang mungkin gagal hanyalah dua tindakan ke pihak ketiga. Karena itu modal DITAHAN, bukan
       // dibatalkan: satu-satunya jejak lain dari kegagalan ini adalah kolom database yang tak
-      // pernah dibuka siapa pun, dan kurir tetap akan datang kalau tak ada yang menindaklanjuti.
-      const batal = data.shipmentCancellation
-      if (batal?.attempted && batal.ok === false) {
-        setSavedOrder(data.order)
-        setCancelFailure({
-          reason: batal.reason ?? 'unknown',
-          detail: batal.detail ?? '',
+      // pernah dibuka siapa pun, sementara akibatnya berjalan terus di dunia nyata.
+      const gagal: PostCancelIssue[] = []
+
+      const pickup = data.shipmentCancellation
+      if (pickup?.attempted && pickup.ok === false) {
+        gagal.push({
+          judul: 'Penjemputan kurir BELUM dibatalkan',
+          penjelasan: `Buka dashboard Mengantar dan hapus pengiriman${bookedAwb ? ` beresi ${bookedAwb}` : ''} secara manual. Kalau tidak, kurir tetap datang menjemput paket ini sementara stoknya sudah dikembalikan.`,
+          detail: `${pickup.reason ?? 'unknown'}${pickup.detail ? `: ${pickup.detail}` : ''}`,
         })
+      }
+
+      const tagihan = data.invoiceExpiry
+      if (tagihan?.attempted && tagihan.ok === false) {
+        gagal.push({
+          judul: 'Tagihan Xendit MASIH BISA DIBAYAR',
+          penjelasan:
+            'Matikan tagihannya manual di dashboard Xendit. Kalau pembeli terlanjur membayarnya lewat transfer bank, uangnya TIDAK BISA dikembalikan lewat Xendit — harus ditransfer manual ke rekening pembeli.',
+          detail: `${tagihan.reason ?? 'unknown'}${tagihan.detail ? `: ${tagihan.detail}` : ''}`,
+        })
+      }
+
+      if (gagal.length > 0) {
+        setSavedOrder(data.order)
+        setIssues(gagal)
         return
       }
 
@@ -273,7 +303,7 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
           )}
 
           {/* === Apa yang akan terjadi pada penjemputannya (sebelum menyimpan) === */}
-          {willCancelPickup && !cancelFailure && (
+          {willCancelPickup && issues.length === 0 && (
             <div className="mt-4 rounded-lg border border-sky-200 bg-sky-50 p-3.5">
               <p className="flex items-start gap-2 text-sm font-semibold text-sky-900">
                 <Truck className="mt-0.5 h-4 w-4 flex-none" />
@@ -295,28 +325,29 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
             </div>
           )}
 
-          {/* === Penghapusan penjemputan GAGAL — butuh tindakan manual === */}
-          {cancelFailure && (
+          {/* === Tindakan pihak ketiga yang GAGAL — butuh penanganan manual === */}
+          {issues.length > 0 && (
             <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3.5">
               <p className="flex items-start gap-2 text-sm font-semibold text-amber-900">
                 <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
-                <span>Pesanan sudah dibatalkan, tapi penjemputannya BELUM.</span>
+                <span>
+                  Pesanan sudah dibatalkan, tapi ada {issues.length === 1 ? 'satu hal' : `${issues.length} hal`}{' '}
+                  yang harus Anda selesaikan manual.
+                </span>
               </p>
-              <p className="mt-1.5 pl-6 text-xs leading-relaxed text-amber-800">
-                Buka dashboard Mengantar dan hapus pengiriman
-                {bookedAwb && (
-                  <>
-                    {' '}
-                    beresi <span className="font-mono">{bookedAwb}</span>
-                  </>
-                )}{' '}
-                secara manual. Kalau tidak, kurir tetap datang menjemput paket ini sementara stoknya
-                sudah dikembalikan.
-              </p>
-              <p className="mt-2 pl-6 font-mono text-[11px] leading-relaxed text-amber-700">
-                {cancelFailure.reason}
-                {cancelFailure.detail ? `: ${cancelFailure.detail}` : ''}
-              </p>
+              <ul className="mt-2.5 space-y-3 pl-6">
+                {issues.map((issue) => (
+                  <li key={issue.judul}>
+                    <p className="text-xs font-semibold text-amber-900">{issue.judul}</p>
+                    <p className="mt-0.5 text-xs leading-relaxed text-amber-800">
+                      {issue.penjelasan}
+                    </p>
+                    <p className="mt-1 font-mono text-[11px] leading-relaxed text-amber-700">
+                      {issue.detail}
+                    </p>
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
 
@@ -330,7 +361,7 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
 
         {/* Footer aksi */}
         <div className="flex justify-end gap-3 border-t border-gray-100 px-5 py-4">
-          {cancelFailure ? (
+          {issues.length > 0 ? (
             // Perubahannya SUDAH tersimpan; satu-satunya jalan keluar adalah mengakui peringatan
             // di atas. Tombol "Batal" sengaja tidak ditampilkan — tak ada lagi yang bisa dibatalkan,
             // dan menawarkannya hanya menyarankan bahwa peringatan itu boleh diabaikan.
@@ -339,7 +370,7 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
               onClick={acknowledgeFailure}
               className="rounded-lg bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-amber-700"
             >
-              Mengerti, saya hapus manual
+              Mengerti, saya tangani manual
             </button>
           ) : (
             <>

@@ -98,6 +98,10 @@ type OrderRow = {
   // kolom baru lain di bawah. Dipakai agar satu pesanan tak menerbitkan tagihan berkali-kali.
   invoice_url?: string | null
   invoice_expires_at?: string | null
+  // Hasil upaya mematikan tagihan saat pembatalan (migration 20260910120000) — optional, alasan
+  // sama. `invoice_expire_error` terisi = pesanan batal tapi tagihannya MASIH BISA DIBAYAR.
+  invoice_expired_at?: string | null
+  invoice_expire_error?: string | null
   // Kolom baru (migration 20260827120000). Optional di tipe ini supaya kode tetap jalan bila
   // migration belum di-apply — PostgREST tak mengembalikan kolom yang belum ada.
   ongkos_kirim?: number | null
@@ -293,6 +297,8 @@ function rowToOrder(row: OrderRow, items: OrderItem[], warehouseNames?: Map<stri
   if (row.id_transaksi) order.transactionId = row.id_transaksi
   if (row.invoice_url) order.invoiceUrl = row.invoice_url
   if (row.invoice_expires_at) order.invoiceExpiresAt = row.invoice_expires_at
+  if (row.invoice_expired_at) order.invoiceExpiredAt = row.invoice_expired_at
+  if (row.invoice_expire_error) order.invoiceExpireError = row.invoice_expire_error
   if (row.metode_pembayaran) order.paymentMethod = row.metode_pembayaran
   // `typeof number`, bukan truthy: ongkir 0 (promo gratis ongkir) sah dan harus tetap terbawa.
   // `if (row.ongkos_kirim)` akan membuangnya dan menyamakannya dengan "tak pernah dicatat".
@@ -1251,6 +1257,48 @@ export async function setShipmentCancellation(
       )
     } else {
       console.error(`[orders] gagal menyimpan hasil pembatalan ${orderId}:`, error.message)
+    }
+    return false
+  }
+  return Boolean(data)
+}
+
+// === Hasil mematikan tagihan Xendit ===
+
+// Dipanggil SETELAH POST /invoices/{id}/expire, oleh alur pembatalan pesanan.
+//
+// `expired: true` juga MENGOSONGKAN invoice_expire_error: percobaan sebelumnya yang gagal sudah
+// tak relevan begitu tagihannya benar-benar mati, dan pesan lama yang tertinggal akan membuat
+// admin mengejar sesuatu yang sudah beres.
+export type InvoiceExpiryUpdate = { expired: true } | { expired: false; error: string }
+
+export async function setInvoiceExpiry(
+  orderId: string,
+  update: InvoiceExpiryUpdate,
+): Promise<boolean> {
+  const supabase = createAdminClient()
+  const patch: Record<string, string | null> = update.expired
+    ? { invoice_expired_at: new Date().toISOString(), invoice_expire_error: null }
+    : { invoice_expire_error: update.error.slice(0, 500) }
+
+  const { data, error } = await supabase
+    .from('orders')
+    .update(patch)
+    .eq('nomor_invoice', orderId)
+    .select('id')
+    .maybeSingle()
+
+  if (error) {
+    // PGRST204/42703 = migration 20260910120000 belum dijalankan. Dicetak dengan nama filenya
+    // karena akibatnya TIDAK terlihat di UI: pembatalan pesanannya sendiri tetap berhasil, hanya
+    // jejak tagihannya yang hilang — dan justru jejak itu yang menjadi daftar kerja admin.
+    if (error.code === 'PGRST204' || error.code === '42703') {
+      console.error(
+        `[orders] kolom invoice_expire* belum ada untuk ${orderId} — ` +
+          'jalankan migration 20260910120000_orders_invoice_expire.sql',
+      )
+    } else {
+      console.error(`[orders] gagal menyimpan hasil mematikan tagihan ${orderId}:`, error.message)
     }
     return false
   }

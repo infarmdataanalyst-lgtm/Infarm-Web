@@ -72,6 +72,11 @@ export type Order = {
   // pesanan lama bila migration 20260908120000 belum dijalankan.
   invoiceUrl?: string
   invoiceExpiresAt?: string // ISO 8601, dari `expiry_date` respons Xendit
+  // Hasil upaya mematikan tagihan saat pesanan dibatalkan.
+  invoiceExpiredAt?: string // ISO 8601 — tagihan BERHASIL dimatikan, tak bisa dibayar lagi
+  // Terisi = pesanan sudah batal tapi tagihannya MASIH HIDUP dan masih bisa dibayar. Uang yang
+  // terlanjur masuk lewat VA tak bisa di-refund Xendit, jadi ini WAJIB ditindaklanjuti manual.
+  invoiceExpireError?: string
   // = metode_pembayaran. Metode/channel yang BENAR-BENAR dipakai pembeli menurut Xendit
   // (mis. 'BCA', 'OVO', 'QRIS', 'ALFAMART'). Hanya diketahui setelah callback pembayaran masuk —
   // di jalur invoice pembeli memilih metodenya sendiri di halaman Xendit, jadi `undefined` selama

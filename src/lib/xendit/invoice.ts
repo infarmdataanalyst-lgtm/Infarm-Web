@@ -106,6 +106,97 @@ function describeXenditError(status: number, text: string): string {
   return `${status} ${[code, message].filter(Boolean).join(': ') || text.slice(0, 200)}`
 }
 
+// === Mematikan tagihan ===
+
+export type ExpireInvoiceResult =
+  | { ok: true; status: string }
+  | { ok: false; reason: ExpireFailureReason; detail: string }
+
+export type ExpireFailureReason =
+  | 'not-configured' // XENDIT_SECRET_KEY belum di-set / ditolak penjaga lingkungan
+  | 'already-settled' // tagihan sudah dibayar — tak bisa & tak perlu dimatikan
+  | 'not-found' // id tak dikenal Xendit
+  | 'http-error' // ditolak Xendit
+  | 'bad-shape' // respons tak terbaca
+  | 'network' // timeout / jaringan
+
+// Status invoice yang berarti uangnya SUDAH masuk. Tagihan seperti ini tak bisa dimatikan, dan
+// memang tak perlu — yang ingin dicegah justru pembayaran yang belum terjadi.
+const SUDAH_DIBAYAR = new Set(['PAID', 'SETTLED'])
+
+// Mematikan tagihan Xendit supaya TIDAK BISA dibayar lagi. Dipanggil saat pesanan dibatalkan.
+//
+// ── Kenapa ini penting, dan kenapa bukan refund ──
+// Pembayaran lewat Virtual Account TIDAK BISA di-refund Xendit sama sekali (terverifikasi
+// 2026-09-10 di help center mereka). Uang yang terlanjur masuk untuk pesanan yang sudah batal
+// hanya bisa dikembalikan lewat transfer BARU ke rekening pembeli — menuntut nomor rekening yang
+// tak pernah kita kumpulkan, dan menanggung biaya tersendiri.
+//
+// Mencegah uang itu masuk jauh lebih murah daripada mengembalikannya. Itulah seluruh guna fungsi
+// ini: ia TIDAK memindahkan uang, ia menutup pintunya.
+//
+// ── TIDAK menyentuh database ──
+// Pemanggil yang menyimpan hasilnya, mengikuti pola createXenditInvoice() & cancelShipmentOrder().
+export async function expireXenditInvoice(invoiceId: string): Promise<ExpireInvoiceResult> {
+  const id = invoiceId.trim()
+  if (!id) return { ok: false, reason: 'not-found', detail: 'id tagihan kosong' }
+
+  // Penjaga lingkungan ada DI DALAM xenditCredentials(): kunci LIVE ditolak di luar deployment
+  // produksi. Sengaja dilewati juga di sini meski panggilan ini tak memindahkan uang — mematikan
+  // tagihan pembeli SUNGGUHAN dari mesin lokal tetap tak boleh terjadi.
+  const credentials = xenditCredentials()
+  if (!credentials.ok) {
+    console.warn(`${LOG} mematikan tagihan ${id} DIBATALKAN — ${credentials.detail}`)
+    return { ok: false, reason: 'not-configured', detail: credentials.detail }
+  }
+
+  console.log(`${LOG} mematikan tagihan ${id} (kunci ${credentials.live ? 'LIVE' : 'test'})`)
+
+  try {
+    const res = await fetch(xenditUrl(`${INVOICE_PATH}/${encodeURIComponent(id)}/expire`), {
+      method: 'POST',
+      headers: { Authorization: credentials.authHeader, 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+    const text = await res.text()
+
+    if (!res.ok) {
+      // 404 dibedakan: id tak dikenal berarti ada yang salah pada DATA kita (id_transaksi basi
+      // atau milik lingkungan Xendit lain), bukan gangguan sementara. Mengulangnya tak menolong.
+      const reason: ExpireFailureReason = res.status === 404 ? 'not-found' : 'http-error'
+      return { ok: false, reason, detail: describeXenditError(res.status, text) }
+    }
+
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(text)
+    } catch {
+      return { ok: false, reason: 'bad-shape', detail: `respons bukan JSON: ${text.slice(0, 200)}` }
+    }
+
+    const status = asString((parsed as Record<string, unknown>).status) ?? ''
+
+    // HTTP 200 dengan status PAID/SETTLED berarti tagihannya SUDAH dibayar dan Xendit menolak
+    // mematikannya — dilaporkan gagal, bukan berhasil. Menganggapnya berhasil akan menulis
+    // invoice_expired_at pada tagihan yang sebenarnya masih hidup sebagai pembayaran sah, dan
+    // menyembunyikan justru keadaan yang paling perlu dilihat admin: uang sudah masuk untuk
+    // pesanan yang dibatalkan.
+    if (SUDAH_DIBAYAR.has(status.toUpperCase())) {
+      return {
+        ok: false,
+        reason: 'already-settled',
+        detail: `tagihan berstatus ${status} — sudah dibayar, tak bisa dimatikan`,
+      }
+    }
+
+    console.log(`${LOG} tagihan ${id} dimatikan (status ${status || 'tak disebut'})`)
+    return { ok: true, status: status || 'EXPIRED' }
+  } catch (e) {
+    // Hanya `name`: pesan error fetch di sebagian runtime memuat detail request.
+    return { ok: false, reason: 'network', detail: e instanceof Error ? e.name : 'unknown' }
+  }
+}
+
 // Membuat Invoice Xendit untuk sebuah pesanan yang SUDAH tersimpan di DB.
 //
 // `origin` = asal URL situs kita (mis. 'https://infarm-web-mu.vercel.app'), dipakai menyusun

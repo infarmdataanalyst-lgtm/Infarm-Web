@@ -11,6 +11,7 @@ import { restoreStock } from '@/lib/mock-db/products'
 import { recordOrderStockChanges } from '@/lib/stock-audit'
 import { verifyCancelToken } from '@/lib/order-token'
 import { evaluateBuyerCancel } from '@/lib/order-cancellation'
+import { expireInvoiceForCancelledOrder } from '@/lib/order-invoice-expiry'
 import type { Order, OrderFulfillmentStatus } from '@/types/order'
 
 // createAdminClient (Supabase) butuh runtime Node.js, bukan Edge
@@ -135,6 +136,18 @@ export async function PATCH(request: Request) {
     ...(orderUuid ? { orderId: orderUuid } : {}),
     direction: 'in',
   })
+
+  // Matikan tagihan Xendit yang mungkin masih hidup.
+  //
+  // Jalur INI yang paling sering menemuinya: pembeli membatalkan sendiri hampir selalu terjadi
+  // pada pesanan yang BELUM dibayar — persis keadaan yang tagihannya masih bisa dibayar. Tanpa ini,
+  // pembeli yang berubah pikiran lalu membuka email tagihan lamanya tetap bisa membayar pesanan
+  // yang sudah batal, dan uang lewat VA tak bisa dikembalikan Xendit.
+  //
+  // Kegagalannya TIDAK dilaporkan ke pembeli: pembatalannya sudah berhasil dan tak ada yang bisa
+  // pembeli lakukan soal ini. Yang perlu tahu adalah admin — dan itu tercatat di kolom
+  // invoice_expire_error.
+  await expireInvoiceForCancelledOrder(order)
 
   // Stok kembali → segarkan cache storefront agar stok tampil akurat.
   revalidatePath('/')

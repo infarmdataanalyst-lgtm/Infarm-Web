@@ -27,6 +27,7 @@ import { recordOrderStockChanges } from '@/lib/stock-audit'
 import { normalizePhone, isValidPhone } from '@/lib/phone'
 import { normalizeEmail, isValidEmail } from '@/lib/email'
 import { evaluateBuyerCancel } from '@/lib/order-cancellation'
+import { expireInvoiceForCancelledOrder } from '@/lib/order-invoice-expiry'
 import type { OrderFulfillmentStatus } from '@/types/order'
 import { RATE_LIMITS, enforceRateLimit, getClientIp } from '@/lib/rate-limit'
 
@@ -154,6 +155,10 @@ export async function POST(request: Request) {
     ...(orderUuid ? { orderId: orderUuid } : {}),
     direction: 'in',
   })
+
+  // Matikan tagihan Xendit yang mungkin masih hidup — alasan & perilaku sama persis dengan
+  // alur cancel token; lihat catatan lengkapnya di src/app/api/orders/cancel/route.ts.
+  await expireInvoiceForCancelledOrder(order)
 
   // Stok kembali → segarkan cache storefront (sama seperti alur cancel token)
   revalidatePath('/')

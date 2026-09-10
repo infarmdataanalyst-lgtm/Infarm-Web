@@ -17,6 +17,7 @@ import { restoreStock } from '@/lib/mock-db/products'
 import { recordOrderStockChanges } from '@/lib/stock-audit'
 import { canTransition } from '@/lib/order-status-machine'
 import { cancelShipmentOrder } from '@/lib/mengantar-cancel'
+import { expireInvoiceForCancelledOrder } from '@/lib/order-invoice-expiry'
 import type { Order, OrderFulfillmentStatus } from '@/types/order'
 
 // createAdminClient (Supabase) butuh runtime Node.js, bukan Edge
@@ -177,7 +178,13 @@ export async function PATCH(request: Request) {
     // dan harus utuh apa pun yang terjadi di Mengantar. Kegagalan di sini tidak membatalkan
     // satu pun dari mereka, dan tidak menggagalkan respons.
     const shipmentCancellation = await cancelPickupFor(order)
-    return NextResponse.json({ success: true, order: updated, shipmentCancellation })
+
+    // Mematikan tagihan yang masih hidup. Untuk pesanan yang sudah LUNAS ini otomatis dilewati
+    // (tak ada yang perlu dimatikan), jadi di jalur OMS ia hanya bekerja pada pembatalan pesanan
+    // yang belum dibayar.
+    const invoiceExpiry = await expireInvoiceForCancelledOrder(order)
+
+    return NextResponse.json({ success: true, order: updated, shipmentCancellation, invoiceExpiry })
   }
 
   return NextResponse.json({ success: true, order: updated })
