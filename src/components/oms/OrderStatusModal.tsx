@@ -9,6 +9,7 @@ import { useState } from 'react'
 import { X, Loader2, Package, AlertTriangle, Truck } from 'lucide-react'
 import { formatRupiah } from '@/lib/format'
 import { nextStatuses, isFinalStatus } from '@/lib/order-status-machine'
+import { paymentMethodLabel } from '@/lib/payment-method'
 import type { Order, OrderFulfillmentStatus } from '@/types/order'
 
 type OrderStatusModalProps = {
@@ -155,6 +156,25 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
             <dd className="text-right font-medium text-gray-900">{order.customerName}</dd>
             <dt className="text-gray-500">Total</dt>
             <dd className="text-right font-semibold text-gray-900">{formatRupiah(order.totalAmount)}</dd>
+            {/* Metode bayar HANYA muncul untuk pesanan yang sudah lunas.
+                Di sinilah CS berada saat membatalkan pesanan, dan inilah pertanyaan pertama yang
+                menentukan langkah berikutnya: transfer bank menuntut CS meminta nomor rekening
+                (Xendit tak bisa me-refund VA sama sekali), sedangkan e-wallet/QRIS/kartu bisa
+                dikembalikan ke sumbernya. Pada pesanan yang belum dibayar tak ada uang yang perlu
+                dikembalikan, jadi barisnya sengaja tidak ditampilkan.
+                "Belum tercatat" DITAMPILKAN, bukan disembunyikan: pesanan lunas sebelum
+                2026-08-28 tak punya nilai ini, dan CS perlu tahu bahwa jalur pengembaliannya harus
+                dipastikan lewat dashboard Xendit — bukan diasumsikan transfer bank. */}
+            {order.paymentStatus === 'Lunas' && (
+              <>
+                <dt className="text-gray-500">Metode Bayar</dt>
+                <dd className="text-right font-medium text-gray-900">
+                  {paymentMethodLabel(order.paymentMethod) ?? (
+                    <span className="text-gray-400">Belum tercatat</span>
+                  )}
+                </dd>
+              </>
+            )}
           </dl>
 
           {/* Item pesanan */}

@@ -11,6 +11,7 @@ import { Download, ChevronLeft, ChevronRight, Inbox, Eye, AlertTriangle } from '
 import OmsHeader from '@/components/oms/OmsHeader'
 import OrderStatusModal from '@/components/oms/OrderStatusModal'
 import WarehouseMultiFilter from '@/components/oms/WarehouseMultiFilter'
+import { paymentMethodLabel } from '@/lib/payment-method'
 import type {
   Order,
   OrderFulfillmentStatus,
@@ -298,6 +299,9 @@ function OrdersContent() {
       'No. Resi',
       'Status Booking Kurir',
       'Pembayaran',
+      // Dipakai saat merekap pesanan yang perlu pengembalian dana: jalur transfer bank dan
+      // e-wallet ditangani sangat berbeda, dan tanpa kolom ini rekapnya harus dicocokkan manual.
+      'Metode Bayar',
       'Status',
       'Gudang',
       'Tanggal',
@@ -314,6 +318,7 @@ function OrdersContent() {
         o.trackingNumber ?? '',
         o.shipmentStatus === 'FAILED' ? `GAGAL: ${o.shipmentError ?? ''}` : (o.shipmentStatus ?? ''),
         o.paymentStatus,
+        paymentMethodLabel(o.paymentMethod) ?? '',
         o.status ?? '',
         warehouseLabel(o),
         formatDate(o.date),
@@ -634,9 +639,21 @@ function OrdersContent() {
                           '—'
                         )}
                       </td>
-                      {/* Pembayaran */}
+                      {/* Pembayaran — status DAN metodenya.
+                          Metodenya ikut ditampilkan karena itulah yang menentukan bagaimana uang
+                          bisa dikembalikan saat pesanan dibatalkan: transfer bank tak bisa
+                          di-refund Xendit dan menuntut transfer manual ke rekening pembeli,
+                          sedangkan e-wallet/QRIS/kartu bisa kembali ke sumbernya. Sebelum ini
+                          nilainya tersimpan tapi tak pernah terlihat di OMS mana pun.
+                          Hanya ditampilkan bila ADA — 'belum tercatat' pada pesanan yang belum
+                          dibayar cuma mengulang apa yang sudah dikatakan badge di atasnya. */}
                       <td className="px-5 py-4">
                         <PaymentBadge status={order.paymentStatus} />
+                        {paymentMethodLabel(order.paymentMethod) && (
+                          <p className="mt-1 text-xs text-gray-500">
+                            {paymentMethodLabel(order.paymentMethod)}
+                          </p>
+                        )}
                       </td>
                       {/* Status alur */}
                       <td className="px-5 py-4">

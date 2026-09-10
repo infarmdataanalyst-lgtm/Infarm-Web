@@ -53,3 +53,7 @@ src/data/products.json
 /playwright-report/
 /blob-report/
 /playwright/.cache/
+
+# Keluaran sementara pemeriksaan API pihak ketiga — memuat data pembayaran pelanggan
+# (payer_email, payment_destination, customer). JANGAN pernah masuk repo.
+xendit-invoice.json
