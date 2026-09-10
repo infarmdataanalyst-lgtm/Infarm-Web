@@ -56,4 +56,6 @@ src/data/products.json
 
 # Keluaran sementara pemeriksaan API pihak ketiga — memuat data pembayaran pelanggan
 # (payer_email, payment_destination, customer). JANGAN pernah masuk repo.
-xendit-invoice.json
+# Pola, bukan satu nama: tiap pemeriksaan kontrak API cenderung memakai nama file baru.
+inv-*.json
+xendit-*.json

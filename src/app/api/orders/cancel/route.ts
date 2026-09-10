@@ -6,7 +6,12 @@
 
 import { NextResponse } from 'next/server'
 import { revalidatePath, revalidateTag } from 'next/cache'
-import { getOrderByOrderId, getOrderUuidByInvoice, updateOrderStatus } from '@/lib/mock-db/orders'
+import {
+  getOrderByOrderId,
+  getOrderUuidByInvoice,
+  markRefundNeeded,
+  updateOrderStatus,
+} from '@/lib/mock-db/orders'
 import { restoreStock } from '@/lib/mock-db/products'
 import { recordOrderStockChanges } from '@/lib/stock-audit'
 import { verifyCancelToken } from '@/lib/order-token'
@@ -148,6 +153,11 @@ export async function PATCH(request: Request) {
   // pembeli lakukan soal ini. Yang perlu tahu adalah admin — dan itu tercatat di kolom
   // invoice_expire_error.
   await expireInvoiceForCancelledOrder(order)
+
+  // Pesanan LUNAS yang dibatalkan = uang pembeli masih di kita, dan harus dikembalikan manual.
+  // Jalur pembeli hampir selalu menyentuh pesanan yang belum dibayar — tapi 'Diproses tanpa resi'
+  // juga boleh dibatalkan sendiri, dan itu SUDAH lunas. Jadi penandaannya tetap perlu di sini.
+  if (order.paymentStatus === 'Lunas') await markRefundNeeded(order.orderId)
 
   // Stok kembali → segarkan cache storefront agar stok tampil akurat.
   revalidatePath('/')

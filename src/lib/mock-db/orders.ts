@@ -102,6 +102,12 @@ type OrderRow = {
   // sama. `invoice_expire_error` terisi = pesanan batal tapi tagihannya MASIH BISA DIBAYAR.
   invoice_expired_at?: string | null
   invoice_expire_error?: string | null
+  // Pengembalian dana (migration 20260910130000) — optional, alasan sama.
+  refund_status?: string | null
+  refund_amount?: number | null
+  refund_note?: string | null
+  refund_at?: string | null
+  refund_by?: string | null
   // Kolom baru (migration 20260827120000). Optional di tipe ini supaya kode tetap jalan bila
   // migration belum di-apply — PostgREST tak mengembalikan kolom yang belum ada.
   ongkos_kirim?: number | null
@@ -299,6 +305,21 @@ function rowToOrder(row: OrderRow, items: OrderItem[], warehouseNames?: Map<stri
   if (row.invoice_expires_at) order.invoiceExpiresAt = row.invoice_expires_at
   if (row.invoice_expired_at) order.invoiceExpiredAt = row.invoice_expired_at
   if (row.invoice_expire_error) order.invoiceExpireError = row.invoice_expire_error
+  // Nilai asing (atau kolom yang belum di-migrate) dibiarkan undefined — daftarnya WAJIB sejalan
+  // dengan constraint orders_refund_status_check.
+  if (
+    row.refund_status === 'PERLU_REFUND' ||
+    row.refund_status === 'SUDAH_REFUND' ||
+    row.refund_status === 'TIDAK_PERLU'
+  ) {
+    order.refundStatus = row.refund_status
+  }
+  // `typeof number`, bukan truthy: refund Rp0 sah (mis. seluruhnya dipotong biaya) dan harus
+  // tetap terbawa, bukan disamakan dengan "tak pernah dicatat".
+  if (typeof row.refund_amount === 'number') order.refundAmount = row.refund_amount
+  if (row.refund_note) order.refundNote = row.refund_note
+  if (row.refund_at) order.refundAt = row.refund_at
+  if (row.refund_by) order.refundBy = row.refund_by
   if (row.metode_pembayaran) order.paymentMethod = row.metode_pembayaran
   // `typeof number`, bukan truthy: ongkir 0 (promo gratis ongkir) sah dan harus tetap terbawa.
   // `if (row.ongkos_kirim)` akan membuangnya dan menyamakannya dengan "tak pernah dicatat".
@@ -1261,6 +1282,108 @@ export async function setShipmentCancellation(
     return false
   }
   return Boolean(data)
+}
+
+// === Pengembalian dana ===
+
+// Menandai pesanan sebagai PERLU_REFUND. Dipanggil saat pesanan yang SUDAH LUNAS dibatalkan.
+//
+// ── Kenapa penandaan ini otomatis, bukan diserahkan ke admin ──
+// Uang pembeli yang tertahan adalah keadaan yang paling mudah terlupakan: pesanannya tampak
+// selesai (Dibatalkan), stoknya sudah rapi, penjemputannya sudah dihapus. Tak ada satu pun
+// yang menyisakan pekerjaan terlihat, padahal ada. Mengandalkan admin mengingat sendiri berarti
+// mengandalkan hal yang justru tak ada pengingatnya.
+//
+// TIDAK menimpa status yang sudah ada: pesanan yang sudah SUDAH_REFUND atau ditandai TIDAK_PERLU
+// tak boleh kembali jadi PERLU_REFUND hanya karena pembatalannya diproses ulang.
+export async function markRefundNeeded(orderId: string): Promise<boolean> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('orders')
+    .update({ refund_status: 'PERLU_REFUND' })
+    .eq('nomor_invoice', orderId)
+    .is('refund_status', null)
+    .select('id')
+    .maybeSingle()
+
+  if (error) {
+    if (error.code === 'PGRST204' || error.code === '42703') {
+      console.error(
+        `[orders] kolom refund_* belum ada untuk ${orderId} — ` +
+          'jalankan migration 20260910130000_orders_refund.sql',
+      )
+    } else {
+      console.error(`[orders] gagal menandai perlu refund ${orderId}:`, error.message)
+    }
+    return false
+  }
+  // data null = tak ada baris tersentuh, yang di sini berarti statusnya SUDAH terisi. Itu keadaan
+  // normal (pembatalan diproses ulang), bukan kegagalan.
+  return Boolean(data)
+}
+
+// Pesanan yang menunggu pengembalian dana, terbaru dulu.
+export async function readOrdersNeedingRefund(limit = 200): Promise<Order[]> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('orders')
+    .select('*')
+    .eq('refund_status', 'PERLU_REFUND')
+    .order('created_at', { ascending: false })
+    .limit(limit)
+
+  if (error) {
+    console.error('[orders] gagal membaca daftar perlu refund:', error.message)
+    return []
+  }
+
+  // Item pesanan SENGAJA tidak ikut diambil (`rowToOrder(r, [])`). Yang dibutuhkan admin di daftar
+  // ini adalah siapa, berapa, dibayar lewat apa, dan sejak kapan menunggu — bukan isi paketnya.
+  // Menambah satu query order_items untuk kolom yang tak ditampilkan hanya memperlambat halaman.
+  return ((data as OrderRow[]) ?? []).map((r) => rowToOrder(r, []))
+}
+
+export type RefundResolution =
+  | { status: 'SUDAH_REFUND'; amount: number; note: string; by: string }
+  | { status: 'TIDAK_PERLU'; note: string; by: string }
+
+// Menutup satu baris daftar kerja refund.
+//
+// `by` dan `note` WAJIB untuk kedua cabang. Pengembalian dana jalur transfer bank dijalankan
+// manusia di luar sistem ini, jadi satu-satunya bukti yang akan pernah ada adalah apa yang
+// diketik di sini — nomor referensi transfer, atau alasan mengapa tak ada yang perlu dikembalikan.
+export async function resolveRefund(
+  orderId: string,
+  resolution: RefundResolution,
+): Promise<Order | null> {
+  const supabase = createAdminClient()
+  const patch: Record<string, string | number | null> = {
+    refund_status: resolution.status,
+    refund_note: resolution.note.slice(0, 1000),
+    refund_at: new Date().toISOString(),
+    refund_by: resolution.by.slice(0, 120),
+    // TIDAK_PERLU tak memindahkan uang, jadi nominalnya dikosongkan alih-alih ditulis 0 — nol
+    // berarti "dikembalikan, tapi habis dipotong biaya", makna yang sama sekali berbeda.
+    refund_amount: resolution.status === 'SUDAH_REFUND' ? Math.round(resolution.amount) : null,
+  }
+
+  // Hanya baris yang MASIH menunggu yang boleh ditutup. Ini compare-and-swap: dua admin yang
+  // menekan tombol bersamaan tak boleh sama-sama berhasil, karena keduanya lalu mengira uangnya
+  // sudah dikirim padahal hanya satu yang benar-benar mengirim.
+  const { data, error } = await supabase
+    .from('orders')
+    .update(patch)
+    .eq('nomor_invoice', orderId)
+    .eq('refund_status', 'PERLU_REFUND')
+    .select('id')
+    .maybeSingle()
+
+  if (error) {
+    console.error(`[orders] gagal menutup refund ${orderId}:`, error.message)
+    return null
+  }
+  if (!data) return null
+  return getOrderByOrderId(orderId)
 }
 
 // === Hasil mematikan tagihan Xendit ===

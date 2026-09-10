@@ -77,6 +77,10 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
   // penghapusannya benar-benar gagal.
   const willCancelPickup = status === 'Dibatalkan' && isBooked
 
+  // Membatalkan pesanan yang SUDAH LUNAS berarti uang pembeli tertahan di kita. Tak ada satu pun
+  // bagian sistem yang mengembalikannya sendiri — untuk transfer bank Xendit bahkan tak bisa.
+  const willNeedRefund = status === 'Dibatalkan' && order.paymentStatus === 'Lunas'
+
   function handleStatusChange(next: OrderFulfillmentStatus) {
     setStatus(next)
     setError('')
@@ -321,6 +325,27 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
                 Pengirimannya dihapus di Mengantar dan ongkos kirimnya kembali ke saldo. Bila
                 penghapusan gagal — misalnya paketnya sudah keburu dijemput — pembatalan pesanan
                 tetap berlaku dan Anda akan diberi tahu di sini.
+              </p>
+            </div>
+          )}
+
+          {/* === Uang pembeli masih di kita (sebelum menyimpan) ===
+              Muncul saat membatalkan pesanan yang SUDAH LUNAS. Membatalkan tidak mengembalikan
+              uang apa pun — dan untuk transfer bank, Xendit bahkan tak bisa melakukannya.
+              Peringatan ini ada supaya admin tak menutup modal dengan anggapan urusannya selesai. */}
+          {willNeedRefund && issues.length === 0 && (
+            <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3.5">
+              <p className="flex items-start gap-2 text-sm font-semibold text-amber-900">
+                <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
+                <span>Pesanan ini sudah dibayar — dananya perlu dikembalikan</span>
+              </p>
+              <p className="mt-1.5 pl-6 text-xs leading-relaxed text-amber-800">
+                {formatRupiah(order.totalAmount)}
+                {paymentMethodLabel(order.paymentMethod)
+                  ? ` lewat ${paymentMethodLabel(order.paymentMethod)}`
+                  : ''}
+                . Membatalkan di sini <strong>tidak</strong> mengembalikan uangnya. Pesanan akan
+                masuk daftar <strong>Pengembalian Dana</strong> untuk ditindaklanjuti.
               </p>
             </div>
           )}

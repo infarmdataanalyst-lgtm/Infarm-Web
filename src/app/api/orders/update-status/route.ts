@@ -10,6 +10,7 @@ import { requireAdmin } from '@/lib/oms-guard'
 import {
   getOrderByOrderId,
   getOrderUuidByInvoice,
+  markRefundNeeded,
   setShipmentCancellation,
   updateOrderStatus,
 } from '@/lib/mock-db/orders'
@@ -184,7 +185,19 @@ export async function PATCH(request: Request) {
     // yang belum dibayar.
     const invoiceExpiry = await expireInvoiceForCancelledOrder(order)
 
-    return NextResponse.json({ success: true, order: updated, shipmentCancellation, invoiceExpiry })
+    // Pesanan LUNAS yang dibatalkan = uang pembeli masih di kita. Ditandai otomatis karena inilah
+    // keadaan yang paling mudah terlupakan: pesanannya tampak selesai, stoknya rapi, penjemputannya
+    // terhapus — tak ada satu pun yang menyisakan pekerjaan terlihat, padahal ada.
+    const perluRefund = order.paymentStatus === 'Lunas'
+    if (perluRefund) await markRefundNeeded(order.orderId)
+
+    return NextResponse.json({
+      success: true,
+      order: updated,
+      shipmentCancellation,
+      invoiceExpiry,
+      perluRefund,
+    })
   }
 
   return NextResponse.json({ success: true, order: updated })

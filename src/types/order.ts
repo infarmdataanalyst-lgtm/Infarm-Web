@@ -21,6 +21,11 @@ export type OrderItem = {
 // Status pembayaran pesanan (app-facing). DB: PENDING→Menunggu, PAID→Lunas, FAILED→Gagal.
 export type OrderPaymentStatus = 'Lunas' | 'Menunggu' | 'Gagal'
 
+// Keadaan pengembalian dana. Nilainya dipakai apa adanya di DB (bukan dipetakan seperti
+// order_status) supaya kolom, constraint, dan kode menyebut hal yang sama persis — satu lapis
+// terjemahan lebih sedikit untuk salah.
+export type RefundStatus = 'PERLU_REFUND' | 'SUDAH_REFUND' | 'TIDAK_PERLU'
+
 // Status alur (fulfillment) pesanan (app-facing) — dipakai tab filter di OMS.
 // DB: PENDING→'Menunggu Pembayaran', PROCESSING→Diproses, SHIPPED→Dikirim,
 //     COMPLETED→Selesai, CANCELLED→Dibatalkan.
@@ -77,6 +82,17 @@ export type Order = {
   // Terisi = pesanan sudah batal tapi tagihannya MASIH HIDUP dan masih bisa dibayar. Uang yang
   // terlanjur masuk lewat VA tak bisa di-refund Xendit, jadi ini WAJIB ditindaklanjuti manual.
   invoiceExpireError?: string
+  // === Pengembalian dana ===
+  // Hanya relevan untuk pesanan LUNAS yang dibatalkan. undefined = tak pernah relevan.
+  //
+  // Sengaja TIDAK memakai paymentStatus: kolom itu menjawab "apakah pembeli sudah membayar",
+  // yang jawabannya tetap YA meski uangnya sudah dikembalikan — dan fakta itu dibutuhkan
+  // rekonsiliasi maupun laporan penjualan.
+  refundStatus?: RefundStatus
+  refundAmount?: number // rupiah yang BENAR-BENAR dikembalikan; bisa < totalAmount bila dipotong biaya
+  refundNote?: string // bank & rekening tujuan, nomor referensi transfer, atau alasan TIDAK_PERLU
+  refundAt?: string // ISO 8601
+  refundBy?: string // nama admin yang menjalankan
   // = metode_pembayaran. Metode/channel yang BENAR-BENAR dipakai pembeli menurut Xendit
   // (mis. 'BCA', 'OVO', 'QRIS', 'ALFAMART'). Hanya diketahui setelah callback pembayaran masuk —
   // di jalur invoice pembeli memilih metodenya sendiri di halaman Xendit, jadi `undefined` selama

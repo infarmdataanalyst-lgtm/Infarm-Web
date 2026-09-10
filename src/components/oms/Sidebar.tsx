@@ -18,6 +18,7 @@ import {
   ShoppingCart,
   Star,
   Warehouse,
+  Undo2,
   Settings,
   HelpCircle,
   LogOut,
@@ -42,6 +43,9 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Paket & Combo', href: '/oms/dashboard/paket-combo', icon: Boxes },
   { label: 'Promosi', href: '/oms/dashboard/promosi', icon: Megaphone },
   { label: 'Pesanan', href: '/oms/dashboard/orders', icon: ShoppingCart },
+  // Tepat di bawah Pesanan: daftar kerja ini SELALU berasal dari pembatalan pesanan, dan admin
+  // biasanya sampai ke sini persis setelah membatalkan salah satunya.
+  { label: 'Pengembalian Dana', href: '/oms/dashboard/refund', icon: Undo2 },
   { label: 'Ulasan', href: '/oms/dashboard/reviews', icon: Star },
   { label: 'Gudang', href: '/oms/dashboard/gudang', icon: Warehouse },
   { label: 'Pengaturan', href: '/oms/dashboard/pengaturan', icon: Settings },

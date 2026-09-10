@@ -21,7 +21,12 @@
 
 import { NextResponse } from 'next/server'
 import { revalidatePath, revalidateTag } from 'next/cache'
-import { getOrderByOrderId, getOrderUuidByInvoice, updateOrderStatus } from '@/lib/mock-db/orders'
+import {
+  getOrderByOrderId,
+  getOrderUuidByInvoice,
+  markRefundNeeded,
+  updateOrderStatus,
+} from '@/lib/mock-db/orders'
 import { restoreStock } from '@/lib/mock-db/products'
 import { recordOrderStockChanges } from '@/lib/stock-audit'
 import { normalizePhone, isValidPhone } from '@/lib/phone'
@@ -159,6 +164,9 @@ export async function POST(request: Request) {
   // Matikan tagihan Xendit yang mungkin masih hidup — alasan & perilaku sama persis dengan
   // alur cancel token; lihat catatan lengkapnya di src/app/api/orders/cancel/route.ts.
   await expireInvoiceForCancelledOrder(order)
+
+  // Tandai perlu pengembalian dana bila pesanannya sudah lunas — alasan sama dengan alur token.
+  if (order.paymentStatus === 'Lunas') await markRefundNeeded(order.orderId)
 
   // Stok kembali → segarkan cache storefront (sama seperti alur cancel token)
   revalidatePath('/')
