@@ -168,6 +168,8 @@ export default function RefundPage() {
         metode?: string
         reference?: string
         periksaDashboard?: boolean
+        tuntas?: boolean
+        pesan?: string
       }
       if (!res.ok) {
         setError(
@@ -177,6 +179,10 @@ export default function RefundPage() {
         )
         return
       }
+      // Dibedakan terang-terangan. `refunds` hanya MENERIMA permintaan; hasilnya menyusul lewat
+      // callback. Menampilkan "berhasil" untuk keduanya akan membuat admin menjanjikan ke pembeli
+      // sesuatu yang belum pasti.
+      if (data.tuntas === false && data.pesan) window.alert(data.pesan)
       await muatUlang()
     } catch {
       // Jaringan putus di sisi KITA, setelah permintaan mungkin sudah sampai. Perlakukan sebagai

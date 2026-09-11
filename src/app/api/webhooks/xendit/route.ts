@@ -22,7 +22,11 @@
 
 import { NextResponse } from 'next/server'
 import { revalidatePath, revalidateTag } from 'next/cache'
-import { getOrderByOrderId, updatePaymentStatus } from '@/lib/mock-db/orders'
+import {
+  getOrderByOrderId,
+  settleRefundByReference,
+  updatePaymentStatus,
+} from '@/lib/mock-db/orders'
 import { expireOrder, revalidateAfterExpiry } from '@/lib/order-expiry'
 import { bookShipmentForPaidOrder } from '@/lib/shipment-booking'
 import {
@@ -59,6 +63,15 @@ export async function POST(request: Request) {
     console.warn(`${LOG} body bukan JSON valid`)
     return NextResponse.json({ error: 'Body bukan JSON yang valid.' }, { status: 400 })
   }
+
+  // 2b) Callback PENGEMBALIAN DANA — diperiksa SEBELUM parser invoice.
+  //
+  // Bentuknya berbeda total dari callback invoice: ia dibungkus `{ event, data: {...} }` dan TIDAK
+  // memuat `external_id` kita sama sekali. Tanpa cabang ini ia akan jatuh ke `UNSUPPORTED_PAYLOAD`
+  // dan hasil pengembalian dana tak pernah sampai ke pesanan mana pun — baris SEDANG_DIPROSES
+  // menggantung selamanya.
+  const refund = parseRefundCallback(body)
+  if (refund) return handleRefundCallback(refund)
 
   const parsed = parseXenditCallback(body)
   if (!parsed) {
@@ -104,6 +117,98 @@ export async function POST(request: Request) {
     case 'failed':
       return handleFailed(order, parsed.invoice, parsed.transactionId)
   }
+}
+
+// === Callback pengembalian dana ===
+//
+// Bentuk terdokumentasi (docs.xendit.co → refund webhook notification):
+//   { "event": "refund.succeeded" | "refund.failed",
+//     "data": { "id": "rfd-…", "payment_id": "ewc-…", "status": "SUCCEEDED"|"FAILED"|…,
+//               "amount": "10000", "channel_code": "SHOPEEPAY", "failure_code": null, … } }
+//
+// ⚠️ TIDAK memuat `external_id` — jadi nomor invoice kita tak ada di mana pun di payload ini.
+// Penghubung satu-satunya adalah nomor referensi yang kita simpan saat pengembalian dimulai.
+type RefundCallback = {
+  event: string
+  /** `data.id` — nomor referensi pengembalian. */
+  id: string
+  /** `data.payment_id` — id charge aslinya (`ewc_…`). Cadangan pencocokan. */
+  paymentId: string
+  status: string
+  detail: string
+}
+
+function asText(v: unknown): string {
+  return typeof v === 'string' ? v.trim() : typeof v === 'number' ? String(v) : ''
+}
+
+// null = bukan callback pengembalian dana. Pengenalannya lewat `event` yang berawalan 'refund.',
+// BUKAN lewat ada-tidaknya field tertentu: callback lain juga punya `data` dan `status`, dan
+// menebak dari bentuk akan membuat callback asing tak sengaja diperlakukan sebagai pengembalian.
+function parseRefundCallback(body: unknown): RefundCallback | null {
+  if (typeof body !== 'object' || body === null) return null
+  const root = body as Record<string, unknown>
+  const event = asText(root.event)
+  if (!event.toLowerCase().startsWith('refund.')) return null
+
+  const data =
+    typeof root.data === 'object' && root.data !== null
+      ? (root.data as Record<string, unknown>)
+      : {}
+
+  return {
+    event,
+    id: asText(data.id),
+    paymentId: asText(data.payment_id),
+    status: asText(data.status),
+    detail: [asText(data.status), asText(data.failure_code)].filter(Boolean).join(' / '),
+  }
+}
+
+async function handleRefundCallback(refund: RefundCallback) {
+  console.log(
+    `${LOG} callback ${refund.event} ref=${refund.id || '-'} charge=${refund.paymentId || '-'} status=${refund.status || '-'}`,
+  )
+
+  // Keberhasilan ditentukan `data.status`, bukan nama event-nya. Keduanya hampir selalu sepakat,
+  // tapi `status` adalah nilai yang didokumentasikan punya himpunan tertutup
+  // (SUCCEEDED/FAILED/PENDING/CANCELLED) sementara nama event bisa bertambah kapan saja.
+  const status = refund.status.toUpperCase()
+
+  if (status === 'PENDING') {
+    // Belum ada yang bisa disimpulkan. Barisnya memang sudah SEDANG_DIPROSES.
+    return NextResponse.json({ received: true, handled: false, reason: 'REFUND_STILL_PENDING' })
+  }
+
+  const berhasil = status === 'SUCCEEDED'
+  if (!berhasil && status !== 'FAILED' && status !== 'CANCELLED') {
+    // Status di luar himpunan yang dikenal — JANGAN menebak. Menebaknya "berhasil" akan menutup
+    // pekerjaan yang belum selesai; menebaknya "gagal" akan menyuruh admin mengirim ulang uang
+    // yang mungkin sudah terkirim.
+    console.error(`${LOG} status refund tak dikenal: ${refund.status} (ref ${refund.id})`)
+    return NextResponse.json({ received: true, handled: false, reason: 'UNKNOWN_REFUND_STATUS' })
+  }
+
+  // Dicoba dengan `data.id` lebih dulu, lalu `data.payment_id`. Dokumentasi menyebut respons
+  // pengembalian eWallet mengembalikan id ber-awalan `ewc_`, sedangkan contoh callback-nya
+  // memakai `rfd-` — belum terbukti mana yang tersimpan di refund_reference kita. Mencoba
+  // keduanya menutup ketidakpastian itu tanpa menebak salah satunya.
+  const kandidat = [refund.id, refund.paymentId].filter(Boolean)
+  for (const ref of kandidat) {
+    const hasil = await settleRefundByReference(ref, berhasil, refund.detail || status)
+    if (hasil) {
+      console.log(
+        `${LOG} refund ${hasil.orderId} → ${berhasil ? 'SUDAH_REFUND' : 'PERLU_REFUND (gagal, perlu diulang)'}`,
+      )
+      return NextResponse.json({ received: true, handled: true, orderId: hasil.orderId })
+    }
+  }
+
+  // Tak cocok dengan baris mana pun: pengembalian yang bukan dimulai dari OMS ini (mis. dijalankan
+  // langsung di dashboard Xendit), atau callback kembar yang barisnya sudah ditutup. Keduanya
+  // normal — dibalas 200 supaya Xendit berhenti mengulang.
+  console.warn(`${LOG} callback refund tak cocok dengan pesanan mana pun (ref ${kandidat.join(', ') || '-'})`)
+  return NextResponse.json({ received: true, handled: false, reason: 'REFUND_NOT_MATCHED' })
 }
 
 // === Pembayaran berhasil ===

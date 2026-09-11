@@ -139,16 +139,29 @@ export async function POST(request: Request) {
     )
   }
 
-  // Uang SUDAH terkirim pada titik ini. Kegagalan menyimpan di bawah tidak menariknya kembali —
-  // karena itu dicatat sekeras mungkin bila terjadi.
+  // Permintaan SUDAH diterima Xendit pada titik ini. Kegagalan menyimpan di bawah tidak
+  // menariknya kembali — karena itu dicatat sekeras mungkin bila terjadi.
   const identity = await getAdminIdentity()
   const by = identity?.name?.trim() || 'admin'
+
+  // ── Selesai, atau baru diterima? ──
+  // `void` tuntas saat responsnya diterima. `refunds` ASINKRON: ia menjawab PENDING, dan hasil
+  // sesungguhnya baru datang lewat callback refund.succeeded/refund.failed ~1 hari kerja kemudian.
+  //
+  // Menuliskan SUDAH_REFUND untuk keduanya — seperti versi pertama kode ini — berarti menyatakan
+  // dana sudah kembali padahal masih diproses. Kalau kemudian gagal, tak seorang pun akan tahu:
+  // barisnya sudah keluar dari setiap daftar.
+  //
+  // Hanya SUCCEEDED yang dianggap tuntas. Status apa pun selain itu (termasuk yang belum pernah
+  // kita lihat) masuk SEDANG_DIPROSES — keadaan yang berkata "sudah dikirim, jangan diulang,
+  // tapi belum dipastikan".
+  const tuntas = hasil.status.toUpperCase() === 'SUCCEEDED'
   const note =
-    `Dikembalikan otomatis lewat Xendit (${metode}) ke ${invoice.payment.channel || 'dompet asal'}` +
+    `Dikembalikan lewat Xendit (${metode}) ke ${invoice.payment.channel || 'dompet asal'}` +
     (hasil.status ? ` — status ${hasil.status}` : '')
 
   const updated = await resolveRefund(orderId, {
-    status: 'SUDAH_REFUND',
+    status: tuntas ? 'SUDAH_REFUND' : 'SEDANG_DIPROSES',
     amount: order.totalAmount,
     note,
     by,
@@ -172,13 +185,19 @@ export async function POST(request: Request) {
   }
 
   console.log(
-    `[oms/refunds/xendit] ${orderId} dikembalikan ${metode} ref=${hasil.reference || '-'} oleh ${by}`,
+    `[oms/refunds/xendit] ${orderId} ${metode} ref=${hasil.reference || '-'} status=${hasil.status} → ${tuntas ? 'SUDAH_REFUND' : 'SEDANG_DIPROSES'} oleh ${by}`,
   )
   return NextResponse.json({
     success: true,
     metode,
     reference: hasil.reference,
     status: hasil.status,
+    tuntas,
+    // Dibedakan supaya UI bisa berkata jujur: "sudah kembali" vs "sedang diproses". Menyamakan
+    // keduanya di layar akan membuat admin menjanjikan ke pembeli sesuatu yang belum pasti.
+    pesan: tuntas
+      ? 'Dana sudah dikembalikan.'
+      : `Permintaan diterima Xendit (${hasil.status}). Hasilnya menyusul lewat callback, biasanya 1 hari kerja. JANGAN diulang.`,
     order: updated,
   })
 }

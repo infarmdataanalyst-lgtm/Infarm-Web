@@ -310,6 +310,7 @@ function rowToOrder(row: OrderRow, items: OrderItem[], warehouseNames?: Map<stri
   // dengan constraint orders_refund_status_check.
   if (
     row.refund_status === 'PERLU_REFUND' ||
+    row.refund_status === 'SEDANG_DIPROSES' ||
     row.refund_status === 'SUDAH_REFUND' ||
     row.refund_status === 'TIDAK_PERLU'
   ) {
@@ -1347,6 +1348,7 @@ export async function readOrdersNeedingRefund(limit = 200): Promise<Order[]> {
 
 export type RefundResolution =
   | { status: 'SUDAH_REFUND'; amount: number; note: string; by: string; reference?: string }
+  | { status: 'SEDANG_DIPROSES'; amount: number; note: string; by: string; reference?: string }
   | { status: 'TIDAK_PERLU'; note: string; by: string }
 
 // Menutup satu baris daftar kerja refund.
@@ -1366,12 +1368,15 @@ export async function resolveRefund(
     refund_by: resolution.by.slice(0, 120),
     // TIDAK_PERLU tak memindahkan uang, jadi nominalnya dikosongkan alih-alih ditulis 0 — nol
     // berarti "dikembalikan, tapi habis dipotong biaya", makna yang sama sekali berbeda.
-    refund_amount: resolution.status === 'SUDAH_REFUND' ? Math.round(resolution.amount) : null,
+    refund_amount: resolution.status === 'TIDAK_PERLU' ? null : Math.round(resolution.amount),
     // Hanya terisi bila SISTEM yang mengembalikan (id refund/void Xendit). Pengembalian manual
     // meninggalkannya null — dan itu keadaan yang akan tetap umum, karena transfer bank tak bisa
     // dikembalikan lewat Xendit sama sekali.
+    //
+    // Pada SEDANG_DIPROSES nilainya JUSTRU paling penting: itulah satu-satunya cara mencocokkan
+    // callback `refund.succeeded`/`refund.failed` yang datang belakangan dengan pesanan ini.
     refund_reference:
-      resolution.status === 'SUDAH_REFUND' && resolution.reference ? resolution.reference : null,
+      resolution.status !== 'TIDAK_PERLU' && resolution.reference ? resolution.reference : null,
   }
 
   // Hanya baris yang MASIH menunggu yang boleh ditutup. Ini compare-and-swap: dua admin yang
@@ -1391,6 +1396,71 @@ export async function resolveRefund(
   }
   if (!data) return null
   return getOrderByOrderId(orderId)
+}
+
+// Menyelesaikan pengembalian dana yang tadinya SEDANG_DIPROSES, berdasarkan callback Xendit.
+//
+// Pencocokannya lewat `refund_reference` — nomor yang Xendit berikan saat pengembalian dimulai dan
+// yang ia sebut kembali di callback-nya. Bukan lewat nomor invoice: callback refund TIDAK memuat
+// `external_id` kita, jadi nomor inilah satu-satunya benang penghubungnya.
+//
+// `berhasil: false` mengembalikan barisnya ke PERLU_REFUND, bukan menandainya gagal permanen —
+// dananya memang belum kembali ke pembeli, jadi ia harus MUNCUL LAGI sebagai pekerjaan. Alasannya
+// ditambahkan ke catatan supaya admin tahu percobaan sebelumnya sudah pernah dilakukan.
+export async function settleRefundByReference(
+  reference: string,
+  berhasil: boolean,
+  detail: string,
+): Promise<{ orderId: string } | null> {
+  const supabase = createAdminClient()
+
+  const { data: rows, error: readError } = await supabase
+    .from('orders')
+    .select('nomor_invoice, refund_note')
+    .eq('refund_reference', reference)
+    .eq('refund_status', 'SEDANG_DIPROSES')
+    .limit(1)
+
+  if (readError) {
+    console.error(`[orders] gagal mencari refund ref ${reference}:`, readError.message)
+    return null
+  }
+  const row = (rows as { nomor_invoice: string; refund_note: string | null }[] | null)?.[0]
+  // Tak ketemu = callback untuk pengembalian yang bukan milik kita, ATAU sudah diselesaikan
+  // callback kembar sebelumnya. Keduanya bukan kesalahan — Xendit mengulang kirim callback.
+  if (!row) return null
+
+  const catatanLama = row.refund_note ?? ''
+  const patch: Record<string, string | null> = berhasil
+    ? {
+        refund_status: 'SUDAH_REFUND',
+        refund_at: new Date().toISOString(),
+        refund_note: `${catatanLama} — dikonfirmasi Xendit: ${detail}`.trim().slice(0, 1000),
+      }
+    : {
+        refund_status: 'PERLU_REFUND',
+        // Waktu & pelaku dikosongkan: tak ada pengembalian yang benar-benar terjadi, dan
+        // meninggalkannya akan membuat baris ini terbaca seolah pernah selesai.
+        refund_at: null,
+        refund_by: null,
+        refund_amount: null,
+        refund_reference: null,
+        refund_note: `${catatanLama} — GAGAL menurut Xendit: ${detail}. Perlu diulang.`
+          .trim()
+          .slice(0, 1000),
+      }
+
+  const { error } = await supabase
+    .from('orders')
+    .update(patch)
+    .eq('nomor_invoice', row.nomor_invoice)
+    .eq('refund_status', 'SEDANG_DIPROSES')
+
+  if (error) {
+    console.error(`[orders] gagal menutup refund ${row.nomor_invoice}:`, error.message)
+    return null
+  }
+  return { orderId: row.nomor_invoice }
 }
 
 // === Hasil mematikan tagihan Xendit ===

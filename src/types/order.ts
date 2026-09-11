@@ -24,7 +24,10 @@ export type OrderPaymentStatus = 'Lunas' | 'Menunggu' | 'Gagal'
 // Keadaan pengembalian dana. Nilainya dipakai apa adanya di DB (bukan dipetakan seperti
 // order_status) supaya kolom, constraint, dan kode menyebut hal yang sama persis — satu lapis
 // terjemahan lebih sedikit untuk salah.
-export type RefundStatus = 'PERLU_REFUND' | 'SUDAH_REFUND' | 'TIDAK_PERLU'
+// SEDANG_DIPROSES: sudah dikirim ke Xendit, hasilnya belum dipastikan. `refunds` (H+1) menjawab
+// PENDING lebih dulu dan hasil sesungguhnya menyusul lewat callback. Keadaan ini yang mencegah
+// dana terkirim dua kali TANPA berbohong bahwa urusannya sudah selesai.
+export type RefundStatus = 'PERLU_REFUND' | 'SEDANG_DIPROSES' | 'SUDAH_REFUND' | 'TIDAK_PERLU'
 
 // Status alur (fulfillment) pesanan (app-facing) — dipakai tab filter di OMS.
 // DB: PENDING→'Menunggu Pembayaran', PROCESSING→Diproses, SHIPPED→Dikirim,
