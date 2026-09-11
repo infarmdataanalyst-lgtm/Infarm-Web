@@ -34,17 +34,29 @@ import {
   rateLimitResponse,
   recordAttempt,
 } from '@/lib/rate-limit'
+import { evaluateReviewEligibility, type ReviewBlockCode } from '@/lib/review-eligibility'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 // Satu produk yang bisa diulas (dari sebuah pesanan). TANPA identitas pemesan — baca catatan
 // SEC-021 di kepala berkas sebelum menambahkan field apa pun ke sini.
+// Satu produk dalam satu pesanan, BESERTA boleh-tidaknya diulas.
+//
+// Dulu bentuknya tak memuat status sama sekali, karena baris yang tak layak memang dibuang di
+// server. Sekarang barisnya ikut terkirim, jadi klien butuh alasannya — tanpa itu ia hanya bisa
+// memilih antara menampilkan tombol yang pasti ditolak, atau menyembunyikan barisnya lagi.
 type ReviewableItem = {
   orderInvoice: string
   productId: string
   name: string
   imageUrl: string | null
+  orderStatus: string
+  reviewable: boolean
+  // Hanya terisi bila reviewable === false. Pesannya sudah siap tampil, dirakit oleh fungsi yang
+  // sama dengan yang dipakai endpoint tulis, sehingga alasannya tak pernah berbeda.
+  blockCode?: ReviewBlockCode
+  blockMessage?: string
 }
 
 export async function POST(request: Request) {
@@ -94,10 +106,14 @@ export async function POST(request: Request) {
 
   const items: ReviewableItem[] = []
   for (const order of orders) {
-    // Pesanan dibatalkan tak bisa diulas
-    if (order.status === 'Dibatalkan') continue
+    // Pesanan yang tak layak diulas TIDAK lagi dibuang dari daftar. Ia tetap tampil, ditandai,
+    // dengan tombolnya mati. Membuangnya membuat pembeli kehilangan jejak pesanannya sendiri tanpa
+    // satu pun penjelasan — dan "kenapa pesanan saya hilang" justru pertanyaan yang paling sering
+    // sampai ke CS.
+    const kelayakan = evaluateReviewEligibility(order.status)
 
-    // Produk yang SUDAH diulas untuk pesanan ini → dilewati
+    // Produk yang SUDAH diulas tetap dilewati. Itu pekerjaan yang SELESAI, bukan pekerjaan yang
+    // terhalang; menampilkannya hanya menambah baris tanpa menambah makna.
     const reviewed = new Set(await getReviewedProductIds(order.orderId))
     for (const it of order.items) {
       if (reviewed.has(it.productId)) continue
@@ -106,6 +122,11 @@ export async function POST(request: Request) {
         productId: it.productId,
         name: it.name,
         imageUrl: it.imageUrl ?? null,
+        orderStatus: order.status ?? 'Tidak diketahui',
+        reviewable: kelayakan.ok,
+        ...(kelayakan.ok
+          ? {}
+          : { blockCode: kelayakan.code, blockMessage: kelayakan.message }),
       })
     }
   }

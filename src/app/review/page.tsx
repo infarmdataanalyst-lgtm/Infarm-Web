@@ -36,11 +36,19 @@ import { isValidEmail, normalizeEmail } from '@/lib/email'
 import { REVIEW_COMMENT_MAX } from '@/lib/review-validation'
 
 // Item yang bisa diulas — tanpa data pribadi apa pun (lihat catatan nama tampilan di atas).
+// Bentuknya mengikuti respons /api/reviews/reviewable-by-email.
+//
+// `reviewable` dihitung SERVER lewat evaluateReviewEligibility, bukan disimpulkan di sini dari
+// `orderStatus`. Kalau halaman ini ikut menyimpulkan sendiri, akan ada dua aturan yang harus
+// selalu cocok — dan cepat atau lambat keduanya berselisih.
 type ReviewableItem = {
   orderInvoice: string
   productId: string
   name: string
   imageUrl: string | null
+  orderStatus: string
+  reviewable: boolean
+  blockMessage?: string
 }
 
 const PLACEHOLDER = '/images/product-placeholder.png'
@@ -126,6 +134,11 @@ export default function ReviewPage() {
     setToast('Ulasan berhasil dikirim. Terima kasih!')
   }
 
+  // Dipisah hanya untuk menghitung — urutan tampilannya tetap `items` apa adanya, supaya produk
+  // dari satu pesanan tidak tercerai-berai ke dua kelompok yang berjauhan di layar.
+  const bisaDiulas = (items ?? []).filter((i) => i.reviewable)
+  const terkunci = (items ?? []).filter((i) => !i.reviewable)
+
   return (
     <div className="flex min-h-screen flex-col bg-brand-surface pt-14 text-zinc-900">
       {/* Header hijau brand */}
@@ -201,23 +214,60 @@ export default function ReviewPage() {
                   </div>
                 ) : (
                   <>
-                    <p className="px-1 text-sm text-gray-500">{items.length} produk bisa Anda ulas:</p>
+                    {/* Dua angka, bukan satu. Menyebut total saja akan berbunyi "5 produk bisa
+                        Anda ulas" padahal tiga di antaranya bertombol mati — persis janji yang
+                        tidak ditepati sebaris di bawahnya. */}
+                    <p className="px-1 text-sm text-gray-500">
+                      {bisaDiulas.length > 0
+                        ? `${bisaDiulas.length} produk bisa Anda ulas`
+                        : 'Belum ada produk yang bisa diulas'}
+                      {terkunci.length > 0 && (
+                        <span className="text-gray-400"> · {terkunci.length} belum bisa</span>
+                      )}
+                    </p>
                     {items.map((it) => (
-                      <div key={`${it.orderInvoice}-${it.productId}`} className="flex items-center gap-3 rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
-                        <div className="relative h-14 w-14 flex-none overflow-hidden rounded-lg border border-zinc-100 bg-zinc-50">
+                      <div
+                        key={`${it.orderInvoice}-${it.productId}`}
+                        className={`flex items-center gap-3 rounded-2xl border p-4 shadow-sm ${
+                          it.reviewable ? 'border-gray-100 bg-white' : 'border-gray-100 bg-gray-50'
+                        }`}
+                      >
+                        <div
+                          className={`relative h-14 w-14 flex-none overflow-hidden rounded-lg border border-zinc-100 bg-zinc-50 ${
+                            it.reviewable ? '' : 'opacity-50'
+                          }`}
+                        >
                           <Image src={it.imageUrl || PLACEHOLDER} alt={it.name} fill unoptimized sizes="56px" className="object-cover" />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="line-clamp-2 text-sm font-semibold text-gray-900">{it.name}</p>
+                          <p className={`line-clamp-2 text-sm font-semibold ${it.reviewable ? 'text-gray-900' : 'text-gray-500'}`}>{it.name}</p>
                           <p className="mt-0.5 text-xs text-gray-400">Pesanan {fmtInvoice(it.orderInvoice)}</p>
+                          {/* Alasannya datang dari server, jadi kalimat yang dibaca pembeli sama
+                              persis dengan yang akan ditolak endpoint tulis bila tetap dicoba. */}
+                          {!it.reviewable && it.blockMessage && (
+                            <p className="mt-1 text-xs text-gray-500">{it.blockMessage}</p>
+                          )}
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => setActive(it)}
-                          className="shrink-0 rounded-xl bg-brand-primary px-3 py-2 text-xs font-bold text-white transition hover:brightness-90 active:scale-[0.99]"
-                        >
-                          Beri Review
-                        </button>
+                        {it.reviewable ? (
+                          <button
+                            type="button"
+                            onClick={() => setActive(it)}
+                            className="shrink-0 rounded-xl bg-brand-primary px-3 py-2 text-xs font-bold text-white transition hover:brightness-90 active:scale-[0.99]"
+                          >
+                            Beri Review
+                          </button>
+                        ) : (
+                          // `disabled` sungguhan, bukan sekadar tampak pudar: tombol yang masih
+                          // bisa diklik akan mengirim permintaan yang pasti dijawab 409.
+                          <button
+                            type="button"
+                            disabled
+                            title={it.blockMessage}
+                            className="shrink-0 cursor-not-allowed rounded-xl bg-gray-200 px-3 py-2 text-xs font-bold text-gray-400"
+                          >
+                            Beri Review
+                          </button>
+                        )}
                       </div>
                     ))}
                   </>

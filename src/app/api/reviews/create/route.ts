@@ -14,6 +14,7 @@ import {
   REVIEW_COMMENT_TOO_LONG,
   clampAuthorName,
 } from '@/lib/review-validation'
+import { evaluateReviewEligibility } from '@/lib/review-eligibility'
 
 export const runtime = 'nodejs'
 
@@ -75,11 +76,13 @@ export async function POST(request: Request) {
   if (!order) {
     return NextResponse.json({ error: 'Pesanan tidak ditemukan.' }, { status: 404 })
   }
-  if (order.status === 'Dibatalkan') {
-    return NextResponse.json(
-      { error: 'Pesanan sudah dibatalkan, tidak dapat diberi ulasan.' },
-      { status: 409 },
-    )
+  // Aturan statusnya dipusatkan di evaluateReviewEligibility — fungsi yang SAMA dipakai daftar
+  // /review, jadi mustahil ada celah antara apa yang ditawarkan layar dan apa yang diterima di sini.
+  // Sebelumnya pemeriksaan ini hanya menolak 'Dibatalkan', sehingga pesanan yang belum dibayar pun
+  // bisa diulas.
+  const kelayakan = evaluateReviewEligibility(order.status)
+  if (!kelayakan.ok) {
+    return NextResponse.json({ error: kelayakan.message, code: kelayakan.code }, { status: 409 })
   }
   if (!order.items.some((it) => it.productId === body.productId)) {
     return NextResponse.json(
