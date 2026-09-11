@@ -1398,6 +1398,121 @@ export async function resolveRefund(
   return getOrderByOrderId(orderId)
 }
 
+// === Klaim pengembalian dana SEBELUM uang dikirim (SEC-045) ===
+
+// Menandai satu baris sebagai SEDANG DIKERJAKAN, atomik, sebelum Xendit dipanggil.
+//
+// Kenapa ada: memeriksa `refundStatus` dari hasil query lalu memanggil Xendit adalah pola
+// baca-lalu-bertindak. Di antara keduanya ada jeda jaringan, dan dua permintaan kembar — dua tab,
+// dua admin, satu curl yang diulang — bisa sama-sama lolos pemeriksaan itu lalu sama-sama
+// mengirim uang. Uang yang terkirim dua kali tak bisa ditarik kembali.
+//
+// `WHERE refund_status = 'PERLU_REFUND'` dijalankan DATABASE, jadi berapa pun permintaan yang tiba
+// bersamaan, hanya satu yang memenangkannya. Yang kalah berhenti tanpa pernah menyentuh Xendit.
+// Pola yang sama dengan CAS pembatalan pesanan (SEC-020) — bedanya, yang dilindungi di sini bukan
+// stok yang bisa dikoreksi, melainkan transfer keluar yang permanen.
+//
+// `reference` diisi kunci idempotency milik KITA, bukan nomor dari Xendit: nomor itu belum ada
+// pada titik ini, dan baris SEDANG_DIPROSES tanpa referensi apa pun tak bisa ditelusuri ke
+// percobaan mana pun. Nomor asli Xendit menimpanya di finalizeClaimedRefund.
+export async function claimRefundForProcessing(
+  orderId: string,
+  claim: { reference: string; by: string; amount: number; note: string },
+): Promise<boolean> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('orders')
+    .update({
+      refund_status: 'SEDANG_DIPROSES',
+      refund_reference: claim.reference,
+      refund_by: claim.by.slice(0, 120),
+      refund_amount: Math.round(claim.amount),
+      refund_at: new Date().toISOString(),
+      refund_note: claim.note.slice(0, 1000),
+    })
+    .eq('nomor_invoice', orderId)
+    .eq('refund_status', 'PERLU_REFUND')
+    .select('id')
+    .maybeSingle()
+
+  if (error) {
+    console.error(`[orders] gagal mengklaim refund ${orderId}:`, error.message)
+    return false
+  }
+  return Boolean(data)
+}
+
+// Menutup klaim yang uangnya SUDAH dikirim.
+//
+// Dikunci pada `refund_reference` klaimnya, bukan hanya pada nomor invoice: bila baris itu sudah
+// disentuh proses lain (mis. callback yang tiba lebih cepat daripada respons HTTP-nya), penulisan
+// ini harus KALAH, bukan menimpa hasil yang lebih baru.
+export async function finalizeClaimedRefund(
+  orderId: string,
+  claimReference: string,
+  hasil: { status: 'SUDAH_REFUND' | 'SEDANG_DIPROSES'; note: string; reference?: string },
+): Promise<Order | null> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('orders')
+    .update({
+      refund_status: hasil.status,
+      refund_note: hasil.note.slice(0, 1000),
+      refund_at: new Date().toISOString(),
+      // Nomor dari Xendit menggantikan kunci klaim kita — itulah yang dicocokkan callback
+      // refund.succeeded/refund.failed nanti. Bila Xendit tak memberi nomor, kunci klaim
+      // DIPERTAHANKAN: apa pun lebih baik daripada null, yang membuat barisnya tak bisa dicocokkan
+      // oleh siapa pun (SEC-049).
+      refund_reference: hasil.reference || claimReference,
+    })
+    .eq('nomor_invoice', orderId)
+    .eq('refund_reference', claimReference)
+    .eq('refund_status', 'SEDANG_DIPROSES')
+    .select('id')
+    .maybeSingle()
+
+  if (error) {
+    console.error(`[orders] gagal menutup klaim refund ${orderId}:`, error.message)
+    return null
+  }
+  if (!data) return null
+  return getOrderByOrderId(orderId)
+}
+
+// Melepas klaim yang ternyata TAK JADI mengirim uang, mengembalikan barisnya menjadi pekerjaan.
+//
+// ⚠️ HANYA untuk penolakan yang PASTI — Xendit menjawab dengan kode error yang jelas, jadi kita
+// tahu tak ada uang yang keluar. Timeout dan respons tak terbaca TIDAK BOLEH dilepas: pada kedua
+// kasus itu permintaannya bisa saja sampai dan diproses setelah kita berhenti menunggu. Melepasnya
+// berarti mengundang pengiriman kedua untuk uang yang mungkin sudah keluar — persis kerusakan yang
+// klaim ini dibangun untuk mencegah.
+export async function releaseRefundClaim(
+  orderId: string,
+  claimReference: string,
+  alasan: string,
+): Promise<boolean> {
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('orders')
+    .update({
+      refund_status: 'PERLU_REFUND',
+      refund_reference: null,
+      refund_at: null,
+      refund_by: null,
+      refund_amount: null,
+      refund_note: `Percobaan pengembalian ditolak Xendit: ${alasan}`.slice(0, 1000),
+    })
+    .eq('nomor_invoice', orderId)
+    .eq('refund_reference', claimReference)
+    .eq('refund_status', 'SEDANG_DIPROSES')
+
+  if (error) {
+    console.error(`[orders] gagal melepas klaim refund ${orderId}:`, error.message)
+    return false
+  }
+  return true
+}
+
 // Menyelesaikan pengembalian dana yang tadinya SEDANG_DIPROSES, berdasarkan callback Xendit.
 //
 // Pencocokannya lewat `refund_reference` — nomor yang Xendit berikan saat pengembalian dimulai dan

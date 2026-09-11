@@ -4,6 +4,17 @@
 // ⚠️ INI MEMINDAHKAN UANG SUNGGUHAN dan tak bisa ditarik kembali. Satu-satunya endpoint di project
 // ini yang melakukannya. Dijaga requireAdminRole (peran 'admin', bukan sekadar sesi valid).
 //
+// ── Urutannya: KLAIM DULU, BARU BAYAR (SEC-045) ──
+// Versi pertama memeriksa `refundStatus` hasil query, memanggil Xendit, lalu baru menjalankan
+// compare-and-swap saat menyimpan hasilnya. Itu pola baca-lalu-bertindak: pemeriksaannya memakai
+// data yang dibaca beberapa ratus milidetik sebelumnya, dan dua permintaan kembar bisa sama-sama
+// melewatinya lalu sama-sama mengirim uang. CAS-nya benar, tapi terpasang SESUDAH titik tak bisa
+// kembali — yang kalah baru diberi tahu setelah uangnya terlanjur keluar.
+//
+// Sekarang barisnya diklaim (PERLU_REFUND → SEDANG_DIPROSES, atomik di database) SEBELUM Xendit
+// disentuh. Yang kalah klaim berhenti tanpa memanggil apa pun. Kunci klaimnya sekaligus dikirim
+// sebagai X-IDEMPOTENCY-KEY, jaring kedua bila permintaannya terkirim ulang di luar kendali kita.
+//
 // ── Kenapa hanya e-wallet ──
 // Terverifikasi 2026-09-10: pembayaran lewat Virtual Account / transfer bank TIDAK BISA di-refund
 // Xendit sama sekali — tidak lewat API, tidak lewat dashboard. Pengembaliannya adalah transfer BARU
@@ -22,9 +33,15 @@
 //   POST { orderId }              → kembalikan dana
 //   POST { orderId, dryRun: true} → tampilkan charge id & metode yang AKAN dipakai, tanpa memanggil
 
+import { randomUUID } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { requireAdminRole, getAdminIdentity } from '@/lib/oms-guard'
-import { getOrderByOrderId, resolveRefund } from '@/lib/mock-db/orders'
+import {
+  getOrderByOrderId,
+  claimRefundForProcessing,
+  finalizeClaimedRefund,
+  releaseRefundClaim,
+} from '@/lib/mock-db/orders'
 import { fetchInvoicePayment } from '@/lib/xendit/invoice'
 import { pilihMetode, refundEwalletCharge } from '@/lib/xendit/ewallet-refund'
 import { paymentMethodInfo } from '@/lib/payment-method'
@@ -32,6 +49,14 @@ import { paymentMethodInfo } from '@/lib/payment-method'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
+
+// Kegagalan yang membuktikan Xendit MENOLAK permintaannya — tak ada uang yang bergerak, jadi
+// klaimnya aman dilepas dan barisnya boleh kembali menjadi pekerjaan.
+//
+// Sengaja daftar putih, bukan daftar hitam: alasan kegagalan baru yang belum pernah kita lihat
+// akan MEMPERTAHANKAN klaim. Menahan pekerjaan yang sebenarnya masih perlu dikerjakan bisa
+// diperbaiki admin; mengirim uang dua kali tidak.
+const PENOLAKAN_PASTI = new Set(['http-error', 'not-ewallet', 'not-configured'])
 
 export async function POST(request: Request) {
   const denied = await requireAdminRole('Akun Anda tidak berwenang mengembalikan dana.')
@@ -56,8 +81,10 @@ export async function POST(request: Request) {
   // === Pagar, berurutan dari yang paling murah ===
 
   if (order.refundStatus !== 'PERLU_REFUND') {
-    // Termasuk yang sudah SUDAH_REFUND. Menolak di sini adalah pertahanan utama terhadap
-    // pengembalian ganda — uang yang terkirim dua kali tak bisa ditarik.
+    // Pemeriksaan MURAH, bukan pengaman. Ia memakai data yang sudah dibaca di atas, jadi dua
+    // permintaan bersamaan bisa sama-sama melewatinya — yang menghentikan mereka adalah klaim
+    // database di bawah. Gunanya di sini hanya memberi pesan yang jelas dan menghemat satu
+    // panggilan baca ke Xendit untuk kasus yang jelas-jelas salah.
     return NextResponse.json(
       {
         error: `Pesanan ini tidak sedang menunggu pengembalian dana (status: ${order.refundStatus ?? 'tidak ditandai'}).`,
@@ -117,15 +144,60 @@ export async function POST(request: Request) {
     })
   }
 
+  // === KLAIM — pengaman yang sesungguhnya ===
+  //
+  // Dijalankan SEBELUM Xendit disentuh. Database yang memutuskan siapa yang menang, jadi berapa
+  // pun permintaan yang tiba bersamaan hanya satu yang lolos ke bawah garis ini.
+  const identity = await getAdminIdentity()
+  const by = identity?.name?.trim() || 'admin'
+  const claimReference = `claim-${randomUUID()}`
+
+  const claimed = await claimRefundForProcessing(orderId, {
+    reference: claimReference,
+    by,
+    amount: order.totalAmount,
+    note: `Pengembalian lewat Xendit (${metode}) sedang dikirim — diklaim oleh ${by}`,
+  })
+
+  if (!claimed) {
+    // Ada yang mendahului antara pemeriksaan di atas dan baris ini. Ia sedang (atau sudah)
+    // mengirim uangnya; permintaan ini berhenti di sini tanpa memanggil Xendit sama sekali.
+    console.warn(`[oms/refunds/xendit] ${orderId} klaim KALAH — permintaan kembar, tidak dikirim.`)
+    return NextResponse.json(
+      {
+        error:
+          'Pengembalian dana pesanan ini sedang diproses permintaan lain. JANGAN diulang — muat ulang halaman untuk melihat statusnya.',
+        code: 'CLAIM_LOST',
+      },
+      { status: 409 },
+    )
+  }
+
   // === Titik tak bisa kembali ===
   const hasil = await refundEwalletCharge({
     chargeId: invoice.payment.paymentId,
     method: metode,
     reason: 'CANCELLATION',
+    idempotencyKey: claimReference,
   })
 
   if (!hasil.ok) {
-    console.error(`[oms/refunds/xendit] ${orderId} GAGAL (${metode}): ${hasil.reason} ${hasil.detail}`)
+    // Ditolak dengan kode yang jelas → tak ada uang yang bergerak → klaimnya dilepas supaya
+    // pesanan ini muncul lagi sebagai pekerjaan.
+    //
+    // Timeout & respons tak terbaca TIDAK dilepas: permintaannya bisa saja sampai dan diproses
+    // setelah kita berhenti menunggu. Barisnya ditinggal SEDANG_DIPROSES — admin memeriksa
+    // dashboard Xendit, lalu menutupnya manual. Itu memang merepotkan, dan jauh lebih murah
+    // daripada mengundang transfer kedua untuk uang yang mungkin sudah keluar.
+    const pasti = PENOLAKAN_PASTI.has(hasil.reason)
+    if (pasti) await releaseRefundClaim(orderId, claimReference, `${hasil.reason} ${hasil.detail}`)
+
+    console.error(
+      `[oms/refunds/xendit] ${orderId} GAGAL (${metode}): ${hasil.reason} ${hasil.detail} — ` +
+        (pasti
+          ? 'klaim dilepas, kembali ke daftar kerja.'
+          : `klaim DIPERTAHANKAN (ref ${claimReference}); uang mungkin terkirim, PERIKSA DASHBOARD.`),
+    )
     return NextResponse.json(
       {
         error: `Pengembalian dana gagal (${metode}): ${hasil.detail}`,
@@ -133,16 +205,12 @@ export async function POST(request: Request) {
         metode,
         // Timeout TIDAK berarti uangnya tak terkirim — permintaannya bisa saja diproses setelah
         // kita berhenti menunggu. Admin harus MEMERIKSA, bukan mengulang.
-        periksaDashboard: hasil.reason === 'network' || hasil.reason === 'bad-shape',
+        periksaDashboard: !pasti,
+        ...(pasti ? {} : { reference: claimReference }),
       },
       { status: 502 },
     )
   }
-
-  // Permintaan SUDAH diterima Xendit pada titik ini. Kegagalan menyimpan di bawah tidak
-  // menariknya kembali — karena itu dicatat sekeras mungkin bila terjadi.
-  const identity = await getAdminIdentity()
-  const by = identity?.name?.trim() || 'admin'
 
   // ── Selesai, atau baru diterima? ──
   // `void` tuntas saat responsnya diterima. `refunds` ASINKRON: ia menjawab PENDING, dan hasil
@@ -153,44 +221,45 @@ export async function POST(request: Request) {
   // barisnya sudah keluar dari setiap daftar.
   //
   // Hanya SUCCEEDED yang dianggap tuntas. Status apa pun selain itu (termasuk yang belum pernah
-  // kita lihat) masuk SEDANG_DIPROSES — keadaan yang berkata "sudah dikirim, jangan diulang,
+  // kita lihat) tetap SEDANG_DIPROSES — keadaan yang berkata "sudah dikirim, jangan diulang,
   // tapi belum dipastikan".
   const tuntas = hasil.status.toUpperCase() === 'SUCCEEDED'
   const note =
     `Dikembalikan lewat Xendit (${metode}) ke ${invoice.payment.channel || 'dompet asal'}` +
     (hasil.status ? ` — status ${hasil.status}` : '')
 
-  const updated = await resolveRefund(orderId, {
+  const updated = await finalizeClaimedRefund(orderId, claimReference, {
     status: tuntas ? 'SUDAH_REFUND' : 'SEDANG_DIPROSES',
-    amount: order.totalAmount,
     note,
-    by,
-    ...(hasil.reference ? { reference: hasil.reference } : {}),
+    reference: hasil.reference,
   })
 
   if (!updated) {
+    // Uang sudah dikembalikan tapi hasilnya gagal dicatat. BEDA dari versi sebelumnya: barisnya
+    // sudah berstatus SEDANG_DIPROSES sejak klaim, jadi ia TIDAK bisa dikembalikan dua kali —
+    // yang hilang hanya catatan penutupnya, bukan pagarnya.
     console.error(
-      `[oms/refunds/xendit] ${orderId} UANG SUDAH DIKEMBALIKAN (${metode}, ref ${hasil.reference || '-'}) ` +
-        'TAPI GAGAL DICATAT — tandai manual supaya tak dikembalikan dua kali.',
+      `[oms/refunds/xendit] ${orderId} UANG SUDAH DIKEMBALIKAN (${metode}, ref ${hasil.reference || claimReference}) ` +
+        'TAPI HASILNYA GAGAL DICATAT — baris tetap SEDANG_DIPROSES, tutup manual setelah dicek.',
     )
     return NextResponse.json(
       {
         error:
-          'Dana SUDAH dikembalikan, tapi gagal dicatat. JANGAN ulangi — tandai manual lewat "Catat pengembalian".',
+          'Dana SUDAH dikembalikan, tapi hasilnya gagal dicatat. Pesanan ini terkunci sebagai "sedang diproses" sehingga tak akan terkirim dua kali — tutup manual lewat "Catat pengembalian" setelah dicek di dashboard.',
         code: 'REFUNDED_BUT_NOT_SAVED',
-        reference: hasil.reference,
+        reference: hasil.reference || claimReference,
       },
       { status: 500 },
     )
   }
 
   console.log(
-    `[oms/refunds/xendit] ${orderId} ${metode} ref=${hasil.reference || '-'} status=${hasil.status} → ${tuntas ? 'SUDAH_REFUND' : 'SEDANG_DIPROSES'} oleh ${by}`,
+    `[oms/refunds/xendit] ${orderId} ${metode} ref=${hasil.reference || claimReference} status=${hasil.status} → ${tuntas ? 'SUDAH_REFUND' : 'SEDANG_DIPROSES'} oleh ${by}`,
   )
   return NextResponse.json({
     success: true,
     metode,
-    reference: hasil.reference,
+    reference: hasil.reference || claimReference,
     status: hasil.status,
     tuntas,
     // Dibedakan supaya UI bisa berkata jujur: "sudah kembali" vs "sedang diproses". Menyamakan

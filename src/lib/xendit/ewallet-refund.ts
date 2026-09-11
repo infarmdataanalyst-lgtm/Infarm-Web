@@ -99,6 +99,11 @@ export type EwalletRefundInput = {
   method: RefundMethod
   amount?: number // hanya dipakai `refunds`; dikosongkan = penuh
   reason?: string
+  // Kunci idempotency (header X-IDEMPOTENCY-KEY). Xendit menjawab permintaan berkunci sama dengan
+  // hasil yang SAMA alih-alih memproses ulang — jaring kedua di bawah klaim database, untuk kasus
+  // permintaannya terkirim dua kali di luar kendali kita (retry platform, browser mengirim ulang).
+  // Kuncinya = referensi klaim, jadi satu klaim tak akan pernah menjadi dua transfer.
+  idempotencyKey?: string
 }
 
 // Menjalankan pengembalian dana. TIDAK menyentuh database — pemanggil yang menyimpan hasilnya.
@@ -142,7 +147,11 @@ export async function refundEwalletCharge(
   try {
     const res = await fetch(xenditUrl(path), {
       method: 'POST',
-      headers: { Authorization: credentials.authHeader, 'Content-Type': 'application/json' },
+      headers: {
+        Authorization: credentials.authHeader,
+        'Content-Type': 'application/json',
+        ...(input.idempotencyKey ? { 'X-IDEMPOTENCY-KEY': input.idempotencyKey } : {}),
+      },
       ...(body && Object.keys(body).length > 0 ? { body: JSON.stringify(body) } : {}),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
