@@ -29,6 +29,7 @@ import {
   cancelShipmentOrder,
 } from '@/lib/mengantar-cancel'
 import { getOrderByOrderId } from '@/lib/mock-db/orders'
+import { normalizeInvoiceId } from '@/lib/invoice-id'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -60,10 +61,15 @@ export async function POST(request: Request) {
     })
   }
 
-  const invoice = typeof body.invoice === 'string' ? body.invoice.trim().replace(/^#/, '') : ''
+  // Bentuknya divalidasi, bukan sekadar dirapikan (SEC-052) — nilai ini ikut masuk ke log yang
+  // dipakai menelusuri penjemputan mana yang dihapus.
+  const invoice = normalizeInvoiceId(body.invoice)
   if (!invoice) {
     return NextResponse.json(
-      { error: 'Sertakan `invoice`, atau `probe: true` untuk uji tanpa menghapus.' },
+      {
+        error:
+          'Sertakan `invoice` yang berbentuk nomor invoice, atau `probe: true` untuk uji tanpa menghapus.',
+      },
       { status: 400 },
     )
   }

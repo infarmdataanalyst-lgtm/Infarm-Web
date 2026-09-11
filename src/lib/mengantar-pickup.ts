@@ -17,6 +17,13 @@
 // 3. Nama field `time_id` di respons belum dipastikan (contoh curl tak menyertakan responsnya),
 //    jadi extractTimeId sengaja toleran terhadap beberapa penamaan.
 
+// Gagalkan BUILD bila modul ini pernah tertarik ke bundle komponen client (SEC-050).
+// Berkas ini memegang MENGANTAR_API_KEY; ia tak boleh sampai ke browser dalam keadaan apa pun.
+// Sampai sekarang yang menahannya hanyalah tree-shaking dan sebuah komentar — optimisasi dan
+// niat baik, bukan jaminan. Dengan baris ini, import dari komponen client menjadi GALAT BUILD,
+// bukan kebocoran yang baru ketahuan setelah kuncinya terbaca di tab Network.
+import 'server-only'
+
 import { mengantarWriteHost } from '@/lib/mengantar-host'
 import { getPickupByDate, savePickup, type DailyPickup } from '@/lib/mock-db/pickup'
 import {

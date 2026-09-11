@@ -15,7 +15,8 @@
 
 import { NextResponse } from 'next/server'
 import { requireAdmin, requireAdminRole, getAdminIdentity } from '@/lib/oms-guard'
-import { readOrdersNeedingRefund, resolveRefund } from '@/lib/mock-db/orders'
+import { readOrdersNeedingRefund, resolveRefund, getOrderByOrderId } from '@/lib/mock-db/orders'
+import { normalizeInvoiceId } from '@/lib/invoice-id'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -46,12 +47,16 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: 'Body bukan JSON yang valid.' }, { status: 400 })
   }
 
-  const orderId = typeof body.orderId === 'string' ? body.orderId.trim().replace(/^#/, '') : ''
+  // Bentuknya divalidasi, bukan sekadar dirapikan (SEC-052) — nilai ini ikut masuk ke log.
+  const orderId = normalizeInvoiceId(body.orderId)
   const status = body.status
   const note = typeof body.note === 'string' ? body.note.trim() : ''
 
   if (!orderId) {
-    return NextResponse.json({ error: 'orderId wajib ada.' }, { status: 400 })
+    return NextResponse.json(
+      { error: 'orderId wajib ada dan berbentuk nomor invoice.' },
+      { status: 400 },
+    )
   }
   if (status !== 'SUDAH_REFUND' && status !== 'TIDAK_PERLU') {
     return NextResponse.json(
@@ -74,6 +79,13 @@ export async function PATCH(request: Request) {
     )
   }
 
+  // Pesanannya dibaca lebih dulu — dibutuhkan batas atas nominal di bawah, dan sekaligus membuat
+  // invoice yang tak ada dijawab 404 alih-alih 409 "sudah ditutup admin lain" yang menyesatkan.
+  const order = await getOrderByOrderId(orderId)
+  if (!order) {
+    return NextResponse.json({ error: `Pesanan ${orderId} tidak ditemukan.` }, { status: 404 })
+  }
+
   // Nominal hanya untuk SUDAH_REFUND, dan WAJIB — biaya transfer boleh dipotong, jadi yang
   // benar-benar diterima pembeli tak bisa disimpulkan dari jumlah_total.
   let amount = 0
@@ -82,6 +94,19 @@ export async function PATCH(request: Request) {
     if (!Number.isFinite(raw) || raw < 0) {
       return NextResponse.json(
         { error: 'Isi nominal yang benar-benar dikembalikan (boleh 0 bila habis dipotong biaya).' },
+        { status: 422 },
+      )
+    }
+    // Batas atas (SEC-053). Endpoint ini tak memindahkan uang — ia mencatat — tapi catatan yang
+    // melebihi nilai pesanan merusak rekonsiliasi, dan angka seperti 1e15 bisa melampaui jangkauan
+    // kolomnya. Pengembalian tak pernah melebihi yang dibayar, jadi itulah batasnya; pemotongan
+    // biaya transfer tetap bisa dicatat karena yang dibatasi hanya sisi ATASnya.
+    if (raw > order.totalAmount) {
+      return NextResponse.json(
+        {
+          error: `Nominal melebihi nilai pesanan (${order.totalAmount}). Pengembalian tak pernah lebih besar daripada yang dibayar.`,
+          code: 'AMOUNT_TOO_LARGE',
+        },
         { status: 422 },
       )
     }

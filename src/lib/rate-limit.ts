@@ -142,6 +142,24 @@ export const RATE_LIMITS = {
   // Per nomor invoice — satu pesanan tak butuh belasan VA. Menahan skrip yang membuat VA berulang
   // untuk satu pesanan (setiap VA adalah objek baru di dashboard Xendit).
   PAYMENT_CREATE_INVOICE: { max: 5, windowMs: 30 * MINUTE },
+
+  // === Pengembalian dana otomatis — SATU-SATUNYA endpoint yang mengirim uang KELUAR ===
+  //
+  // Dikunci pada ADMIN dan pada PESANAN, bukan pada IP. Mengikuti aturan yang sudah dipegang
+  // seluruh tabel ini: kunci ember = hal yang DISERANG. Yang diserang di sini adalah wewenang
+  // seorang admin dan uang sebuah pesanan — bukan lokasi jaringan pemanggilnya, yang murah diganti
+  // dan karenanya tak pernah membatasi lawan yang serius.
+  //
+  // Lapis pertama membatasi sesi admin yang dicuri: tanpa ini ia bisa memanggil endpoint pemindah
+  // uang secepat jaringan mengizinkan. Angkanya sengaja longgar untuk pekerjaan wajar — satu
+  // gelombang pembatalan bisa berisi beberapa pengembalian berturut-turut — tapi tetap memotong
+  // ribuan panggilan menjadi puluhan.
+  REFUND_EXECUTE_ADMIN: { max: 10, windowMs: 10 * MINUTE },
+  // Lapis kedua, per PESANAN dan LINTAS admin. Satu pesanan tak pernah butuh banyak pengembalian:
+  // percobaan yang berhasil sudah mengunci barisnya sendiri lewat klaim (SEC-045), dan percobaan
+  // yang ditolak Xendit pantas diulang sekali dua kali setelah penyebabnya dibetulkan — bukan
+  // berkali-kali. Jendelanya panjang karena pengembalian bukan pekerjaan yang diulang cepat.
+  REFUND_EXECUTE_INVOICE: { max: 3, windowMs: 60 * MINUTE },
 } as const satisfies Record<string, RateRule>
 
 // Pesan generik untuk user (JANGAN bocorkan angka limit persis ke klien)

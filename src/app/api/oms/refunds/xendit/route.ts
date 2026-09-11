@@ -45,6 +45,8 @@ import {
 import { fetchInvoicePayment } from '@/lib/xendit/invoice'
 import { pilihMetode, refundEwalletCharge } from '@/lib/xendit/ewallet-refund'
 import { paymentMethodInfo } from '@/lib/payment-method'
+import { normalizeInvoiceId } from '@/lib/invoice-id'
+import { enforceRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -69,9 +71,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Body bukan JSON yang valid.' }, { status: 400 })
   }
 
-  const orderId = typeof body.orderId === 'string' ? body.orderId.trim().replace(/^#/, '') : ''
+  // Bentuknya divalidasi, bukan sekadar dirapikan (SEC-052): nilai ini masuk ke console.log apa
+  // adanya, dan log inilah yang dipakai menginvestigasi ke mana uang pergi.
+  const orderId = normalizeInvoiceId(body.orderId)
   const dryRun = body.dryRun === true
-  if (!orderId) return NextResponse.json({ error: 'orderId wajib ada.' }, { status: 400 })
+  if (!orderId) {
+    return NextResponse.json({ error: 'orderId wajib ada dan berbentuk nomor invoice.' }, { status: 400 })
+  }
 
   const order = await getOrderByOrderId(orderId)
   if (!order) {
@@ -150,6 +156,26 @@ export async function POST(request: Request) {
   // pun permintaan yang tiba bersamaan hanya satu yang lolos ke bawah garis ini.
   const identity = await getAdminIdentity()
   const by = identity?.name?.trim() || 'admin'
+
+  // === Pembatas laju (SEC-051) ===
+  //
+  // Diletakkan SETELAH cabang dryRun dengan sengaja: dryRun tak memindahkan apa pun, dan memakan
+  // jatah hanya karena admin memeriksa keadaan akan membuatnya berhenti memeriksa.
+  //
+  // Dua kunci, tak satu pun IP — yang dibatasi adalah wewenang si admin dan uang si pesanan,
+  // bukan lokasi jaringan yang murah diganti.
+  const batasAdmin = enforceRateLimit(
+    `refund-exec:admin:${identity?.id ?? 'tanpa-id'}`,
+    RATE_LIMITS.REFUND_EXECUTE_ADMIN,
+  )
+  if (batasAdmin) return batasAdmin
+
+  const batasInvoice = enforceRateLimit(
+    `refund-exec:invoice:${orderId}`,
+    RATE_LIMITS.REFUND_EXECUTE_INVOICE,
+  )
+  if (batasInvoice) return batasInvoice
+
   const claimReference = `claim-${randomUUID()}`
 
   const claimed = await claimRefundForProcessing(orderId, {

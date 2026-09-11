@@ -10,6 +10,13 @@
 
 // Base URL API Xendit. Sama untuk test key maupun live key — yang membedakan lingkungan adalah
 // KUNCINYA, bukan host-nya (berbeda dari Mengantar yang punya host sandbox terpisah).
+// Gagalkan BUILD bila modul ini pernah tertarik ke bundle komponen client (SEC-050).
+// Berkas ini memegang XENDIT_SECRET_KEY; ia tak boleh sampai ke browser dalam keadaan apa pun.
+// Sampai sekarang yang menahannya hanyalah tree-shaking dan sebuah komentar — optimisasi dan
+// niat baik, bukan jaminan. Dengan baris ini, import dari komponen client menjadi GALAT BUILD,
+// bukan kebocoran yang baru ketahuan setelah kuncinya terbaca di tab Network.
+import 'server-only'
+
 export const XENDIT_BASE_URL = 'https://api.xendit.co'
 
 // Catatan: XENDIT_PAYMENT_REQUEST_PATH ('/payment_requests') DIHAPUS bersama jalur Virtual Account

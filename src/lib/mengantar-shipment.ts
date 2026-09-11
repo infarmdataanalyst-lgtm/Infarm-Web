@@ -33,6 +33,13 @@
 // KODE KURIR = "JT" KAPITAL. Huruf kecil "jt" ditolak dengan 400 {"message":"Invalid courier"} —
 // sudah diuji. Kebetulan sama dengan key kurir di respons cek ongkir, jadi satu konstanta saja.
 
+// Gagalkan BUILD bila modul ini pernah tertarik ke bundle komponen client (SEC-050).
+// Berkas ini memegang MENGANTAR_API_KEY; ia tak boleh sampai ke browser dalam keadaan apa pun.
+// Sampai sekarang yang menahannya hanyalah tree-shaking dan sebuah komentar — optimisasi dan
+// niat baik, bukan jaminan. Dengan baris ini, import dari komponen client menjadi GALAT BUILD,
+// bukan kebocoran yang baru ketahuan setelah kuncinya terbaca di tab Network.
+import 'server-only'
+
 import { JT_COURIER_ID } from '@/lib/mengantar-estimate'
 import { mengantarWriteHost } from '@/lib/mengantar-host'
 import { getTodayPickupTimeId } from '@/lib/mengantar-pickup'
