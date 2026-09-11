@@ -24,6 +24,7 @@ import type {
   CreateOrderInput,
   OrderPaymentStatus,
   OrderFulfillmentStatus,
+  RefundWorkItem,
   BestSellingProduct,
 } from '@/types/order'
 
@@ -1326,12 +1327,30 @@ export async function markRefundNeeded(orderId: string): Promise<boolean> {
 }
 
 // Pesanan yang menunggu pengembalian dana, terbaru dulu.
-export async function readOrdersNeedingRefund(limit = 200): Promise<Order[]> {
+// Daftar kerja pengembalian dana.
+//
+// Memuat DUA keadaan, dan itu disengaja (SEC-049):
+//   PERLU_REFUND    — belum dikirim; inilah yang punya tombol
+//   SEDANG_DIPROSES — sudah dikirim ke Xendit, hasilnya belum dipastikan
+//
+// Versi pertama hanya memuat PERLU_REFUND. Akibatnya baris yang tertinggal di SEDANG_DIPROSES —
+// karena callback-nya tak kunjung datang, atau karena permintaannya timeout sehingga klaimnya
+// sengaja dipertahankan — menghilang dari SETIAP layar di OMS. Uang yang mungkin sudah keluar,
+// pembeli yang menunggu, dan tak satu pun daftar yang menyebutkannya. Keadaan yang paling perlu
+// dilihat orang justru menjadi yang paling tak terlihat.
+//
+// Menampilkannya di sini tak menambah wewenang apa pun: barisnya tetap tak bisa dikirim ulang
+// (server menolak apa pun selain PERLU_REFUND). Yang berubah hanya satu — ia terlihat.
+export async function readOrdersNeedingRefund(limit = 200): Promise<RefundWorkItem[]> {
   const supabase = createAdminClient()
   const { data, error } = await supabase
     .from('orders')
+    // `*` DIPERTAHANKAN dengan sengaja: sebagian kolom refund masih optional di skema (lihat
+    // OrderRow), dan menyebut kolom yang belum ada membuat PostgREST menolak SELURUH query dengan
+    // 42703. Penyempitannya dilakukan saat memetakan di bawah — yang menentukan kebocoran adalah
+    // apa yang MENINGGALKAN server, bukan apa yang dibaca di dalamnya.
     .select('*')
-    .eq('refund_status', 'PERLU_REFUND')
+    .in('refund_status', ['PERLU_REFUND', 'SEDANG_DIPROSES'])
     .order('created_at', { ascending: false })
     .limit(limit)
 
@@ -1340,15 +1359,31 @@ export async function readOrdersNeedingRefund(limit = 200): Promise<Order[]> {
     return []
   }
 
-  // Item pesanan SENGAJA tidak ikut diambil (`rowToOrder(r, [])`). Yang dibutuhkan admin di daftar
-  // ini adalah siapa, berapa, dibayar lewat apa, dan sejak kapan menunggu — bukan isi paketnya.
-  // Menambah satu query order_items untuk kolom yang tak ditampilkan hanya memperlambat halaman.
-  return ((data as OrderRow[]) ?? []).map((r) => rowToOrder(r, []))
+  // Item pesanan SENGAJA tidak ikut diambil. Yang dibutuhkan admin di daftar ini adalah siapa,
+  // berapa, dibayar lewat apa, dan sejak kapan menunggu — bukan isi paketnya.
+  return ((data as OrderRow[]) ?? []).map((r) => ({
+    orderId: r.nomor_invoice,
+    customerName: r.nama_customer,
+    ...(r.no_telepon ? { customerPhone: r.no_telepon } : {}),
+    ...(r.email ? { customerEmail: r.email } : {}),
+    date: r.created_at,
+    totalAmount: r.jumlah_total,
+    ...(r.metode_pembayaran ? { paymentMethod: r.metode_pembayaran } : {}),
+    ...(r.refund_status === 'PERLU_REFUND' || r.refund_status === 'SEDANG_DIPROSES'
+      ? { refundStatus: r.refund_status }
+      : {}),
+    ...(r.refund_reference ? { refundReference: r.refund_reference } : {}),
+    ...(r.refund_at ? { refundAt: r.refund_at } : {}),
+    ...(r.refund_by ? { refundBy: r.refund_by } : {}),
+  }))
 }
 
+// SEDANG_DIPROSES SENGAJA TIDAK ADA DI SINI (SEC-049). Keadaan itu hanya boleh ditulis oleh
+// claimRefundForProcessing(), yang mewajibkan sebuah `reference`. Membiarkannya bisa ditulis lewat
+// jalur ini berarti membuka kembali cara melahirkan baris "sedang diproses" tanpa nomor referensi —
+// baris yang tak bisa dicocokkan callback mana pun, dan karenanya tak akan pernah tertutup.
 export type RefundResolution =
   | { status: 'SUDAH_REFUND'; amount: number; note: string; by: string; reference?: string }
-  | { status: 'SEDANG_DIPROSES'; amount: number; note: string; by: string; reference?: string }
   | { status: 'TIDAK_PERLU'; note: string; by: string }
 
 // Menutup satu baris daftar kerja refund.
@@ -1379,14 +1414,19 @@ export async function resolveRefund(
       resolution.status !== 'TIDAK_PERLU' && resolution.reference ? resolution.reference : null,
   }
 
-  // Hanya baris yang MASIH menunggu yang boleh ditutup. Ini compare-and-swap: dua admin yang
+  // Hanya baris yang BELUM selesai yang boleh ditutup. Ini compare-and-swap: dua admin yang
   // menekan tombol bersamaan tak boleh sama-sama berhasil, karena keduanya lalu mengira uangnya
   // sudah dikirim padahal hanya satu yang benar-benar mengirim.
+  //
+  // SEDANG_DIPROSES ikut boleh ditutup di sini, dan itu perlu: bila Xendit sudah menerima
+  // permintaannya tapi hasilnya gagal tercatat (atau callback-nya tak pernah datang), penutupan
+  // manual oleh admin yang sudah memeriksa dashboard adalah SATU-SATUNYA jalan keluar barisnya.
+  // Menutup pintu itu akan membuat baris tersebut tertahan selamanya.
   const { data, error } = await supabase
     .from('orders')
     .update(patch)
     .eq('nomor_invoice', orderId)
-    .eq('refund_status', 'PERLU_REFUND')
+    .in('refund_status', ['PERLU_REFUND', 'SEDANG_DIPROSES'])
     .select('id')
     .maybeSingle()
 

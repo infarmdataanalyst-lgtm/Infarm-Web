@@ -16,11 +16,11 @@
 // dan yang menentukan hanyalah kolom metode bayar — jadi ia dibuat mencolok, bukan sekadar ada.
 
 import { useCallback, useEffect, useState } from 'react'
-import { Wallet, Landmark, HelpCircle, Loader2, Inbox, RefreshCw } from 'lucide-react'
+import { Wallet, Landmark, HelpCircle, Loader2, Inbox, RefreshCw, Hourglass } from 'lucide-react'
 import OmsHeader from '@/components/oms/OmsHeader'
 import { formatRupiah } from '@/lib/format'
 import { paymentMethodInfo, paymentMethodLabel } from '@/lib/payment-method'
-import type { Order } from '@/types/order'
+import type { RefundWorkItem } from '@/types/order'
 
 // Berapa lama pesanan ini sudah menunggu dikembalikan, dalam hari.
 function hariMenunggu(iso: string): number {
@@ -41,7 +41,7 @@ function formatTanggal(iso: string): string {
 
 // Petunjuk jalur pengembalian berdasarkan metode bayar. Inilah kalimat pertama yang perlu dibaca
 // admin sebelum menyentuh apa pun.
-function jalurPengembalian(order: Order): {
+function jalurPengembalian(order: RefundWorkItem): {
   Icon: typeof Wallet
   warna: string
   judul: string
@@ -83,18 +83,28 @@ function jalurPengembalian(order: Order): {
 // Hanya e-wallet/QRIS/kartu. Transfer bank tak bisa sama sekali, dan metode yang tak tercatat
 // TIDAK dianggap bisa — menawarkan tombol yang pasti gagal hanya mengajari admin mengabaikannya.
 // Server memeriksa ulang; ini sekadar menyembunyikan tombol yang tak berlaku.
-function bisaOtomatis(order: Order): boolean {
+function bisaOtomatis(order: RefundWorkItem): boolean {
   const info = paymentMethodInfo(order.paymentMethod)
   if (!info) return false
   return info.family !== 'transfer-bank' && info.family !== 'lain'
 }
 
+// Apakah baris ini sudah dikirim ke Xendit tapi hasilnya belum dipastikan.
+//
+// Baris seperti ini dulu tak muncul di mana pun (SEC-049): daftarnya hanya memuat PERLU_REFUND,
+// jadi pesanan yang tersangkut di tengah — callback yang tak kunjung datang, atau permintaan yang
+// timeout sehingga klaimnya sengaja dipertahankan — lenyap dari layar sambil membawa uang yang
+// mungkin sudah keluar. Sekarang ia ikut tampil, dengan tanda yang berbeda dan TANPA tombol kirim.
+function sedangDiproses(order: RefundWorkItem): boolean {
+  return order.refundStatus === 'SEDANG_DIPROSES'
+}
+
 // Pengambilan data murni — tidak menyentuh state sama sekali, supaya bisa dipanggil dari effect
 // maupun dari penangan tombol tanpa keduanya menduplikasi penanganan galatnya.
-async function ambilRefunds(): Promise<{ orders?: Order[]; error?: string }> {
+async function ambilRefunds(): Promise<{ orders?: RefundWorkItem[]; error?: string }> {
   try {
     const res = await fetch('/api/oms/refunds', { cache: 'no-store' })
-    const data = (await res.json()) as { orders?: Order[]; error?: string }
+    const data = (await res.json()) as { orders?: RefundWorkItem[]; error?: string }
     if (!res.ok) return { error: data.error ?? 'Gagal memuat daftar pengembalian dana.' }
     return { orders: data.orders ?? [] }
   } catch {
@@ -103,7 +113,7 @@ async function ambilRefunds(): Promise<{ orders?: Order[]; error?: string }> {
 }
 
 export default function RefundPage() {
-  const [orders, setOrders] = useState<Order[]>([])
+  const [orders, setOrders] = useState<RefundWorkItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -147,7 +157,7 @@ export default function RefundPage() {
 
   // Pengembalian otomatis lewat Xendit. Sengaja memakai konfirmasi bawaan browser: ini
   // satu-satunya tombol di seluruh OMS yang mengirim uang keluar, dan tak bisa ditarik kembali.
-  async function kembalikanOtomatis(order: Order) {
+  async function kembalikanOtomatis(order: RefundWorkItem) {
     const label = paymentMethodLabel(order.paymentMethod) ?? 'metode aslinya'
     const yakin = window.confirm(
       `Kembalikan ${formatRupiah(order.totalAmount)} ke ${label} untuk pesanan ${order.orderId}?\n\n` +
@@ -195,7 +205,7 @@ export default function RefundPage() {
     }
   }
 
-  function buka(order: Order) {
+  function buka(order: RefundWorkItem) {
     setOpenId(order.orderId)
     // Nominal diisi awal dengan total pesanan — jumlah yang benar pada kasus paling umum, dan
     // admin tinggal mengurangi bila biaya transfer dipotong.
@@ -241,7 +251,12 @@ export default function RefundPage() {
     }
   }
 
-  const totalTertahan = orders.reduce((sum, o) => sum + o.totalAmount, 0)
+  // Dipisah, bukan dijumlah jadi satu. "Menunggu" adalah pekerjaan yang bisa dikerjakan sekarang;
+  // "sedang diproses" adalah uang yang sudah bergerak dan hanya perlu dipastikan. Menyatukan
+  // keduanya jadi satu angka membuat admin mengira masih ada yang harus dikirim.
+  const menunggu = orders.filter((o) => !sedangDiproses(o))
+  const diproses = orders.filter(sedangDiproses)
+  const totalTertahan = menunggu.reduce((sum, o) => sum + o.totalAmount, 0)
 
   return (
     <>
@@ -253,13 +268,19 @@ export default function RefundPage() {
           <div>
             <p className="text-sm text-gray-500">Pesanan lunas yang dibatalkan dan dananya belum dikembalikan</p>
             <p className="mt-1 text-2xl font-bold text-gray-900">
-              {orders.length} pesanan
-              {orders.length > 0 && (
+              {menunggu.length} pesanan
+              {menunggu.length > 0 && (
                 <span className="ml-2 text-base font-semibold text-amber-700">
                   · {formatRupiah(totalTertahan)} tertahan
                 </span>
               )}
             </p>
+            {diproses.length > 0 && (
+              <p className="mt-1 text-sm font-semibold text-sky-700">
+                + {diproses.length} sedang diproses di Xendit — menunggu kepastian, jangan dikirim
+                ulang
+              </p>
+            )}
           </div>
           <button
             type="button"
@@ -339,12 +360,33 @@ export default function RefundPage() {
                     <p className="mt-1 pl-6 text-xs leading-relaxed opacity-90">{jalur.langkah}</p>
                   </div>
 
+                  {/* Baris yang uangnya SUDAH dikirim ke Xendit tapi belum dipastikan (SEC-049).
+                      Ditandai terang-terangan karena tindakan yang benar di sini berlawanan
+                      dengan baris lain: jangan kirim, periksa. */}
+                  {sedangDiproses(order) && (
+                    <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sky-900">
+                      <p className="flex items-center gap-2 text-sm font-semibold">
+                        <Hourglass className="h-4 w-4 flex-none" />
+                        Sudah dikirim ke Xendit — menunggu kepastian
+                      </p>
+                      <p className="mt-1 pl-6 text-xs leading-relaxed">
+                        JANGAN kirim ulang. Cari nomor referensi di dashboard Xendit, lalu tutup
+                        baris ini lewat &ldquo;Catat pengembalian&rdquo; setelah dipastikan.
+                      </p>
+                      <p className="mt-1.5 pl-6 text-[11px] text-sky-700">
+                        Ref {order.refundReference ?? '—'}
+                        {order.refundBy ? ` · dimulai ${order.refundBy}` : ''}
+                        {order.refundAt ? ` · ${formatTanggal(order.refundAt)}` : ''}
+                      </p>
+                    </div>
+                  )}
+
                   {!terbuka ? (
                     <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
                       {/* Tombol otomatis HANYA untuk e-wallet & sejenisnya. Transfer bank tak bisa
                           dikembalikan lewat Xendit sama sekali — menampilkan tombolnya di sana
                           berarti menawarkan sesuatu yang pasti gagal. */}
-                      {bisaOtomatis(order) && (
+                      {bisaOtomatis(order) && !sedangDiproses(order) && (
                         <button
                           type="button"
                           onClick={() => void kembalikanOtomatis(order)}

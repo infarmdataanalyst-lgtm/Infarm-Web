@@ -73,6 +73,23 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: `Pesanan ${invoice} tidak ditemukan.` }, { status: 404 })
   }
 
+  // === Prasyarat keadaan (SEC-047) ===
+  //
+  // Menghapus penjemputan pesanan yang MASIH BERJALAN berarti kurir tak akan datang untuk paket
+  // yang pembelinya sudah membayar dan masih menunggu — dan endpoint ini sengaja tak menulis
+  // apa pun ke database kita, jadi tak ada satu pun kolom yang akan menyebutkan hal itu terjadi.
+  // Pesanannya tetap terbaca "Diproses" selamanya sementara paketnya tak pernah dijemput.
+  //
+  // Pembatalan yang sah SELALU dimulai dari OMS (PATCH /api/orders/update-status), yang kini
+  // memanggil penghapusan Mengantar sendiri. Yang tersisa untuk endpoint ini adalah PERBAIKAN:
+  // pesanan yang sudah dibatalkan tapi penjemputannya gagal terhapus. Karena itu prasyaratnya
+  // status pesanan, bukan peran pemanggilnya — admin yang berwenang pun tak punya alasan sah
+  // menghapus penjemputan pesanan yang masih hidup.
+  //
+  // Sengaja TANPA tuas paksa. Jalan keluarnya sudah ada dan lebih benar: batalkan pesanannya
+  // lewat OMS, dan penghapusan ini ikut berjalan dengan jejak yang lengkap.
+  const bolehDihapus = order.status === 'Dibatalkan'
+
   const target = {
     ...(order.mengantarObjectId ? { objectId: order.mengantarObjectId } : {}),
     ...(order.mengantarOrderId ? { orderId: order.mengantarOrderId } : {}),
@@ -92,11 +109,26 @@ export async function POST(request: Request) {
   if (body.dryRun === true) {
     return NextResponse.json({
       mode: 'dryRun',
-      catatan: 'Tidak ada panggilan ke Mengantar. Ulangi tanpa dryRun untuk menghapus sungguhan.',
+      catatan: bolehDihapus
+        ? 'Tidak ada panggilan ke Mengantar. Ulangi tanpa dryRun untuk menghapus sungguhan.'
+        : `Tidak ada panggilan ke Mengantar. Penghapusan sungguhan AKAN DITOLAK: status pesanan "${order.status ?? 'tidak diketahui'}", bukan "Dibatalkan".`,
       invoice,
+      statusPesanan: order.status ?? null,
+      prasyaratTerpenuhi: bolehDihapus,
       resi: order.trackingNumber ?? null,
       payloadAkanDikirim: payload,
     })
+  }
+
+  if (!bolehDihapus) {
+    return NextResponse.json(
+      {
+        error: `Pesanan ${invoice} berstatus "${order.status ?? 'tidak diketahui'}", bukan "Dibatalkan". Penjemputan hanya boleh dihapus untuk pesanan yang sudah dibatalkan — batalkan dulu lewat OMS, dan penghapusannya ikut berjalan otomatis.`,
+        code: 'ORDER_NOT_CANCELLED',
+        statusPesanan: order.status ?? null,
+      },
+      { status: 409 },
+    )
   }
 
   const hasil = await cancelShipmentOrder(target)

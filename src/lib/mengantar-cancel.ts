@@ -35,6 +35,9 @@ import { mengantarWriteHost } from '@/lib/mengantar-host'
 
 const LOG = '[mengantar-cancel]'
 
+// Pengganti kunci di teks yang keluar dari modul ini.
+const RAHASIA = '***'
+
 // Pembatalan berjalan di dalam permintaan admin yang sedang menunggu di layar OMS.
 const CANCEL_REQUEST_TIMEOUT_MS = 12_000
 
@@ -89,6 +92,27 @@ function potong(text: string, n = 300): string {
   return text.length > n ? `${text.slice(0, n)}…` : text
 }
 
+// Membuang MENGANTAR_API_KEY dari teks apa pun yang akan meninggalkan modul ini (SEC-046).
+//
+// Kunci Mengantar adalah SEGMEN PATH, bukan header — jadi URL-nya sendiri rahasia. Respons galat
+// pihak ketiga lazim memantulkan kembali URL yang diminta, dan detail/raw di bawah diteruskan apa
+// adanya ke klien oleh route handler. Satu pesan galat yang memuat URL sudah cukup menaruh kunci
+// produksi di tab Network seorang admin — dan dari sana ia bisa membuat maupun menghapus
+// pengiriman atas nama toko.
+//
+// Disensor DI SINI, bukan di pemanggil: modul ini satu-satunya yang tahu nilai kuncinya, jadi ini
+// satu-satunya tempat yang penyensorannya tak bisa lupa diterapkan.
+function tanpaKunci(text: string, key: string): string {
+  let bersih = text
+  // Bentuk mentah maupun ter-encode — URL memakai encodeURIComponent.
+  for (const varian of [key, encodeURIComponent(key)]) {
+    if (varian) bersih = bersih.split(varian).join(RAHASIA)
+  }
+  // Jaring kedua: segmen apa pun di posisi kunci, kalau-kalau Mengantar memantulkannya dalam
+  // bentuk lain (mis. sebagian ter-escape) sehingga pencocokan harfiah di atas meleset.
+  return bersih.replace(/[/]api[/]public[/][^/s]+/g, "/api/public/" + RAHASIA)
+}
+
 // Membatalkan SATU pengiriman di Mengantar.
 //
 // Sengaja satu per satu meski endpointnya menerima array: pembatalan selalu berasal dari keputusan
@@ -111,6 +135,9 @@ export async function cancelShipmentOrder(
   if (!key) {
     return { ok: false, reason: 'not-configured', detail: 'MENGANTAR_API_KEY belum di-set' }
   }
+
+  // Setiap potongan respons yang keluar dari modul ini lewat sini lebih dulu.
+  const aman = (t: string, n = 300) => potong(tanpaKunci(t, key), n)
 
   const payload = buildCancelPayload(target)
   if (!payload) {
@@ -138,14 +165,14 @@ export async function cancelShipmentOrder(
     const text = await res.text()
 
     if (!res.ok) {
-      return { ok: false, reason: 'http-error', detail: potong(text), httpStatus: res.status }
+      return { ok: false, reason: 'http-error', detail: aman(text), httpStatus: res.status }
     }
 
     let parsed: unknown
     try {
       parsed = JSON.parse(text)
     } catch {
-      return { ok: false, reason: 'bad-shape', detail: `respons bukan JSON: ${potong(text, 200)}` }
+      return { ok: false, reason: 'bad-shape', detail: `respons bukan JSON: ${aman(text, 200)}` }
     }
 
     const body = (typeof parsed === 'object' && parsed !== null ? parsed : {}) as Record<
@@ -154,7 +181,7 @@ export async function cancelShipmentOrder(
     >
 
     if (body.success === false) {
-      return { ok: false, reason: 'rejected', detail: potong(text) }
+      return { ok: false, reason: 'rejected', detail: aman(text) }
     }
 
     const deletedCount = typeof body.deletedCount === 'number' ? body.deletedCount : 0
@@ -173,7 +200,7 @@ export async function cancelShipmentOrder(
       return {
         ok: false,
         reason: 'not-deleted',
-        detail: `success:true tapi deletedCount=${deletedCount} — ${potong(text, 200)}`,
+        detail: `success:true tapi deletedCount=${deletedCount} — ${aman(text, 200)}`,
       }
     }
 
@@ -185,7 +212,7 @@ export async function cancelShipmentOrder(
       : []
 
     console.log(`${LOG} ${penanda} terhapus (deletedCount=${deletedCount})`)
-    return { ok: true, deletedCount, deletedIds, deletedHumanReadable, raw: potong(text) }
+    return { ok: true, deletedCount, deletedIds, deletedHumanReadable, raw: aman(text) }
   } catch (e) {
     // Hanya `name`, bukan `message`: pesan error fetch di sebagian runtime memuat URL — yang di
     // sini berisi API key.

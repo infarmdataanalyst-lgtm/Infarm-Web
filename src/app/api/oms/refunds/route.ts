@@ -26,6 +26,10 @@ export async function GET() {
   const unauthorized = await requireAdmin()
   if (unauthorized) return unauthorized
 
+  // Yang dikirim adalah RefundWorkItem, BUKAN Order utuh (SEC-048). Karena pagarnya sengaja
+  // longgar di atas, muatannya yang harus sempit: `Order` membawa alamat lengkap, `invoiceUrl`
+  // yang bisa jadi masih bisa dibayar, dan `mengantarObjectId` yang cukup untuk menghapus
+  // penjemputan — tak satu pun dipakai halaman ini.
   const orders = await readOrdersNeedingRefund()
   return NextResponse.json({ orders })
 }

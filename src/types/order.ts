@@ -29,6 +29,32 @@ export type OrderPaymentStatus = 'Lunas' | 'Menunggu' | 'Gagal'
 // dana terkirim dua kali TANPA berbohong bahwa urusannya sudah selesai.
 export type RefundStatus = 'PERLU_REFUND' | 'SEDANG_DIPROSES' | 'SUDAH_REFUND' | 'TIDAK_PERLU'
 
+// Satu baris di daftar kerja pengembalian dana OMS.
+//
+// SENGAJA BUKAN `Order` (SEC-048). Daftar itu boleh dibuka peran `staff` juga — CS perlu bisa
+// menjawab "kapan uang saya kembali" — dan `Order` utuh membawa jauh lebih banyak daripada yang
+// dibutuhkan pertanyaan itu: alamat lengkap pembeli, `invoiceUrl` (halaman pembayaran yang bisa
+// jadi MASIH HIDUP), `transactionId`, serta `mengantarObjectId` yang cukup untuk menghapus
+// penjemputan. Tak satu pun ditampilkan halamannya, tapi semuanya ikut terkirim ke browser.
+//
+// Bentuknya ditulis eksplisit supaya kolom baru di `orders` tak pernah lagi ikut terbawa ke klien
+// hanya karena ia ada.
+export type RefundWorkItem = {
+  orderId: string
+  customerName: string
+  customerPhone?: string
+  customerEmail?: string
+  date: string
+  totalAmount: number
+  paymentMethod?: string
+  refundStatus?: RefundStatus
+  // Tiga di bawah hanya terisi untuk baris SEDANG_DIPROSES — nomor yang dicari admin di dashboard
+  // Xendit, plus siapa yang memulainya dan kapan.
+  refundReference?: string
+  refundAt?: string
+  refundBy?: string
+}
+
 // Status alur (fulfillment) pesanan (app-facing) — dipakai tab filter di OMS.
 // DB: PENDING→'Menunggu Pembayaran', PROCESSING→Diproses, SHIPPED→Dikirim,
 //     COMPLETED→Selesai, CANCELLED→Dibatalkan.
