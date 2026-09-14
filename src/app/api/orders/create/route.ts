@@ -30,7 +30,12 @@ import { formatRupiah } from '@/lib/format'
 import { isValidPhone } from '@/lib/phone'
 import { isValidEmail } from '@/lib/email'
 import { isPromotionExpired } from '@/types/promotion'
-import type { CreateOrderInput, OrderItem, OrderShippingAddress } from '@/types/order'
+import type {
+  CreateOrderInput,
+  OrderItem,
+  OrderLogistics,
+  OrderShippingAddress,
+} from '@/types/order'
 
 // createAdminClient (Supabase) butuh runtime Node.js, bukan Edge
 export const runtime = 'nodejs'
@@ -46,6 +51,27 @@ type IncomingItem = OrderItem & { comboId?: string }
 function comboIdOf(item: OrderItem): string | undefined {
   const raw = (item as IncomingItem).comboId
   return typeof raw === 'string' && raw.length > 0 ? raw : undefined
+}
+
+// Bagian alamat yang tak diperiksa isValidPayload (provinsi, kota, …). Nilai bukan-string dijadikan
+// kosong alih-alih diteruskan apa adanya ke RPC, dan panjangnya dibatasi supaya satu permintaan tak
+// bisa menyimpan teks raksasa ke kolom yang ikut tampil di OMS dan label kurir.
+const ALAMAT_MAX = 200
+function teksAlamat(raw: unknown): string {
+  return typeof raw === 'string' ? raw.trim().slice(0, ALAMAT_MAX) : ''
+}
+
+// `logistics` dari klien hanya nilai awal nama ekspedisi & jenis layanan (ditulis ulang oleh booking
+// kurir setelah bayar). Diterima hanya bila kedua field berupa string; selain itu diabaikan, dan
+// kolomnya kosong seperti pesanan yang dibuat tanpa field ini.
+const LOGISTIK_MAX = 60
+function logistikDariBody(raw: unknown): OrderLogistics | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const { courier, service } = raw as Record<string, unknown>
+  if (typeof courier !== 'string' || typeof service !== 'string') return undefined
+  const c = courier.trim().slice(0, LOGISTIK_MAX)
+  const s = service.trim().slice(0, LOGISTIK_MAX)
+  return c && s ? { courier: c, service: s } : undefined
 }
 
 // Validasi payload di server (jangan percaya input client mentah-mentah)
@@ -666,10 +692,35 @@ export async function POST(request: Request) {
   // Masih belum dapat → jalur fallback lama (gudang ber-stok cukup, default didahulukan).
   if (!warehouse) warehouse = await resolveWarehouseForOrder(requirements)
 
+  const logistics = logistikDariBody((body as { logistics?: unknown }).logistics)
+
   try {
     // Kirim item & total hasil hitung server (bukan dari client)
+    // Field EKSPLISIT, bukan `{ ...body }` (SEC-056).
+    //
+    // Versi lama menyebar seluruh body permintaan ke saveOrder. CreateOrderInput punya
+    // `paymentStatus` dan `status`, dan isValidPayload tak memeriksa keduanya — jadi satu permintaan
+    // publik berisi `"paymentStatus": "Lunas"` menyimpan pesanan PAID tanpa pembayaran apa pun, dan
+    // `"status": "Selesai"` membuatnya langsung layak diulas sebagai pembeli terverifikasi. Status
+    // pesanan baru SELALU nilai bawaan saveOrder (Menunggu / Menunggu Pembayaran); hanya webhook
+    // Xendit yang terverifikasi dan OMS yang boleh memindahkannya.
+    //
+    // Menambah field ke pesanan = tambahkan di sini SETELAH divalidasi. Jangan kembali ke penyebaran
+    // body: ia diam-diam menerima setiap field yang kelak ditambahkan ke CreateOrderInput.
     const saved = await saveOrder({
-      ...body,
+      customerName: body.customerName,
+      ...(body.customerPhone !== undefined ? { customerPhone: body.customerPhone } : {}),
+      ...(body.customerEmail !== undefined ? { customerEmail: body.customerEmail } : {}),
+      address: {
+        shippingAddress: body.address.shippingAddress,
+        provinsi: teksAlamat(body.address.provinsi),
+        kota: teksAlamat(body.address.kota),
+        kecamatan: teksAlamat(body.address.kecamatan),
+        kelurahan: teksAlamat(body.address.kelurahan),
+        kodepos: teksAlamat(body.address.kodepos),
+        destinationId: body.address.destinationId,
+      },
+      ...(logistics ? { logistics } : {}),
       items: pricedItems,
       totalAmount,
       // Ongkir yang SUDAH lolos verifikasi ke tarif Mengantar (lihat blok verifikasi di atas),

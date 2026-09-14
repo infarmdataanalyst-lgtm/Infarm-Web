@@ -106,7 +106,21 @@ export async function POST(request: Request) {
   const authorName = clampAuthorName(order.customerName?.trim() || 'Pelanggan Infarm')
 
   try {
-    const id = await createReview({ ...body, authorName, orderInvoice: invoice })
+    // Field EKSPLISIT, bukan `{ ...body }` (SEC-014). Versi lama menyebar seluruh body permintaan,
+    // sehingga field yang tak pernah divalidasi ikut tersimpan apa adanya — terutama `imageUrls`,
+    // yang dirender sebagai <img src> di halaman produk publik (URL eksternal sembarang tampil di
+    // storefront), dan `category` tanpa batas panjang. Kedua endpoint ulasan lain (create-by-email,
+    // create-by-phone) sejak awal memakai daftar eksplisit; yang ini disamakan.
+    //
+    // Menambah field baru ke ulasan = tambahkan di sini SETELAH divalidasi di atas. Jangan kembali
+    // ke penyebaran body: ia diam-diam menerima setiap field yang kelak ditambahkan ke tipe input.
+    const id = await createReview({
+      productId: body.productId,
+      authorName,
+      rating: body.rating,
+      comment: body.comment,
+      orderInvoice: invoice,
+    })
     // Segarkan halaman detail produk agar ulasan baru langsung tampil
     revalidatePath(`/produk/${body.productId}`)
     revalidateTag('reviews', 'max')
