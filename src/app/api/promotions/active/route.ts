@@ -13,7 +13,7 @@
 //     round-trip tambahan hanya untuk satu angka.
 
 import { NextResponse } from 'next/server'
-import { readPromotions } from '@/lib/mock-db/promotions'
+import { readActivePromotionsPublic } from '@/lib/mock-db/promotions'
 import { readProducts } from '@/lib/mock-db/products'
 import { getMaxDiscountPercent } from '@/lib/mock-db/settings'
 
@@ -23,7 +23,9 @@ export const dynamic = 'force-dynamic' // selalu pakai data promo terbaru
 export async function GET() {
   const now = Date.now()
   const [all, products, maxDiscountPercent] = await Promise.all([
-    readPromotions(),
+    // Anon key, tunduk RLS (SEC-031). Filter isActive di bawah tetap dipertahankan sebagai lapis
+    // kedua di kode; jendela waktu start_at/end_at memang hanya dijaga di sini, bukan di policy.
+    readActivePromotionsPublic(),
     readProducts(),
     getMaxDiscountPercent(),
   ])

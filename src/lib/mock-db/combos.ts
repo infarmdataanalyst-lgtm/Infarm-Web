@@ -5,11 +5,16 @@
 // (API Route) tidak perlu tahu sumber datanya. Di-back oleh Supabase
 // (tabel public.product_combos + public.product_combo_items).
 //
-// SERVER-ONLY: memakai createAdminClient() (service_role) yang menembus RLS.
-// Tabel combo terkunci dari publik → semua baca/tulis WAJIB lewat server.
+// SERVER-ONLY. Dua jenis client, dan pemilihannya disengaja (SEC-031):
+//   - readActiveCombosPublic() → createPublicClient() (anon, TUNDUK RLS). Khusus STOREFRONT.
+//     Policy "Public dapat membaca combo aktif" (migration 20260907120000) hanya meloloskan
+//     is_active = true, termasuk isi paketnya, jadi satu bug filter di kode tak lagi cukup untuk
+//     membocorkan paket yang sengaja dinonaktifkan — database ikut menahan.
+//   - Selebihnya → createAdminClient() (service_role, menembus RLS). OMS butuh baris NONAKTIF, dan
+//     orders/create butuh baca otoritatif yang tak bergantung pada policy.
 // Jangan diimpor dari komponen 'use client'.
 
-import { createAdminClient } from '@/lib/supabase/server'
+import { createAdminClient, createPublicClient } from '@/lib/supabase/server'
 import type { ProductCombo, ComboItem, ComboInput } from '@/types/combo'
 
 // === Pemetaan baris DB <-> ProductCombo ===
@@ -77,6 +82,30 @@ export async function readCombos(): Promise<ProductCombo[]> {
 
   if (error) {
     console.error('Gagal membaca combo dari Supabase:', error.message)
+    return []
+  }
+
+  return (data as ComboRow[]).map(rowToCombo)
+}
+
+// Membaca combo AKTIF beserta itemnya untuk STOREFRONT, lewat anon key (tunduk RLS, SEC-031).
+//
+// Dua lapis yang sengaja bertumpuk: policy database hanya meloloskan is_active = true (isi paket
+// mengikuti induknya lewat EXISTS), dan query ini tetap memfilter is_active sendiri. Kalau salah
+// satunya kelak berubah, yang lain masih menahan paket nonaktif.
+//
+// Array kosong bila error — termasuk bila policy/grant belum ada di sebuah lingkungan. Storefront
+// lalu tampil tanpa rekomendasi paket (bukan crash); penyebabnya tercatat di log server.
+export async function readActiveCombosPublic(): Promise<ProductCombo[]> {
+  const supabase = createPublicClient()
+  const { data, error } = await supabase
+    .from('product_combos')
+    .select('*, product_combo_items(*)')
+    .eq('is_active', true)
+    .order('created_at', { ascending: false })
+
+  if (error) {
+    console.error('Gagal membaca combo aktif (anon) dari Supabase:', error.message)
     return []
   }
 

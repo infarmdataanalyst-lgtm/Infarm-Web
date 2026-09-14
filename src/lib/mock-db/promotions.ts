@@ -4,11 +4,15 @@
 // ISOLASI: seluruh akses data promo HANYA lewat fungsi di file ini, sehingga pemanggil
 // (API Route) tidak perlu tahu sumber datanya. Di-back oleh Supabase (tabel public.promotions).
 //
-// SERVER-ONLY: memakai createAdminClient() (service_role) yang menembus RLS.
-// Tabel promotions terkunci dari publik → semua baca/tulis WAJIB lewat server.
+// SERVER-ONLY. Dua jenis client, dan pemilihannya disengaja (SEC-031):
+//   - readActivePromotionsPublic() → createPublicClient() (anon, TUNDUK RLS). Khusus STOREFRONT.
+//     Policy "Public dapat membaca promo aktif" (migration 20260907120000) hanya meloloskan
+//     is_active = true.
+//   - Selebihnya → createAdminClient() (service_role, menembus RLS). OMS butuh baris NONAKTIF, dan
+//     orders/create menghitung tagihan dari baca otoritatif yang tak bergantung pada policy.
 // Jangan diimpor dari komponen 'use client'.
 
-import { createAdminClient } from '@/lib/supabase/server'
+import { createAdminClient, createPublicClient } from '@/lib/supabase/server'
 import type { Promotion, PromotionInput, PromotionType } from '@/types/promotion'
 
 // === Pemetaan baris DB <-> Promotion ===
@@ -73,6 +77,29 @@ export async function readPromotions(): Promise<Promotion[]> {
 
   if (error) {
     console.error('Gagal membaca promo dari Supabase:', error.message)
+    return []
+  }
+
+  return (data as PromotionRow[]).map(rowToPromotion)
+}
+
+// Membaca promo AKTIF untuk STOREFRONT, lewat anon key (tunduk RLS, SEC-031).
+//
+// Policy database hanya meloloskan is_active = true, dan query ini tetap memfilter is_active
+// sendiri — dua lapis yang sengaja bertumpuk. Jendela waktu (start_at/end_at) TIDAK disaring di
+// sini; pemanggil yang memutuskan, karena storefront perlu membedakan "belum mulai" dari "tak ada".
+//
+// Array kosong bila error, termasuk bila policy/grant belum ada di sebuah lingkungan.
+export async function readActivePromotionsPublic(): Promise<Promotion[]> {
+  const supabase = createPublicClient()
+  const { data, error } = await supabase
+    .from('promotions')
+    .select('*')
+    .eq('is_active', true)
+    .order('created_at', { ascending: false })
+
+  if (error) {
+    console.error('Gagal membaca promo aktif (anon) dari Supabase:', error.message)
     return []
   }
 

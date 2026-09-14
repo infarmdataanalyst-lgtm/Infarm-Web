@@ -20,7 +20,7 @@
 import { unstable_cache } from 'next/cache'
 import { readProducts, getProductById } from './products'
 import { getReviewsByProduct, getProductRatingSummary, getRatingSummaryByProduct } from './reviews'
-import { readCombos } from './combos'
+import { readActiveCombosPublic } from './combos'
 import { getSalesCountByProduct } from './orders'
 import { getVariantsByProduct } from './variants'
 import { getMinOrderAmount } from './settings'
@@ -35,8 +35,9 @@ export const getCachedProducts = unstable_cache(readProducts, ['storefront-produ
   tags: ['products'],
 })
 
-// Combo aktif (rekomendasi paket di detail produk).
-export const getCachedCombos = unstable_cache(readCombos, ['storefront-combos'], {
+// Combo aktif (rekomendasi paket di detail produk). Anon key + RLS (SEC-031), bukan service_role.
+// Kunci cache diganti supaya hasil lama dari service_role tak terbaca setelah deploy.
+export const getCachedCombos = unstable_cache(readActiveCombosPublic, ['storefront-combos-public'], {
   revalidate: REVALIDATE,
   tags: ['combos'],
 })
