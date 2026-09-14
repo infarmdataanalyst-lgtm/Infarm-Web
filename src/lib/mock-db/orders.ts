@@ -1703,7 +1703,7 @@ export async function settleRefundByReference(
 
 // === Hasil mematikan tagihan Xendit ===
 
-// Dipanggil SETELAH POST /invoices/{id}/expire, oleh alur pembatalan pesanan.
+// Dipanggil SETELAH POST /invoices/{id}/expire!, oleh alur pembatalan pesanan.
 //
 // `expired: true` juga MENGOSONGKAN invoice_expire_error: percobaan sebelumnya yang gagal sudah
 // tak relevan begitu tagihannya benar-benar mati, dan pesan lama yang tertinggal akan membuat

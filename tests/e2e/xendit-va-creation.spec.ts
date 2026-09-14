@@ -239,7 +239,7 @@ test.describe('Xendit — nominal tagihan & jejaknya di tabel orders', () => {
 
     if (invoiceXendit) {
       // Invoice Xendit TIDAK bisa dihapus — hanya bisa dibiarkan kedaluwarsa atau di-expire manual
-      // (`POST /v2/invoices/{id}/expire!`, sebuah TULIS ke Xendit → butuh persetujuan pemilik
+      // (`POST /invoices/{id}/expire!` — tanpa `/v2`, sebuah TULIS ke Xendit → butuh persetujuan pemilik
       // proyek, jadi TIDAK dilakukan dari sini).
       //
       // Membiarkannya aman: saat kedaluwarsa (24 jam, INVOICE_DURATION_SECONDS), Xendit mengirim

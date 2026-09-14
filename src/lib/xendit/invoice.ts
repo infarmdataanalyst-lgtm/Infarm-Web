@@ -43,6 +43,15 @@ const LOG = '[xendit-invoice]'
 // Path Invoice API. Berbeda dari Payment Request: versinya ada di path (`/v2/`).
 const INVOICE_PATH = '/v2/invoices'
 
+// Path mematikan tagihan — SENGAJA bukan turunan INVOICE_PATH. Xendit menaruh endpoint ini di luar
+// `/v2` DAN mengakhirinya dengan tanda seru: `POST /invoices/{invoice_id}/expire!` (dicocokkan
+// 2026-09-14 dengan SDK resmi xendit-php, xendit-go, dan xendit-node — ketiganya identik).
+// Versi lama menulis `${INVOICE_PATH}/{id}/expire` dan dijawab 404 NOT_FOUND pada uji pembatalan
+// pertama di produksi: pesanannya batal, tapi tagihannya tetap bisa dibayar.
+function invoiceExpirePath(invoiceId: string): string {
+  return `/invoices/${encodeURIComponent(invoiceId)}/expire!`
+}
+
 // Batas waktu panggilan. Berjalan di dalam permintaan checkout, jadi pembeli menunggu.
 const REQUEST_TIMEOUT_MS = 12_000
 
@@ -223,7 +232,7 @@ export async function expireXenditInvoice(invoiceId: string): Promise<ExpireInvo
   console.log(`${LOG} mematikan tagihan ${id} (kunci ${credentials.live ? 'LIVE' : 'test'})`)
 
   try {
-    const res = await fetch(xenditUrl(`${INVOICE_PATH}/${encodeURIComponent(id)}/expire`), {
+    const res = await fetch(xenditUrl(invoiceExpirePath(id)), {
       method: 'POST',
       headers: { Authorization: credentials.authHeader, 'Content-Type': 'application/json' },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
