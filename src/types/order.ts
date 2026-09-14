@@ -147,6 +147,17 @@ export type Order = {
   shipmentStatus?: "BOOKED" | "FAILED" | "CANCELLED" | "CANCEL_FAILED"
   shipmentError?: string // alasan kegagalan terakhir (untuk admin OMS)
   shipmentBookedAt?: string // ISO, kapan resi terbit
+  // Kapan KURIR menyatakan paket diterima — diisi otomatis dari peristiwa pelacakan, dan inilah
+  // yang memberi pembeli hak mengulas selama 14 hari (lihat lib/review-eligibility.ts).
+  //
+  // SENGAJA TERPISAH dari `status: 'Selesai'`. 'Selesai' itu final, tak bisa dibatalkan lewat UI,
+  // dan menghentikan sinkronisasi resi — karena itu ia tak pernah ditulis otomatis. Kolom ini
+  // menanggung hak ulas tanpa mengunci apa pun.
+  //
+  // Isinya waktu KITA MENGAMATI sinyal terkirim, bukan waktu yang diklaim kurir: timestamp
+  // peristiwa dari Mengantar adalah teks bebas yang sengaja tak pernah diparse. Selalu lebih
+  // lambat daripada penerimaan sesungguhnya, jadi jendela ulasan tak pernah tutup terlalu cepat.
+  deliveredAt?: string // ISO 8601
   // Identitas pengiriman di sisi MENGANTAR — bukan nomor invoice kita, bukan nomor resi.
   // Diperlukan untuk membatalkan penjemputan (DELETE /order), yang hanya menerima kedua nilai ini
   // dan menolak nomor resi. undefined pada pesanan yang dibooking sebelum 2026-09-09 sampai

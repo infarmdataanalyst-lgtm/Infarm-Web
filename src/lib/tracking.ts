@@ -109,10 +109,37 @@ export const COURIER_STATUS_MAP: { keywords: string[]; step: number; label: stri
 // `label: null` = teks tak dikenali → pemanggil menampilkan teks aslinya apa adanya (jangan dibuang:
 // bila pemetaan meleset, pembeli masih melihat kabar asli dari kurir). `step: -1` = tak menggerakkan
 // stepper.
+// Kata kunci sependek ini dicocokkan sebagai KATA UTUH, bukan potongan di tengah kata.
+//
+// Pemicunya `'pod'` (proof of delivery): tiga huruf yang bisa muncul di dalam kata lain, sementara
+// tahap 3 kini memberi pembeli HAK MENGULAS selama 14 hari. Satu kecocokan palsu berarti jendela
+// ulasan terbuka untuk paket yang belum sampai — dan jendelanya mulai berjalan sejak saat itu.
+// Kata yang lebih panjang tetap dicocokkan longgar: kurir kerap menyisipkannya di tengah kalimat
+// ("Delivered to reception"), dan tabrakan tak sengaja praktis mustahil pada kata sepanjang itu.
+const PANJANG_KATA_UTUH = 4
+
+function cocokKataKunci(text: string, kata: string): boolean {
+  if (kata.length > PANJANG_KATA_UTUH) return text.includes(kata)
+  // `text` sudah huruf kecil. Batasnya apa pun yang bukan huruf/angka — termasuk awal & akhir teks.
+  return new RegExp(`(^|[^a-z0-9])${kata}([^a-z0-9]|$)`).test(text)
+}
+
 export function mapCourierEvent(raw: string): { step: number; label: string | null } {
   const text = raw.toLowerCase()
-  const hit = COURIER_STATUS_MAP.find((m) => m.keywords.some((k) => text.includes(k)))
+  const hit = COURIER_STATUS_MAP.find((m) => m.keywords.some((k) => cocokKataKunci(text, k)))
   return hit ? { step: hit.step, label: hit.label } : { step: -1, label: null }
+}
+
+// Tahap yang berarti "paket sudah di tangan pembeli".
+export const DELIVERED_STEP = 3
+
+// Apakah daftar peristiwa kurir ini sudah menyatakan paket diterima.
+//
+// Satu pintu, dipakai ketiga pemicu pengisi `orders.delivered_at` (halaman /track, sinkronisasi
+// OMS, cron) supaya tak ada yang memakai ambang berbeda. `courierStatus` ikut masuk lewat
+// trackingLabelsOf — di sandbox `history` berisi data contoh, dan hanya `status` yang benar.
+export function isDeliveredByCourier(trackingLabels: string[]): boolean {
+  return stepFromTrackingEvents(trackingLabels) >= DELIVERED_STEP
 }
 
 // Tahap tertinggi yang tersirat dari daftar peristiwa kurir. -1 bila tak ada yang cocok.

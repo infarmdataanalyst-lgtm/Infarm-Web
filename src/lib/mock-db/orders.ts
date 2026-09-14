@@ -122,6 +122,9 @@ type OrderRow = {
   shipment_status?: string | null
   shipment_error?: string | null
   shipment_booked_at?: string | null
+  // Kapan kurir menyatakan paket diterima (migration 20260914120000) — optional, alasan sama
+  // seperti kolom baru lain di atas: PostgREST tak mengembalikan kolom yang belum ada.
+  delivered_at?: string | null
   // Identitas pengiriman di sisi Mengantar (migration 20260909120000) — optional, alasan sama.
   // Dipakai untuk MEMBATALKAN penjemputan; DELETE /order tak menerima nomor resi.
   mengantar_order_object_id?: string | null
@@ -299,6 +302,7 @@ function rowToOrder(row: OrderRow, items: OrderItem[], warehouseNames?: Map<stri
   }
   if (row.shipment_error) order.shipmentError = row.shipment_error
   if (row.shipment_booked_at) order.shipmentBookedAt = row.shipment_booked_at
+  if (row.delivered_at) order.deliveredAt = row.delivered_at
   if (row.mengantar_order_object_id) order.mengantarObjectId = row.mengantar_order_object_id
   if (row.mengantar_order_id) order.mengantarOrderId = row.mengantar_order_id
   if (row.mengantar_batch_id) order.mengantarBatchId = row.mengantar_batch_id
@@ -644,6 +648,81 @@ export async function readTrackingSyncCandidates(
     if (!row.nomor_invoice || !status || !trackingNumber) return []
     return [{ orderId: row.nomor_invoice, status, trackingNumber }]
   })
+}
+
+// === Tanggal terima dari kurir ===
+
+// Kandidat pemeriksaan "sudah diterima?" yang DISUSUN SENDIRI dari database, tanpa daftar invoice
+// dari pemanggil.
+//
+// Kenapa terpisah dari readTrackingSyncCandidates: fungsi itu menerima daftar invoice yang sedang
+// TAMPIL di halaman Pesanan OMS — bentuk yang tak bisa dipakai cron, karena cron tak punya layar
+// dan tak tahu harus menanyakan yang mana. Ini versinya yang mencari sendiri.
+//
+// Syaratnya sama (lunas + status masih bisa maju + punya resi) ditambah satu: `delivered_at`
+// masih kosong. Baris yang tanggalnya sudah terkunci tak perlu ditanyakan lagi ke kurir —
+// itulah yang membuat biaya cron ini menyusut sendiri seiring waktu, bukan tumbuh.
+//
+// Diurutkan dari yang TERLAMA supaya pesanan yang paling lama menunggu tak pernah tergeser ke
+// belakang antrean oleh pesanan baru saat jumlahnya melebihi `limit`.
+export async function readDeliveredCheckCandidates(
+  limit = 50,
+): Promise<TrackingSyncCandidate[]> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('orders')
+    .select('nomor_invoice, order_status, no_tracking')
+    .eq('status_pembayaran', PAYMENT_TO_DB['Lunas'])
+    .in('order_status', [STATUS_TO_DB['Diproses'], STATUS_TO_DB['Dikirim']])
+    .not('no_tracking', 'is', null)
+    .is('delivered_at', null)
+    .order('created_at', { ascending: true })
+    .limit(limit)
+
+  if (error) {
+    // Termasuk 42703 bila migration 20260914120000 belum dijalankan. Daftar kosong = cron
+    // melaporkan nol kandidat, bukan meledak — sama seperti penurunan bertahap di saveOrder.
+    console.error('Gagal membaca kandidat cek penerimaan:', error.message)
+    return []
+  }
+
+  const rows = (data as Pick<OrderRow, 'nomor_invoice' | 'order_status' | 'no_tracking'>[]) ?? []
+  return rows.flatMap((row) => {
+    const status = DB_TO_STATUS[row.order_status]
+    const trackingNumber = row.no_tracking?.trim()
+    if (!row.nomor_invoice || !status || !trackingNumber) return []
+    return [{ orderId: row.nomor_invoice, status, trackingNumber }]
+  })
+}
+
+// Mengunci tanggal terima sebuah pesanan. `true` bila baris ini yang barusan menuliskannya.
+//
+// `where delivered_at is null` bukan sekadar penghematan — ia yang membuat SCAN PERTAMA menang.
+// Tiga pemicu berbeda memanggil fungsi ini (halaman /track pembeli, sinkronisasi OMS, cron), dan
+// tanpa pagar itu setiap pemicu akan menimpa tanggalnya dengan "sekarang", menggeser tenggat
+// ulasan maju terus sehingga jendela 14 hari tak pernah benar-benar habis.
+//
+// `order_status` SENGAJA tidak ikut disentuh. Menaikkannya ke 'Selesai' akan mengunci pesanan
+// (status final, tak bisa dibatalkan lewat UI) dan menghentikan sinkronisasi resi, sehingga paket
+// yang ternyata retur ke pengirim berhenti terpantau. Pemisahan itulah seluruh alasan kolom ini ada.
+export async function markOrderDelivered(
+  orderId: string,
+  deliveredAtIso = new Date().toISOString(),
+): Promise<boolean> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('orders')
+    .update({ delivered_at: deliveredAtIso })
+    .eq('nomor_invoice', orderId)
+    .is('delivered_at', null)
+    .select('id')
+    .maybeSingle()
+
+  if (error) {
+    console.error(`[orders] gagal menandai ${orderId} diterima:`, error.message)
+    return false
+  }
+  return Boolean(data)
 }
 
 // Invoice pesanan yang pembayarannya SUDAH LEWAT TENGGAT dan tak akan pernah masuk.

@@ -55,6 +55,9 @@ type ReviewableItem = {
   // sama dengan yang dipakai endpoint tulis, sehingga alasannya tak pernah berbeda.
   blockCode?: ReviewBlockCode
   blockMessage?: string
+  // Batas akhir mengulas (ISO), hanya untuk baris yang MASIH boleh. Dikirim sebagai tanggal, bukan
+  // sisa hari, supaya angkanya tak basi bila halaman dibiarkan terbuka semalaman.
+  batasUlas?: string
 }
 
 export async function POST(request: Request) {
@@ -112,7 +115,10 @@ export async function POST(request: Request) {
     // dengan tombolnya mati. Membuangnya membuat pembeli kehilangan jejak pesanannya sendiri tanpa
     // satu pun penjelasan — dan "kenapa pesanan saya hilang" justru pertanyaan yang paling sering
     // sampai ke CS.
-    const kelayakan = evaluateReviewEligibility(order.status)
+    const kelayakan = evaluateReviewEligibility({
+      status: order.status,
+      deliveredAt: order.deliveredAt,
+    })
 
     // Produk yang SUDAH diulas tetap dilewati. Itu pekerjaan yang SELESAI, bukan pekerjaan yang
     // terhalang; menampilkannya hanya menambah baris tanpa menambah makna.
@@ -127,7 +133,9 @@ export async function POST(request: Request) {
         orderStatus: order.status ?? 'Tidak diketahui',
         reviewable: kelayakan.ok,
         ...(kelayakan.ok
-          ? {}
+          ? kelayakan.deadlineMs
+            ? { batasUlas: new Date(kelayakan.deadlineMs).toISOString() }
+            : {}
           : { blockCode: kelayakan.code, blockMessage: kelayakan.message }),
       })
     }

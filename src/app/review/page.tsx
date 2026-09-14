@@ -49,6 +49,23 @@ type ReviewableItem = {
   orderStatus: string
   reviewable: boolean
   blockMessage?: string
+  // Batas akhir mengulas (ISO), hanya untuk baris yang masih boleh. Ditampilkan sebagai TANGGAL,
+  // bukan hitung mundur: jendelanya tutup tengah malam WIB, jadi "tersisa 1 hari" ambigu —
+  // sedangkan "sampai 15 September" tak bisa disalahpahami, dan tak basi bila halaman ini
+  // dibiarkan terbuka semalaman.
+  batasUlas?: string
+}
+
+// Tanggal batas dalam kata, zona WIB — zona yang sama dengan yang memutuskan tutupnya jendela.
+function formatBatas(iso: string): string | null {
+  const ms = Date.parse(iso)
+  if (Number.isNaN(ms)) return null
+  return new Intl.DateTimeFormat('id-ID', {
+    timeZone: 'Asia/Jakarta',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(new Date(ms))
 }
 
 const PLACEHOLDER = '/images/product-placeholder.png'
@@ -246,6 +263,11 @@ export default function ReviewPage() {
                               persis dengan yang akan ditolak endpoint tulis bila tetap dicoba. */}
                           {!it.reviewable && it.blockMessage && (
                             <p className="mt-1 text-xs text-gray-500">{it.blockMessage}</p>
+                          )}
+                          {it.reviewable && it.batasUlas && formatBatas(it.batasUlas) && (
+                            <p className="mt-1 text-xs text-gray-500">
+                              Bisa diulas sampai {formatBatas(it.batasUlas)}
+                            </p>
                           )}
                         </div>
                         {it.reviewable ? (

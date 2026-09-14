@@ -17,8 +17,13 @@ import TrackSearchForm from '@/components/track/TrackSearchForm'
 import ShippingStepper from '@/components/track/ShippingStepper'
 import TrackingDetail from '@/components/track/TrackingDetail'
 import OrderItemsCard from '@/components/track/OrderItemsCard'
-import { getOrderByOrderId } from '@/lib/mock-db/orders'
-import { displayStatus, isOrderCancelled, resolveStepIndex } from '@/lib/tracking'
+import { getOrderByOrderId, markOrderDelivered } from '@/lib/mock-db/orders'
+import {
+  displayStatus,
+  isDeliveredByCourier,
+  isOrderCancelled,
+  resolveStepIndex,
+} from '@/lib/tracking'
 import { fetchTrackingDetail, trackingLabelsOf } from '@/lib/mengantar-tracking'
 import { toTitleCase } from '@/lib/mengantar'
 import { maskName, maskPhone, maskStreet } from '@/lib/mask'
@@ -98,6 +103,19 @@ async function TrackResult({ order }: { order: Order }) {
   // berakhir "Returned to Sender" bertanggal 25 Jun 2026 sementara status paketnya "DELIVERED" per
   // 4 Sep 15:25 — riwayat sandbox memang data contoh bawaan Mengantar, sama untuk semua resi.
   const eventLabels = trackingLabelsOf(trackingResult)
+
+  // === Mengunci tanggal terima, gratis ===
+  //
+  // Halaman ini SUDAH memanggil kurir beberapa baris di atas, jadi jawabannya sudah di tangan —
+  // menyimpannya tak menambah satu pun panggilan. Dan yang membuka halaman ini justru orang yang
+  // paling ingin mengulas, sehingga haknya terbuka saat itu juga alih-alih menunggu cron harian
+  // atau menunggu admin membuka OMS.
+  //
+  // Aman dipanggil saat render: `markOrderDelivered` dijaga `where delivered_at is null`, jadi
+  // pemanggilan berulang (render ulang, prefetch, pembeli memuat ulang halaman) tak menggeser
+  // tanggalnya. `order_status` tidak disentuh sama sekali.
+  if (isDeliveredByCourier(eventLabels)) await markOrderDelivered(order.orderId)
+
   const currentStep = resolveStepIndex(order.status, eventLabels)
   // Badge memakai sumber yang SAMA dengan stepper, bukan `order.status` mentah — kalau tidak,
   // keduanya bisa saling bertentangan di layar yang sama.

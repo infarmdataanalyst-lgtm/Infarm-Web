@@ -80,7 +80,10 @@ export async function POST(request: Request) {
   // /review, jadi mustahil ada celah antara apa yang ditawarkan layar dan apa yang diterima di sini.
   // Sebelumnya pemeriksaan ini hanya menolak 'Dibatalkan', sehingga pesanan yang belum dibayar pun
   // bisa diulas.
-  const kelayakan = evaluateReviewEligibility(order.status)
+  const kelayakan = evaluateReviewEligibility({
+    status: order.status,
+    deliveredAt: order.deliveredAt,
+  })
   if (!kelayakan.ok) {
     return NextResponse.json({ error: kelayakan.message, code: kelayakan.code }, { status: 409 })
   }

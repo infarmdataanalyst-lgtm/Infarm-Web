@@ -18,9 +18,13 @@
 import { NextResponse } from 'next/server'
 import { revalidatePath } from 'next/cache'
 import { requireAdmin } from '@/lib/oms-guard'
-import { readTrackingSyncCandidates, updateOrderStatus } from '@/lib/mock-db/orders'
+import {
+  readTrackingSyncCandidates,
+  updateOrderStatus,
+  markOrderDelivered,
+} from '@/lib/mock-db/orders'
 import { fetchTrackingDetail, trackingLabelsOf } from '@/lib/mengantar-tracking'
-import { planStatusAdvance } from '@/lib/tracking'
+import { isDeliveredByCourier, planStatusAdvance } from '@/lib/tracking'
 import type { OrderFulfillmentStatus } from '@/types/order'
 
 // createAdminClient (Supabase) butuh runtime Node.js, bukan Edge
@@ -130,7 +134,18 @@ async function syncOne(candidate: {
   // trackingLabelsOf, BUKAN result.events saja: status paket terkini (`courierStatus`) ikut
   // menggerakkan tahap, dan OMS harus memakai daftar yang SAMA PERSIS dengan halaman lacak pembeli.
   // Kalau tidak, pembeli bisa melihat "Sampai Tujuan" sementara OMS masih berkata "Diproses".
-  const path = planStatusAdvance(candidate.status, trackingLabelsOf(result))
+  const labels = trackingLabelsOf(result)
+
+  // Tanggal terima dikunci TERPISAH dari kenaikan status, dan sengaja lebih dulu.
+  //
+  // Keduanya menjawab pertanyaan berbeda: `order_status` adalah urusan administratif yang berhenti
+  // di 'Dikirim' karena 'Selesai' mengunci pesanan, sedangkan `delivered_at` adalah hak ulas
+  // pembeli. Menaruhnya di sini berarti hak itu tak pernah bergantung pada berhasil-tidaknya
+  // penulisan status di bawah — dan pesanan yang statusnya memang sudah benar ('Dikirim', jalur
+  // `path.length === 0`) tetap mendapat tanggal terimanya.
+  if (isDeliveredByCourier(labels)) await markOrderDelivered(candidate.orderId)
+
+  const path = planStatusAdvance(candidate.status, labels)
   if (path.length === 0) return { status: 'unchanged' }
 
   let current = candidate.status
