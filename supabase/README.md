@@ -43,6 +43,36 @@ lubangnya bukan pada SQL-nya melainkan pada tidak adanya catatan.
 Kalau ragu sebuah file sudah jalan atau belum: **jangan dicatat**. Ledger yang berbohong lebih
 buruk daripada ledger kosong, karena ia menghentikan orang dari memeriksa.
 
+## ⚠️ Tabel & fungsi baru TIDAK otomatis terbuka — beri izin eksplisit
+
+Sejak 2026-09-14 dua "pintu otomatis" sengaja ditutup (SEC-055):
+
+- **Dashboard → Integrations → Data API → Settings → "Automatically expose new tables"
+  dimatikan.** Tabel baru tak lagi otomatis diberi izin ke peran Data API — termasuk
+  **`service_role`**, bukan hanya `anon`.
+- **Fungsi baru**: migration `20260914130000_cabut_execute_fungsi_publik.sql` mengubah default
+  privileges supaya fungsi yang lahir tidak bisa dipanggil `anon`/`authenticated`.
+
+Akibatnya, **setiap migration yang membuat tabel atau fungsi baru wajib menulis izinnya sendiri.**
+Tanpa itu, fitur baru gagal dengan `permission denied for table …` walau kodenya memakai
+`createAdminClient` — service_role memang menembus RLS, tapi tetap butuh izin tabel.
+
+```sql
+-- Tabel yang hanya diakses server (pola default proyek ini)
+grant select, insert, update, delete on public.nama_tabel to service_role;
+
+-- HANYA bila tabel memang dibaca publik lewat anon key + RLS (mis. ulasan):
+-- grant select on public.nama_tabel to anon;
+
+-- Fungsi: cabut dari PUBLIC dulu (PostgreSQL memberinya ke semua orang secara bawaan),
+-- lalu beri ke service_role saja.
+revoke execute on function public.nama_fungsi(tipe_arg) from public, anon, authenticated;
+grant execute on function public.nama_fungsi(tipe_arg) to service_role;
+```
+
+Jangan menyalakan kembali tombol auto-expose sebagai jalan pintas. Izin yang ditulis di migration
+terbaca saat review; izin yang diberikan diam-diam oleh tombol tidak.
+
 ## Verifikasi hasil
 
 - Menu **Table Editor** → cek tabel muncul dengan kolom yang benar.
