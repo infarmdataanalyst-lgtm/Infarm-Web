@@ -1531,9 +1531,13 @@ export async function resolveRefund(
 // Pola yang sama dengan CAS pembatalan pesanan (SEC-020) — bedanya, yang dilindungi di sini bukan
 // stok yang bisa dikoreksi, melainkan transfer keluar yang permanen.
 //
-// `reference` diisi kunci idempotency milik KITA, bukan nomor dari Xendit: nomor itu belum ada
-// pada titik ini, dan baris SEDANG_DIPROSES tanpa referensi apa pun tak bisa ditelusuri ke
-// percobaan mana pun. Nomor asli Xendit menimpanya di finalizeClaimedRefund.
+// `reference` diisi id CHARGE (`ewc_…`), bukan nomor refund: nomor refund belum ada pada titik ini,
+// sedangkan id charge sudah diketahui dan disebut kembali oleh Xendit di callback sebagai
+// `data.charge_id`. Jadi callback yang tiba sebelum balasan HTTP-nya diproses tetap bisa menemukan
+// baris ini. Nomor refund dari Xendit (`ewr_…`) menimpanya di finalizeClaimedRefund.
+//
+// Dulu diisi kunci acak. Callback secepat itu pasti tak menemukan apa pun dan tak pernah dikirim
+// ulang, karena webhook membalas 200 untuk callback yang tak cocok.
 export async function claimRefundForProcessing(
   orderId: string,
   claim: { reference: string; by: string; amount: number; note: string },

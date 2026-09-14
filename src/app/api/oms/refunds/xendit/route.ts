@@ -12,8 +12,9 @@
 // kembali — yang kalah baru diberi tahu setelah uangnya terlanjur keluar.
 //
 // Sekarang barisnya diklaim (PERLU_REFUND → SEDANG_DIPROSES, atomik di database) SEBELUM Xendit
-// disentuh. Yang kalah klaim berhenti tanpa memanggil apa pun. Kunci klaimnya sekaligus dikirim
-// sebagai X-IDEMPOTENCY-KEY, jaring kedua bila permintaannya terkirim ulang di luar kendali kita.
+// disentuh. Yang kalah klaim berhenti tanpa memanggil apa pun. Klaim menyimpan id charge (`ewc_…`)
+// yang juga dibawa callback, dan setiap percobaan mengirim X-IDEMPOTENCY-KEY acak sebagai jaring
+// kedua bila permintaannya terkirim ulang di luar kendali kita.
 //
 // ── Kenapa hanya e-wallet ──
 // Terverifikasi 2026-09-10: pembayaran lewat Virtual Account / transfer bank TIDAK BISA di-refund
@@ -176,7 +177,24 @@ export async function POST(request: Request) {
   )
   if (batasInvoice) return batasInvoice
 
-  const claimReference = `claim-${randomUUID()}`
+  // === Isi klaim: id charge, BUKAN kunci acak ===
+  //
+  // refund_reference menyimpan id charge (`ewc_…`) saat klaim. Nilai itu sudah diketahui SEBELUM
+  // Xendit dipanggil, dan Xendit menyebutnya kembali di callback sebagai `data.charge_id` — jadi
+  // callback yang tiba sebelum balasan HTTP-nya sampai ke server kita tetap bisa menemukan barisnya.
+  // Nomor refund (`ewr_…`) menimpanya di finalizeClaimedRefund begitu balasan itu diterima; callback
+  // mencoba keduanya.
+  //
+  // Versi sebelumnya menyimpan kunci acak di sini, sehingga callback yang datang lebih cepat daripada
+  // balasan HTTP pasti tak menemukan apa pun, dibalas 200, dan tak pernah dikirim ulang. Terukur
+  // 2026-09-14 callback tiba 3,4 detik SESUDAH penyimpanan, jadi itu bukan penyebab kasus pertama —
+  // tapi `void` di hari yang sama bisa selesai seketika, dan jaraknya bisa berbalik.
+  //
+  // Kunci idempotency SENGAJA dipisah dan tetap acak per percobaan. Kalau disamakan dengan id charge,
+  // percobaan kedua yang sah setelah penolakan pasti akan dijawab Xendit dengan hasil penolakan yang
+  // sama dari cache idempotency-nya — dan pesanan itu tak akan pernah bisa dikembalikan lewat sini.
+  const claimReference = invoice.payment.paymentId
+  const idempotencyKey = `refund-${randomUUID()}`
 
   const claimed = await claimRefundForProcessing(orderId, {
     reference: claimReference,
@@ -204,7 +222,7 @@ export async function POST(request: Request) {
     chargeId: invoice.payment.paymentId,
     method: metode,
     reason: 'CANCELLATION',
-    idempotencyKey: claimReference,
+    idempotencyKey,
   })
 
   if (!hasil.ok) {
@@ -240,7 +258,8 @@ export async function POST(request: Request) {
 
   // ── Selesai, atau baru diterima? ──
   // `void` tuntas saat responsnya diterima. `refunds` ASINKRON: ia menjawab PENDING, dan hasil
-  // sesungguhnya baru datang lewat callback refund.succeeded/refund.failed ~1 hari kerja kemudian.
+  // sesungguhnya baru datang lewat callback `ewallet.refund` — terukur di mode test 3,4 detik
+  // kemudian, di mode live bisa sampai ~1 hari kerja.
   //
   // Menuliskan SUDAH_REFUND untuk keduanya — seperti versi pertama kode ini — berarti menyatakan
   // dana sudah kembali padahal masih diproses. Kalau kemudian gagal, tak seorang pun akan tahu:
@@ -261,9 +280,45 @@ export async function POST(request: Request) {
   })
 
   if (!updated) {
-    // Uang sudah dikembalikan tapi hasilnya gagal dicatat. BEDA dari versi sebelumnya: barisnya
-    // sudah berstatus SEDANG_DIPROSES sejak klaim, jadi ia TIDAK bisa dikembalikan dua kali —
-    // yang hilang hanya catatan penutupnya, bukan pagarnya.
+    // Penulisan penutup kalah — dan ada tiga kemungkinan yang artinya berbeda jauh, jadi barisnya
+    // dibaca ulang dulu sebelum admin diberi tahu apa pun.
+    //
+    // Klaim kini menyimpan id charge yang juga dibawa callback, sehingga callback yang tiba lebih
+    // cepat daripada balasan HTTP ini bisa menutup barisnya lebih dulu. CAS di finalizeClaimedRefund
+    // lalu wajar kalah. Melaporkannya sebagai "gagal dicatat" akan membuat admin memeriksa dashboard
+    // dan menutup manual pengembalian yang sebenarnya sudah beres dengan sendirinya.
+    const terkini = await getOrderByOrderId(orderId)
+
+    if (terkini?.refundStatus === 'SUDAH_REFUND') {
+      console.log(`[oms/refunds/xendit] ${orderId} sudah ditutup callback sebelum balasan HTTP diproses.`)
+      return NextResponse.json({
+        success: true,
+        metode,
+        reference: hasil.reference || claimReference,
+        status: 'SUCCEEDED',
+        tuntas: true,
+        pesan: 'Dana sudah dikembalikan (dikonfirmasi Xendit).',
+        order: terkini,
+      })
+    }
+
+    if (terkini?.refundStatus === 'PERLU_REFUND') {
+      // Callback GAGAL tiba lebih dulu dan sudah mengembalikan barisnya ke daftar kerja.
+      console.warn(`[oms/refunds/xendit] ${orderId} dinyatakan GAGAL lewat callback sebelum balasan HTTP diproses.`)
+      return NextResponse.json(
+        {
+          error:
+            'Xendit menyatakan pengembalian dana ini GAGAL. Pesanan sudah kembali ke daftar dan boleh dicoba lagi.',
+          code: 'REFUND_FAILED_BY_CALLBACK',
+          metode,
+        },
+        { status: 502 },
+      )
+    }
+
+    // Benar-benar gagal ditulis. Uang sudah dikembalikan, tapi barisnya sudah berstatus
+    // SEDANG_DIPROSES sejak klaim, jadi ia TIDAK bisa dikembalikan dua kali — yang hilang hanya
+    // catatan penutupnya, bukan pagarnya.
     console.error(
       `[oms/refunds/xendit] ${orderId} UANG SUDAH DIKEMBALIKAN (${metode}, ref ${hasil.reference || claimReference}) ` +
         'TAPI HASILNYA GAGAL DICATAT — baris tetap SEDANG_DIPROSES, tutup manual setelah dicek.',

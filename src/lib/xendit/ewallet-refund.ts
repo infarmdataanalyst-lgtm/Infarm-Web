@@ -109,7 +109,9 @@ export type EwalletRefundInput = {
   // Kunci idempotency (header X-IDEMPOTENCY-KEY). Xendit menjawab permintaan berkunci sama dengan
   // hasil yang SAMA alih-alih memproses ulang — jaring kedua di bawah klaim database, untuk kasus
   // permintaannya terkirim dua kali di luar kendali kita (retry platform, browser mengirim ulang).
-  // Kuncinya = referensi klaim, jadi satu klaim tak akan pernah menjadi dua transfer.
+  // Kuncinya acak per percobaan dan SENGAJA berbeda dari refund_reference (yang berisi id charge):
+  // percobaan ulang yang sah setelah penolakan pasti harus menjadi permintaan baru, bukan dijawab
+  // Xendit dengan penolakan lama dari cache idempotency-nya.
   idempotencyKey?: string
 }
 

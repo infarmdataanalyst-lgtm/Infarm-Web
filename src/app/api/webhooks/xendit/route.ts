@@ -34,6 +34,11 @@ import {
   resolvePaymentOutcome,
   verifyCallbackToken,
 } from '@/lib/xendit/webhook'
+import {
+  callbackEventName,
+  parseRefundCallback,
+  type RefundCallback,
+} from '@/lib/xendit/refund-callback'
 import type { Order } from '@/types/order'
 
 // createAdminClient (Supabase) + node:crypto butuh runtime Node.js, bukan Edge
@@ -77,8 +82,20 @@ export async function POST(request: Request) {
   if (!parsed) {
     // Bisa jadi callback jenis lain (disbursement, dll) yang belum kita tangani. Balas 200 agar
     // Xendit tidak mengulang terus-menerus untuk sesuatu yang memang bukan urusan endpoint ini.
-    console.warn(`${LOG} payload tanpa external_id/reference_id/status — dilewati`)
-    return NextResponse.json({ received: true, handled: false, reason: 'UNSUPPORTED_PAYLOAD' })
+    // Nama event ikut dicatat. Callback refund eWallet pertama lenyap di sini dengan pesan yang tak
+    // menyebut bahwa ia `ewallet.refund` — padahal nama itu saja sudah cukup untuk langsung menemukan
+    // penyebabnya. Callback eWallet lain yang belum ditangani (mis. `ewallet.void`) akan terlihat
+    // dengan cara yang sama. Aman dicatat: token callback sudah diverifikasi di langkah 1.
+    const eventName = callbackEventName(body)
+    console.warn(
+      `${LOG} payload tak dikenali${eventName ? ` (event=${eventName})` : ''} — tanpa external_id/reference_id/status, dilewati`,
+    )
+    return NextResponse.json({
+      received: true,
+      handled: false,
+      reason: 'UNSUPPORTED_PAYLOAD',
+      ...(eventName ? { event: eventName } : {}),
+    })
   }
 
   console.log(
@@ -121,53 +138,16 @@ export async function POST(request: Request) {
 
 // === Callback pengembalian dana ===
 //
-// Bentuk terdokumentasi (docs.xendit.co → refund webhook notification):
-//   { "event": "refund.succeeded" | "refund.failed",
-//     "data": { "id": "rfd-…", "payment_id": "ewc-…", "status": "SUCCEEDED"|"FAILED"|…,
-//               "amount": "10000", "channel_code": "SHOPEEPAY", "failure_code": null, … } }
+// Pengenalan dan pemetaan field-nya ada di src/lib/xendit/refund-callback.ts — modul murni yang bisa
+// diuji dengan payload sungguhan tanpa menjalankan server. Dipindah dari sini setelah 2026-09-14
+// terbukti bentuk yang ditulis dari dokumentasi tak cocok dengan callback yang benar-benar dikirim.
 //
 // ⚠️ TIDAK memuat `external_id` — jadi nomor invoice kita tak ada di mana pun di payload ini.
-// Penghubung satu-satunya adalah nomor referensi yang kita simpan saat pengembalian dimulai.
-type RefundCallback = {
-  event: string
-  /** `data.id` — nomor referensi pengembalian. */
-  id: string
-  /** `data.payment_id` — id charge aslinya (`ewc_…`). Cadangan pencocokan. */
-  paymentId: string
-  status: string
-  detail: string
-}
-
-function asText(v: unknown): string {
-  return typeof v === 'string' ? v.trim() : typeof v === 'number' ? String(v) : ''
-}
-
-// null = bukan callback pengembalian dana. Pengenalannya lewat `event` yang berawalan 'refund.',
-// BUKAN lewat ada-tidaknya field tertentu: callback lain juga punya `data` dan `status`, dan
-// menebak dari bentuk akan membuat callback asing tak sengaja diperlakukan sebagai pengembalian.
-function parseRefundCallback(body: unknown): RefundCallback | null {
-  if (typeof body !== 'object' || body === null) return null
-  const root = body as Record<string, unknown>
-  const event = asText(root.event)
-  if (!event.toLowerCase().startsWith('refund.')) return null
-
-  const data =
-    typeof root.data === 'object' && root.data !== null
-      ? (root.data as Record<string, unknown>)
-      : {}
-
-  return {
-    event,
-    id: asText(data.id),
-    paymentId: asText(data.payment_id),
-    status: asText(data.status),
-    detail: [asText(data.status), asText(data.failure_code)].filter(Boolean).join(' / '),
-  }
-}
+// Penghubung satu-satunya adalah nomor yang kita simpan di refund_reference.
 
 async function handleRefundCallback(refund: RefundCallback) {
   console.log(
-    `${LOG} callback ${refund.event} ref=${refund.id || '-'} charge=${refund.paymentId || '-'} status=${refund.status || '-'}`,
+    `${LOG} callback ${refund.event} ref=${refund.id || '-'} charge=${refund.chargeId || '-'} status=${refund.status || '-'}`,
   )
 
   // Keberhasilan ditentukan `data.status`, bukan nama event-nya. Keduanya hampir selalu sepakat,
@@ -189,11 +169,14 @@ async function handleRefundCallback(refund: RefundCallback) {
     return NextResponse.json({ received: true, handled: false, reason: 'UNKNOWN_REFUND_STATUS' })
   }
 
-  // Dicoba dengan `data.id` lebih dulu, lalu `data.payment_id`. Dokumentasi menyebut respons
-  // pengembalian eWallet mengembalikan id ber-awalan `ewc_`, sedangkan contoh callback-nya
-  // memakai `rfd-` — belum terbukti mana yang tersimpan di refund_reference kita. Mencoba
-  // keduanya menutup ketidakpastian itu tanpa menebak salah satunya.
-  const kandidat = [refund.id, refund.paymentId].filter(Boolean)
+  // Dicoba dengan nomor refund (`data.id`) lebih dulu, lalu id charge-nya.
+  //
+  // Keduanya perlu karena isi refund_reference BERGANTI selama prosesnya: saat diklaim ia berisi id
+  // charge (`ewc_…`), lalu ditimpa nomor refund (`ewr_…`) begitu balasan HTTP Xendit diterima.
+  // Callback yang tiba sesudah pergantian itu cocok lewat nomor refund — terukur 2026-09-14,
+  // `data.id` sama persis dengan yang tersimpan. Callback yang tiba SEBELUMNYA hanya bisa cocok lewat
+  // id charge.
+  const kandidat = [refund.id, refund.chargeId].filter(Boolean)
   for (const ref of kandidat) {
     const hasil = await settleRefundByReference(ref, berhasil, refund.detail || status)
     if (hasil) {
