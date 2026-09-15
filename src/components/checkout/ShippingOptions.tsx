@@ -48,7 +48,19 @@ export default function ShippingOptions({
   selected: WarehouseShippingOption | null
   onSelect: (courier: WarehouseShippingOption | null) => void
 }) {
-  const [couriers, setCouriers] = useState<WarehouseShippingOption[]>([])
+  // Daftar tarif DISIMPAN BERSAMA kunci permintaan yang menghasilkannya (tujuan + berat + isi
+  // keranjang), lalu hanya dipakai bila kuncinya sama dengan permintaan yang berlaku sekarang.
+  //
+  // Versi lama menyimpan daftarnya polos. Saat pembeli mengganti alamat, induk mereset pilihan
+  // kurir ke null, tapi daftar ALAMAT LAMA masih tinggal di state selama tarif baru diambil —
+  // efek auto-pilih di bawah langsung memilih "yang termurah" dari daftar basi itu. Pembeli
+  // melihat ongkir alamat lama, dan baru berubah kalau ia membuka sheet lalu menekan Konfirmasi.
+  // Dengan kunci, daftar lama otomatis tak terlihat begitu permintaannya berubah — tanpa perlu
+  // setState di dalam efek untuk mengosongkannya.
+  const [hasilTarif, setHasilTarif] = useState<{
+    kunci: string
+    options: WarehouseShippingOption[]
+  }>({ kunci: '', options: [] })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   // Alasan daftar kosong. Dipisah dari `error` karena maknanya beda bagi buyer: `error` layak
@@ -70,9 +82,16 @@ export default function ShippingOptions({
     [items],
   )
 
+  // Kunci permintaan tarif yang berlaku SEKARANG. Harus dibentuk sama persis dengan `kunci` di
+  // efek fetch di bawah — keduanya dicocokkan untuk memutuskan apakah daftar tarif masih berlaku.
+  const kunciPermintaan = `${destinationId}|${weight}|${itemsKey}`
+
   // === Fetch ongkir otomatis saat alamat tujuan / berat / isi keranjang berubah (atau "Coba lagi") ===
   useEffect(() => {
     if (!destinationId) return
+    // Kunci yang MELEKAT pada hasil tarikan ini (lihat `hasilTarif`). Sama bentuknya dengan
+    // `kunciPermintaan` di luar efek; dibentuk ulang di sini supaya efek tak bergantung padanya.
+    const kunci = `${destinationId}|${weight}|${itemsKey}`
     const ctrl = new AbortController()
     // items dibangun ulang dari itemsKey agar efek ini tidak bergantung pada referensi array
     const parsedItems = itemsKey
@@ -116,7 +135,7 @@ export default function ShippingOptions({
           ctrl.signal,
         )
         if (ctrl.signal.aborted) return
-        setCouriers(options)
+        setHasilTarif({ kunci, options })
         if (options.length === 0) {
           if (reason === 'ESTIMATE_UNAVAILABLE') {
             // Semua gudang gagal/timeout → layak dicoba ulang, bukan alamatnya yang salah
@@ -138,11 +157,11 @@ export default function ShippingOptions({
         // `aborted` saja menelan keduanya dan mengembalikan kerangka tak berujung.
         if (kehabisanWaktu) {
           setError('Gagal memuat ongkos kirim, silakan coba lagi')
-          setCouriers([])
+          setHasilTarif({ kunci, options: [] })
         } else if (!ctrl.signal.aborted) {
           // Pesan dari server dipakai bila ada (mis. 429 "terlalu banyak percobaan")
           setError(err instanceof Error ? err.message : 'Gagal memuat ongkos kirim, silakan coba lagi')
-          setCouriers([])
+          setHasilTarif({ kunci, options: [] })
         }
       } finally {
         clearTimeout(timer)
@@ -160,7 +179,15 @@ export default function ShippingOptions({
 
   // Server sudah memfilter kurir (daftar putih J&T + yang benar-benar melayani) dan mengurutkan
   // termurah; pengurutan diulang di sini sebagai jaring pengaman bila bentuk respons berubah.
-  const supported = useMemo(() => [...couriers].sort((a, b) => a.price - b.price), [couriers])
+  // Daftar yang kuncinya tak cocok dengan permintaan sekarang dianggap KOSONG — artinya tarif
+  // untuk alamat/berat/keranjang ini belum tiba, bukan tarif lama yang masih boleh dipakai.
+  const supported = useMemo(
+    () =>
+      hasilTarif.kunci === kunciPermintaan
+        ? [...hasilTarif.options].sort((a, b) => a.price - b.price)
+        : [],
+    [hasilTarif, kunciPermintaan],
+  )
 
   // Auto-pilih opsi termurah saat baru dimuat dan buyer belum memilih apa pun.
   //
@@ -189,10 +216,22 @@ export default function ShippingOptions({
     // `POST /api/orders/create` menolaknya dengan 409 SHIPPING_MISMATCH tepat saat ia menekan
     // bayar — kegagalan di titik paling mahal.
     //
-    // Dicocokkan lewat optionKey (gudang + kurir + harga), jadi perubahan harga sekalipun
-    // terhitung "tak ada lagi" dan memicu penggantian.
-    const masihAda = supported.some((c) => optionKey(c) === optionKey(selected))
-    if (!masihAda) onSelect(supported[0])
+    // optionKey hanya gudang + kurir — BUKAN harga. Komentar lama di sini mengklaim harga ikut
+    // dicocokkan, dan klaim itu keliru: karena seluruh pilihan adalah J&T dari gudang yang sama,
+    // tarif alamat lama selalu dianggap "masih ada" dan harganya dibiarkan basi. Karena itu harga
+    // dan estimasi kini dibandingkan terpisah.
+    const padanan = supported.find((c) => optionKey(c) === optionKey(selected))
+    if (!padanan) {
+      // Gudang/kurir pilihan tak lagi melayani → jatuh ke yang termurah.
+      onSelect(supported[0])
+    } else if (
+      padanan.price !== selected.price ||
+      padanan.estimatedDate !== selected.estimatedDate
+    ) {
+      // Gudang/kurir yang sama, tarif berubah → ambil tarif barunya, pertahankan gudang pilihan
+      // pembeli. Tak berulang: sesudah ini `selected` identik dengan padanannya.
+      onSelect(padanan)
+    }
 
     // onSelect sengaja tak masuk dependency: identitasnya bisa berubah tiap render induk
     // (fungsi inline), yang akan membuat efek ini berjalan berulang.
@@ -215,9 +254,14 @@ export default function ShippingOptions({
     setOpen(false)
   }
 
+  // Saat alamat baru saja diganti, pilihan sudah direset induk dan tarif baru sedang diambil.
+  // Menampilkan "Pilih Kurir Pengiriman" di jeda itu terbaca seolah pembeli harus bertindak,
+  // padahal tarifnya akan terisi sendiri sebentar lagi.
   const triggerValue = selected
     ? `${selected.name} — ${formatRupiah(selected.price)} (${selected.estimatedDate})`
-    : 'Pilih Kurir Pengiriman'
+    : loading
+      ? 'Menghitung ongkos kirim…'
+      : 'Pilih Kurir Pengiriman'
 
   return (
     <>
