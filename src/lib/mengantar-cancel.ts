@@ -117,7 +117,7 @@ function tanpaKunci(text: string, key: string): string {
   }
   // Jaring kedua: segmen apa pun di posisi kunci, kalau-kalau Mengantar memantulkannya dalam
   // bentuk lain (mis. sebagian ter-escape) sehingga pencocokan harfiah di atas meleset.
-  return bersih.replace(/[/]api[/]public[/][^/s]+/g, "/api/public/" + RAHASIA)
+  return bersih.replace(/[/]api[/]public[/][^/\s]+/g, "/api/public/" + RAHASIA)
 }
 
 // Membatalkan SATU pengiriman di Mengantar.
