@@ -18,6 +18,8 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { readWarehouses } from '@/lib/mock-db/warehouses'
 import { recordOrderStockChanges } from '@/lib/stock-audit'
 import type { RevenueOrderRow } from '@/lib/dashboard-revenue'
+import { paymentMethodLabel } from '@/lib/payment-method'
+import type { OmsSearchResult } from '@/types/oms-search'
 import type {
   Order,
   OrderItem,
@@ -876,6 +878,141 @@ async function readOrdersByColumn(
   }
 
   return rows.map((r) => rowToOrder(r, itemsByOrder.get(r.id) ?? []))
+}
+
+// === Pencarian cepat header OMS ===
+//
+// Dipakai GET /api/oms/search. Tiga jalur (invoice/resi, nomor HP, nama) sengaja memakai satu
+// daftar kolom RAMPING yang sama: panel hasil tak menampilkan alamat, email, nomor HP, maupun item,
+// jadi kolom itu tak ikut dibaca sama sekali — data pribadi yang tak diambil tak mungkin bocor.
+
+// Batas hasil pencarian nama/HP. Admin mencari satu pembeli, bukan menelusuri daftar pelanggan.
+export const OMS_SEARCH_RESULT_LIMIT = 20
+
+const OMS_SEARCH_COLUMNS =
+  'nomor_invoice, nama_customer, created_at, order_status, status_pembayaran, metode_pembayaran, ' +
+  'nama_ekspedisi, no_tracking, warehouse_id, jumlah_total, refund_status'
+
+type OmsSearchRow = Pick<
+  OrderRow,
+  | 'nomor_invoice'
+  | 'nama_customer'
+  | 'created_at'
+  | 'order_status'
+  | 'status_pembayaran'
+  | 'metode_pembayaran'
+  | 'nama_ekspedisi'
+  | 'no_tracking'
+  | 'warehouse_id'
+  | 'jumlah_total'
+  | 'refund_status'
+>
+
+// Baris hasil pencarian tanpa `matchedBy` — kolom itu diputuskan pemanggil yang tahu apa yang dicari.
+export type OmsSearchRowResult = Omit<OmsSearchResult, 'matchedBy'>
+
+async function toSearchResults(rows: OmsSearchRow[]): Promise<OmsSearchRowResult[]> {
+  const warehouseNames = new Map<string, string>()
+  if (rows.some((r) => r.warehouse_id)) {
+    for (const w of await readWarehouses()) warehouseNames.set(w.id, w.nama)
+  }
+  return rows.map((row) => {
+    const result: OmsSearchRowResult = {
+      orderId: row.nomor_invoice,
+      customerName: row.nama_customer,
+      date: row.created_at,
+      paymentStatus: DB_TO_PAYMENT[row.status_pembayaran] ?? 'Menunggu',
+      totalAmount: row.jumlah_total,
+    }
+    const status = DB_TO_STATUS[row.order_status]
+    if (status) result.status = status
+    const methodLabel = paymentMethodLabel(row.metode_pembayaran)
+    if (methodLabel) result.paymentMethodLabel = methodLabel
+    if (row.nama_ekspedisi) result.courier = row.nama_ekspedisi
+    if (row.no_tracking) result.trackingNumber = row.no_tracking
+    const warehouseName = row.warehouse_id ? warehouseNames.get(row.warehouse_id) : undefined
+    if (warehouseName) result.warehouseName = warehouseName
+    if (
+      row.refund_status === 'PERLU_REFUND' ||
+      row.refund_status === 'SEDANG_DIPROSES' ||
+      row.refund_status === 'SUDAH_REFUND' ||
+      row.refund_status === 'TIDAK_PERLU'
+    ) {
+      result.refundStatus = row.refund_status
+    }
+    return result
+  })
+}
+
+// Mencari pesanan yang nomor invoice ATAU nomor resinya ada di `tokens`, terbaru dulu.
+//
+// Dua `.in()` terpisah, bukan satu `.or()`: nilai `.or()` dirangkai sebagai teks filter PostgREST,
+// sedangkan `.in()` terparameter penuh. Masing-masing token juga dicoba dalam HURUF BESAR karena
+// invoice & resi tersimpan kapital sementara admin sering mengetik huruf kecil.
+export async function searchOrdersByInvoiceOrTracking(
+  tokens: string[],
+): Promise<{ byInvoice: OmsSearchRowResult[]; byTracking: OmsSearchRowResult[] }> {
+  const values = [...new Set(tokens.flatMap((t) => [t, t.toUpperCase()]))]
+  if (values.length === 0) return { byInvoice: [], byTracking: [] }
+
+  const supabase = createAdminClient()
+  const [invoiceRes, trackingRes] = await Promise.all([
+    supabase.from('orders').select(OMS_SEARCH_COLUMNS).in('nomor_invoice', values),
+    supabase.from('orders').select(OMS_SEARCH_COLUMNS).in('no_tracking', values),
+  ])
+  if (invoiceRes.error) console.error('Gagal mencari pesanan (invoice):', invoiceRes.error.message)
+  if (trackingRes.error) console.error('Gagal mencari pesanan (resi):', trackingRes.error.message)
+
+  const invoiceRows = (invoiceRes.data as unknown as OmsSearchRow[] | null) ?? []
+  const invoices = new Set(invoiceRows.map((r) => r.nomor_invoice))
+  // Pesanan yang cocok lewat keduanya cukup muncul sekali, sebagai hasil invoice.
+  const trackingRows = ((trackingRes.data as unknown as OmsSearchRow[] | null) ?? []).filter(
+    (r) => !invoices.has(r.nomor_invoice),
+  )
+
+  const [byInvoice, byTracking] = await Promise.all([
+    toSearchResults(invoiceRows),
+    toSearchResults(trackingRows),
+  ])
+  return { byInvoice, byTracking }
+}
+
+// Pesanan milik satu nomor HP (sudah dinormalisasi 08xxxxxxxxxx), terbaru dulu.
+// Mengambil satu baris lebih dari batas supaya pemanggil tahu hasilnya terpotong.
+export async function searchOrdersByPhone(phone: string): Promise<OmsSearchRowResult[]> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('orders')
+    .select(OMS_SEARCH_COLUMNS)
+    .eq('no_telepon', phone)
+    .order('created_at', { ascending: false })
+    .limit(OMS_SEARCH_RESULT_LIMIT + 1)
+  if (error) {
+    console.error('Gagal mencari pesanan (nomor HP):', error.message)
+    return []
+  }
+  return toSearchResults((data as unknown as OmsSearchRow[] | null) ?? [])
+}
+
+// Pesanan yang nama pembelinya MENGANDUNG `name` (tanpa beda huruf besar/kecil), terbaru dulu.
+//
+// Wildcard pattern matching di-escape lebih dulu (pola sama dengan admins.ts, SEC-023): tanpa itu
+// mengetik "%" saja akan mencocokkan SEMUA pesanan dan menjadikan pencarian nama daftar pelanggan
+// lengkap. Satu baris lebih dari batas diambil supaya pemanggil tahu hasilnya terpotong.
+export async function searchOrdersByCustomerName(name: string): Promise<OmsSearchRowResult[]> {
+  const escaped = name.replace(/[\\%_*]/g, (ch) => `\\${ch}`)
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('orders')
+    .select(OMS_SEARCH_COLUMNS)
+    .ilike('nama_customer', `%${escaped}%`)
+    .order('created_at', { ascending: false })
+    .limit(OMS_SEARCH_RESULT_LIMIT + 1)
+  if (error) {
+    console.error('Gagal mencari pesanan (nama):', error.message)
+    return []
+  }
+  return toSearchResults((data as unknown as OmsSearchRow[] | null) ?? [])
 }
 
 // Mengambil UUID internal pesanan dari nomor invoice. Dipakai untuk mengisi

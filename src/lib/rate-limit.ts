@@ -160,6 +160,15 @@ export const RATE_LIMITS = {
   // yang ditolak Xendit pantas diulang sekali dua kali setelah penyebabnya dibetulkan — bukan
   // berkali-kali. Jendelanya panjang karena pengembalian bukan pekerjaan yang diulang cepat.
   REFUND_EXECUTE_INVOICE: { max: 3, windowMs: 60 * MINUTE },
+
+  // === Pencarian cepat header OMS (GET /api/oms/search) ===
+  //
+  // Dikunci pada AKUN, bukan IP — yang dibatasi adalah sesi admin yang dicuri atau skrip yang memakai
+  // cookie admin untuk memanen nama pembeli satu huruf demi satu huruf. Angkanya longgar untuk kerja
+  // wajar (CS mencari belasan pesanan berturut-turut saat chat ramai), tapi memotong penyedotan
+  // otomatis menjadi segelintir per menit. Pencarian nama/HP berbagi ember yang sama dengan
+  // invoice: jatah terpisah hanya memberi penyedot dua kali lipat jatah.
+  OMS_SEARCH_ADMIN: { max: 40, windowMs: 1 * MINUTE },
 } as const satisfies Record<string, RateRule>
 
 // Pesan generik untuk user (JANGAN bocorkan angka limit persis ke klien)

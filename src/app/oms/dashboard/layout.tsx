@@ -5,16 +5,23 @@
 import type { ReactNode } from 'react'
 import Sidebar from '@/components/oms/Sidebar'
 import { SidebarProvider } from '@/components/oms/SidebarContext'
+import { QuickSearchProvider } from '@/components/oms/QuickSearchContext'
+import QuickSearchPanel from '@/components/oms/QuickSearchPanel'
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (
     // Provider membungkus header & sidebar agar berbagi state drawer mobile
     <SidebarProvider>
-      <div className="min-h-screen bg-gray-50">
-        <Sidebar />
-        {/* Konten utama digeser sejauh lebar sidebar (64) pada layar desktop */}
-        <div className="md:ml-64">{children}</div>
-      </div>
+      {/* Pencarian cepat: search bar di header menulis, panel mengambang membaca. Diletakkan di
+          layout supaya panel tetap terbuka saat admin pindah halaman. */}
+      <QuickSearchProvider>
+        <div className="min-h-screen bg-gray-50">
+          <Sidebar />
+          {/* Konten utama digeser sejauh lebar sidebar (64) pada layar desktop */}
+          <div className="md:ml-64">{children}</div>
+        </div>
+        <QuickSearchPanel />
+      </QuickSearchProvider>
     </SidebarProvider>
   )
 }
