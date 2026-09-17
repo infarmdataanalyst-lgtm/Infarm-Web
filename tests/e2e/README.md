@@ -9,6 +9,7 @@ Berkas uji end-to-end.
 | `checkout-ongkir-flow.spec.ts` | tidak | ya |
 | `order-cancel-by-buyer.spec.ts` | **YA — pesanan seed sendiri, dihapus lagi** | ya |
 | `product-review-submit.spec.ts` | **YA — pesanan + item + ulasan, dihapus lagi** | ya |
+| `oms-quick-search.spec.ts` | **YA — 3 akun admin_users + 3 pesanan seed sendiri, dihapus lagi** | ya |
 | `checkout-full-payment-flow.spec.ts` | **YA — pesanan, invoice, resi** | **tidak** (lihat di bawah) |
 
 Dua spec pertama yang bertanda **YA** tetap aman dijalankan otomatis: datanya **di-seed sendiri
@@ -23,6 +24,12 @@ menumpuk antar-run pada dev server yang dipakai ulang.
   server terhadap isi pesanan. Produknya diambil dari katalog saat uji berjalan (bukan di-hardcode)
   karena `reviews.product_id` punya FK ke `products`. Alur ulasan tak menyentuh stok. `order_items`
   ikut terhapus sendiri lewat `on delete cascade` saat pesanannya dihapus.
+
+- `oms-quick-search.spec.ts` — pencarian cepat header OMS (API + panel mengambang). Membuat tiga
+  akun `admin_users` sementara (2 admin, 1 staff) berpassword acak yang hanya hidup di memori proses
+  uji, plus tiga pesanan **tanpa `order_items`** dengan nama pembeli huruf acak. Modal detail hanya
+  dibuka-tutup, status tak pernah disimpan — Mengantar & Xendit tak tersentuh. Uji rate limit
+  sengaja paling akhir karena menghabiskan jatah akun staff uji.
 
 ## Menjalankan
 
