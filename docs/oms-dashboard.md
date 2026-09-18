@@ -15,6 +15,40 @@ diambil dari `GET /api/oms/me`**. Teks hardcode "Admin Utama / Manager Operasion
 dua jabatan itu tak pernah ada di sistem peran (`admin_users.role` hanya `admin` | `staff`).
 Prop `notificationCount={3}` yang di-hardcode di 10 halaman juga dihapus (lencana palsu).
 
+### Pencarian cepat di header (2026-09-17)
+
+Search bar `OmsHeader` kini berfungsi (dulu hanya kolom tanpa handler). Hasil tampil di
+**`QuickSearchPanel`** — panel mengambang pojok kanan bawah yang dirender di
+`app/oms/dashboard/layout.tsx` lewat `QuickSearchProvider`, sehingga **tetap terbuka saat pindah
+halaman**. Ctrl/Cmd+K memfokuskan kolom; Enter mencari; menempel daftar berisi >1 nomor langsung mencari.
+
+- **Jenis pencarian ditebak SERVER** dari isi teks (`src/lib/oms-search-query.ts`, murni), tak
+  pernah diterima dari client:
+
+  | Masukan | Contoh | Siapa |
+  |---|---|---|
+  | Nomor invoice/resi, maks 20 sekaligus (pisah spasi/koma/baris) | `INV-20260917-XXXX, JO1030839137` | admin & staff |
+  | Nomor HP (08/628/+628, boleh berspasi) | `0812 3456 7890` | **admin saja** |
+  | Nama (tanpa angka, min 3 huruf; `ilike` ber-escape wildcard) | `budi santoso` | **admin saja** |
+
+  Pembatasan nama/HP = keputusan pemilik proyek 2026-09-17: mencari orang lewat identitasnya berbeda
+  dari melihat nama di baris pesanan. Staff mendapat **403 `FORBIDDEN_ROLE`**.
+- **`GET /api/oms/search?q=`** — `requireAdmin` + peran dibaca ulang dari DB + rate limit
+  **`OMS_SEARCH_ADMIN`** (40/menit per akun). Kolom yang dibaca **ramping**
+  (`OMS_SEARCH_COLUMNS` di `mock-db/orders.ts`): tanpa alamat, email, nomor HP, item. Teks pencarian
+  **tidak pernah ditulis ke log**. Nama/HP dibatasi 20 hasil terbaru (`truncated`).
+  Mode nomor mengembalikan `notFound`; satu kata kunci tak ditemukan → panel menawarkan tautan ke
+  Produk (`?q=`) dan Kelola Stok (`?search=`) karena kemungkinan itu SKU.
+- **`GET /api/oms/orders/detail?invoice=`** — `Order` utuh untuk `OrderStatusModal` yang dibuka dari
+  panel. Bentuknya sama dengan yang sudah diterima halaman Pesanan dari `/api/orders/list`.
+  Setelah status diubah dari panel, pencarian diulang otomatis; tabel halaman Pesanan yang sedang
+  terbuka **tidak** ikut segar sampai dimuat ulang.
+- **z-index panel `z-[45]`**: di atas backdrop drawer sidebar (z-40), di bawah modal pesanan (z-50).
+- **Bisa digeser** lewat kepala panel (pointer events + pointer capture, jalan juga di layar sentuh).
+  Posisi bawaan tetap pojok kanan bawah; klik dua kali kepala panel = kembali ke posisi bawaan;
+  posisi dilupakan saat panel ditutup. Posisi dijepit agar panel tak keluar layar — termasuk saat
+  panel dibuka dari mode kecil, hasil baru masuk, atau jendela browser diubah ukurannya.
+
 ### Notifikasi DIHITUNG real-time, BUKAN tabel persisten
 
 **Tidak ada tabel `notifications`.** `src/lib/mock-db/notifications.ts` menghitung dari keadaan
