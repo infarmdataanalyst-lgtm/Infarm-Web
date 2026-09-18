@@ -654,6 +654,32 @@ validasi server di `src/lib/*-validation.ts`, UI lewat API Routes (BUKAN server 
   disimpan — dihitung dari `calcNormalPrice(items)` (`src/types/combo.ts`).
 - **OMS**: `/oms/dashboard/paket-combo` (daftar), `.../baru`, `.../[id]/edit` (form bersama `ComboForm`).
   Data via `src/lib/mock-db/combos.ts` + API `/api/combos/{create,update,delete,toggle,list}`.
+- **Produk utama — cross-sell SATU ARAH (2026-09-18)**: `product_combo_items.is_primary`
+  (migration `20260918120000`) menandai satu anggota sebagai produk utama, dan
+  **paket hanya tayang di halaman detail produk itu** (`comboShowsOnProduct`, `src/types/combo.ts`).
+  Sebelumnya paket tayang di halaman SETIAP anggotanya, jadi paket "A + B" ikut memajang dirinya di
+  halaman B — padahal margin B bisa tipis dan B lebih cocok disandingkan produk lain.
+  - **Tepat satu** produk utama per paket, dijaga tiga lapis: radio di `ComboForm`, `validateComboInput`
+    (`src/lib/combo-validation.ts`), dan index unik parsial `product_combo_items_primary_idx`.
+  - Migration mengisi data lama dengan anggota ber-subtotal terbesar; pemilik toko bisa memindahkannya
+    lewat form. Daftar OMS menampilkan baris "Tayang di: <produk>".
+  - Paket **tanpa** produk utama (mis. lingkungan yang migrationnya belum dijalankan) jatuh ke perilaku
+    lama — tayang di semua anggotanya — bukan hilang dari etalase.
+- **Harga per produk (2026-09-18)**: `product_combo_items.deal_price` (migration `20260918140000`) =
+  harga SATUAN produk itu **di dalam paket**. Admin tidak lagi mengetik harga paket:
+  `combo_price` = Σ (`deal_price` × `quantity`), dihitung ulang server di `validateComboInput`
+  (`comboPrice` kiriman client diabaikan).
+  - Sebelumnya potongan dibagi PROPORSIONAL ke semua produk, jadi produk bermargin tipis ikut
+    menanggung diskon. Sekarang potongan bisa ditumpuk di produk bermargin tebal.
+  - `allocateComboPrices` (`src/lib/promo-cart.ts`) memakai `deal_price` **hanya bila** semua anggota
+    punya dan jumlahnya persis `combo_price`; selain itu jatuh ke pembagian proporsional lama. Satu
+    harga paket tetap satu sumber kebenaran (SEC-033).
+  - `deal_price` NULL = paket lama; **tidak** diisi oleh migration (menuliskan hasil pembagian
+    proporsional ke DB berisiko meleset dari perhitungan kode). Terisi sendiri saat paket disimpan
+    ulang lewat OMS.
+  - Form OMS jadi dua kolom: **Produk Utama** (kiri) dan **Produk yang Dicombokan** (kanan), tiap
+    baris punya qty + harga di paket + subtotal; ringkasan bawah menampilkan harga gabungan satuan
+    (dicoret), harga combo hasil penjumlahan, lalu hemat.
 
 ### Promosi
 - **Tabel**: `promotions` (kolom: `type`, `min_purchase`, `free_product_id`/`free_product_name`

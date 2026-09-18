@@ -3,7 +3,7 @@
 // Dipakai bersama oleh POST /api/combos/create dan PATCH /api/combos/update.
 // Aturan harus konsisten dengan validasi inline di ComboForm.
 
-import { calcNormalPrice, type ComboInput, type ComboItem } from '@/types/combo'
+import { calcComboPrice, calcNormalPrice, type ComboInput, type ComboItem } from '@/types/combo'
 
 export type ComboValidation =
   | { ok: true; value: ComboInput }
@@ -46,16 +46,34 @@ export function validateComboInput(body: unknown): ComboValidation {
     if (quantity < 1) {
       return { ok: false, error: 'Quantity produk minimal 1.' }
     }
+    // Harga paket per produk WAJIB ada sejak migration 20260918140000: harga paket adalah hasil
+    // penjumlahannya, jadi satu baris tanpa harga membuat totalnya tak bisa dihitung.
+    if (typeof it.dealPrice !== 'number' || !Number.isFinite(it.dealPrice) || it.dealPrice < 0) {
+      return { ok: false, error: 'Harga paket tiap produk wajib diisi (minimal Rp 0).' }
+    }
     items.push({
       productId: it.productId,
       name: it.name,
       unitPrice: Math.max(0, it.unitPrice),
       quantity,
+      isPrimary: it.isPrimary === true,
+      dealPrice: Math.floor(it.dealPrice),
     })
   }
 
   if (items.length < 2) {
     return { ok: false, error: 'Minimal 2 produk wajib ditambahkan ke combo.' }
+  }
+
+  // Tepat SATU produk utama — penentu paket ini tayang di halaman detail produk yang mana.
+  // Index unik parsial di DB (migration 20260918120000) menahan hal yang sama; di sini pesannya
+  // bisa dibaca manusia, bukan pelanggaran constraint.
+  const primaryCount = items.filter((item) => item.isPrimary).length
+  if (primaryCount === 0) {
+    return { ok: false, error: 'Pilih satu produk utama untuk combo ini.' }
+  }
+  if (primaryCount > 1) {
+    return { ok: false, error: 'Hanya boleh ada satu produk utama dalam satu combo.' }
   }
 
   // Tidak boleh ada produk yang sama dua kali
@@ -67,14 +85,17 @@ export function validateComboInput(body: unknown): ComboValidation {
     ids.add(item.productId)
   }
 
-  const comboPrice = typeof b.comboPrice === 'number' ? Math.floor(b.comboPrice) : NaN
-  if (!Number.isFinite(comboPrice) || comboPrice < 100) {
-    return { ok: false, error: 'Harga combo minimal Rp 100.' }
+  // Harga paket TIDAK diambil dari body: ia dihitung dari harga per produk yang baru saja
+  // divalidasi. `comboPrice` kiriman client sengaja diabaikan — dua angka yang bisa berbeda untuk
+  // hal yang sama adalah cara paling mudah menerbitkan tagihan yang tak cocok dengan isinya.
+  const comboPrice = calcComboPrice(items)
+  if (comboPrice < 100) {
+    return { ok: false, error: 'Total harga paket minimal Rp 100.' }
   }
 
   const normalPrice = calcNormalPrice(items)
   if (comboPrice >= normalPrice) {
-    return { ok: false, error: 'Harga combo harus lebih murah dari total harga satuan.' }
+    return { ok: false, error: 'Total harga paket harus lebih murah dari total harga normal.' }
   }
 
   const isActive = typeof b.isActive === 'boolean' ? b.isActive : true

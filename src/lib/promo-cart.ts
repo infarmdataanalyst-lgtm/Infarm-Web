@@ -6,7 +6,7 @@
 // Dipakai oleh halaman keranjang (client). Sumber data promo/combo tetap dari server (API).
 
 import { type Promotion, type PromotionType } from '@/types/promotion'
-import { calcNormalPrice, type ComboItem } from '@/types/combo'
+import { calcComboPrice, calcNormalPrice, hasDealPrices, type ComboItem } from '@/types/combo'
 import { formatRupiah } from '@/lib/format'
 
 // === Promo: progres & hadiah ===
@@ -222,13 +222,33 @@ export function computeOrderPromos(
 
 // === Combo ===
 
-// Alokasikan harga_combo ke tiap produk (proporsional terhadap harga normal) sehingga total
-// harga item ≈ harga_combo. Item terakhir menampung sisa pembulatan agar jumlahnya pas.
+// Harga tiap produk di dalam paket, untuk dipakai keranjang & pesanan.
+//
+// Dua jalur, dan urutannya disengaja:
+//
+//  1. HARGA YANG DIKETIK ADMIN (deal_price, migration 20260918140000). Dipakai apa adanya — itulah
+//     inti fiturnya: potongan boleh ditumpuk di produk bermargin tebal, bukan dibagi rata ke semua.
+//     Syaratnya jumlahnya harus persis sama dengan comboPrice; kalau meleset (mis. baris disunting
+//     langsung di database), yang dipercaya tetap comboPrice — satu harga paket, satu sumber
+//     kebenaran, seperti yang ditegakkan SEC-033 di orders/create.
+//
+//  2. PEMBAGIAN PROPORSIONAL (perilaku lama, untuk paket yang deal_price-nya masih NULL). Harga
+//     paket dibagi menurut porsi harga normal tiap produk; item terakhir menampung sisa pembulatan
+//     agar jumlahnya pas.
+//
 // Dipakai saat menambahkan paket combo ke keranjang (mis. dari detail produk).
 export function allocateComboPrices(
   items: ComboItem[],
   comboPrice: number,
 ): { productId: string; quantity: number; price: number }[] {
+  if (hasDealPrices(items) && calcComboPrice(items) === comboPrice) {
+    return items.map((item) => ({
+      productId: item.productId,
+      quantity: item.quantity,
+      price: item.dealPrice ?? 0,
+    }))
+  }
+
   const normalTotal = calcNormalPrice(items)
   let allocated = 0
   return items.map((item, idx) => {

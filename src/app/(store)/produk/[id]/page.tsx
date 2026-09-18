@@ -28,6 +28,7 @@ import {
   getCachedVariantsByProduct,
 } from '@/lib/mock-db/cached-reads'
 import type { StoredProduct, ProductDetail, ProductReview } from '@/types/product'
+import { comboShowsOnProduct } from '@/types/combo'
 import ProductImageSlider from '@/components/product/ProductImageSlider'
 import ProductInfo from '@/components/product/ProductInfo'
 import VariantSelector from '@/components/product/VariantSelector'
@@ -107,7 +108,9 @@ export default async function ProductDetailPage({
   }
   if (!product) notFound()
 
-  // Paket combo REAL (Supabase) yang aktif, memuat produk ini, & semua produknya masih ada stok.
+  // Paket combo REAL (Supabase) yang aktif, BER-PRODUK UTAMA produk ini, & semua produknya masih
+  // ada stok. Cross-sell sengaja satu arah (lihat comboShowsOnProduct): paket "A + B" tayang di
+  // halaman A saja, sehingga B bebas disandingkan produk lain di paket tersendiri.
   // Varian produk (opsional): kosong bila produk tak bervarian → tampil seperti biasa.
   const [allCombos, allProducts, salesCounts, variants] = await Promise.all([
     getCachedCombos(),
@@ -126,7 +129,7 @@ export default async function ProductDetailPage({
   const productCombos = allCombos.filter(
     (c) =>
       c.isActive &&
-      c.items.some((it) => it.productId === product.id) &&
+      comboShowsOnProduct(c, product.id) &&
       c.items.every((it) => (stockById[it.productId] ?? 0) > 0),
   )
 
