@@ -4,7 +4,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Montserrat } from "next/font/google";
 import GoogleAnalyticsGate from "@/components/analytics/GoogleAnalyticsGate";
-import FloatingWhatsApp from "@/components/ui/FloatingWhatsApp";
 import "./globals.css";
 
 // Font identitas merek: dipakai untuk judul & tombol utama (class `font-heading`), BUKAN teks isi —
@@ -53,8 +52,6 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col">
         {children}
-        {/* Tombol WhatsApp mengambang (self-gate: sembunyi di /oms) */}
-        <FloatingWhatsApp />
         {gaId && <GoogleAnalyticsGate gaId={gaId} />}
       </body>
     </html>

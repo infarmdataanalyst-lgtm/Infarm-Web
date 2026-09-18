@@ -72,7 +72,7 @@ export default function StickyBuyBar({
   // Bottom-sheet varian (mobile): intent 'add' (ke keranjang) atau 'buy' (beli langsung).
   const [sheetIntent, setSheetIntent] = useState<'add' | 'buy' | null>(null)
 
-  // Publikasikan tinggi bilah ke --sticky-bar-h (dipakai FloatingWhatsApp agar tak bertabrakan).
+  // Publikasikan tinggi bilah ke --sticky-bar-h (dibaca elemen mengambang agar tak bertabrakan).
   // Hanya saat mengambang: di desktop bilah ikut mengalir, jadi tak ada yang perlu dihindari.
   const barRef = useStickyBarHeight<HTMLDivElement>(isMobile)
 
@@ -188,7 +188,7 @@ export default function StickyBuyBar({
 
   return (
     <>
-      {/* ref: mendaftarkan tinggi bilah ke --sticky-bar-h agar FloatingWhatsApp naik di atasnya.
+      {/* ref: mendaftarkan tinggi bilah ke --sticky-bar-h agar elemen mengambang naik di atasnya.
           `lg:static` melepas bilah dari mode mengambang di desktop — ia lalu mengalir sebagai blok
           biasa di kolom kanan (lihat penempatannya di halaman detail produk). Di desktop latar putih,
           border, dan padding samping DILEPAS supaya yang tampak murni tombolnya saja, bukan panel. */}

@@ -25,7 +25,7 @@
   halaman legal → `LegalPageShell`. Jadi "menyembunyikan elemen header" di halaman-halaman itu
   tidak perlu conditional apa pun — elemennya memang tak pernah dirender.
 - **`CheckoutHeader`** sengaja minimal demi fokus pembayaran: tombol kembali + **logo NON-tautan**
-  + judul. Tanpa search/keranjang/akun, dan `FloatingWhatsApp` self-gate di `/checkout`.
+  + judul. Tanpa search/keranjang/akun.
   **Jangan menambah navigasi keluar baru di header ini**; logo tidak dibungkus `<Link>` agar user
   tak tercampak dari alur pembayaran karena menyenggolnya.
 - **Pembagian tugas navigasi header (jangan dicampur lagi)**: `MenuDrawer` = **navigasi katalog**
@@ -188,14 +188,14 @@ Uraian di bawah menjelaskan halamannya saat AKTIF:
 ## Skala z-index (storefront) — patuhi saat menambah elemen mengambang
 
 Elemen ber-`z-index` lebih besar **menyerap klik/tap** walau secara visual tampak di belakang.
-Bug nyata yang pernah terjadi: bottom-sheet `z-50` di bawah `FloatingWhatsApp` `z-[60]` → tombol
-"Terapkan filter" hanya bisa diklik di sisi kiri karena sisanya tertutup tombol WA.
+Bug nyata yang pernah terjadi: bottom-sheet `z-50` di bawah tombol WhatsApp mengambang `z-[60]` →
+tombol "Terapkan filter" hanya bisa diklik di sisi kiri karena sisanya tertutup tombol itu.
 
 | Lapis | z-index | Contoh |
 |---|---|---|
 | Konten & bilah aksi bawah | `z-10`–`z-40` | `StickyBuyBar` (40, **hanya < lg**), `CartCheckoutBar`/`CheckoutBottomBar` (30) |
 | Header | `z-50` | `AppBar`, header halaman |
-| Tombol mengambang | `z-[60]` | `FloatingWhatsApp` |
+| Tombol mengambang | `z-[60]` | *(kosong sejak 2026-09-18; lapis ini dicadangkan)* |
 | Overlay & backdrop | `z-[70]` | backdrop `MenuDrawer`, overlay `HeaderSearch` mobile, `PhoneConfirmModal` |
 | Panel modal/sheet | `z-[80]` | `BottomSheet` (filter/sort/varian/ongkir/pembayaran), panel `MenuDrawer` |
 
@@ -208,30 +208,28 @@ mengambang. Jangan menambah lapis baru tanpa memperbarui tabel ini.
   Isi: logo (non-tautan), ikon `Wrench` dalam lingkaran `bg-brand-light/30`, judul "Sedang Dalam
   Perbaikan", 2 paragraf, pemisah `bg-brand-primary`, tautan CS WhatsApp, copyright.
   `metadata.robots = { index: false, follow: false }` (kondisi sementara, jangan diindeks).
-- Link CS memakai **`WHATSAPP_CS_LINK`** dari `src/lib/data/contact.ts` (dipindah dari dalam
-  `FloatingWhatsApp.tsx` agar satu sumber). Masih placeholder `/404`.
-- `FloatingWhatsApp` self-gate juga di `/maintenance` (halaman ini sudah punya tautan CS sendiri).
+- Link CS memakai **`WHATSAPP_CS_LINK`** dari `src/lib/data/contact.ts` (satu sumber untuk semua
+  tautan CS). Masih placeholder `/404` selama `WHATSAPP_CS_NUMBER` kosong.
 - **Belum ada mekanisme mengaktifkan maintenance mode** — halaman ini baru TAMPILAN. Untuk
   mengalihkan seluruh trafik ke sini, tambahkan rewrite ber-flag env di `src/proxy.ts`
   (mis. `MAINTENANCE_MODE=1`), kecualikan `/maintenance` sendiri + aset `_next/*` + `/oms/*` bila
   admin tetap perlu akses. Idealnya balas **HTTP 503** (bukan 200) agar mesin pencari tak menganggap
   situs hilang permanen — butuh route handler/response kustom, bukan `page.tsx` biasa.
 
-## Floating WhatsApp CS
+## Kanal WhatsApp CS (di footer, bukan mengambang)
 
-- **`FloatingWhatsApp`** (`components/ui/`, client) dipasang di **root `layout.tsx`** (bukan per halaman) → tampil di
-  SEMUA halaman ecommerce; **self-gate**: `usePathname()` → `return null` di `/oms/*` (admin) dan `/checkout`
-  (jangan ganggu proses bayar; `/checkout/success` tetap tampil).
-- Tombol lingkaran hijau kanan bawah (`fixed right-5 z-[60]`) + ikon WhatsApp SVG inline (lucide tak punya brand icon).
-- **Posisi vertikal mengikuti bilah aksi bawah**: `bottom: calc(1.25rem + var(--sticky-bar-h, 0px))` +
-  `transition-[bottom]`. Variable diisi oleh bilah yang sedang tampil lewat hook
-  **`useStickyBarHeight`** (`src/hooks/use-sticky-bar-height.ts`, ResizeObserver → set
-  `--sticky-bar-h` di `<html>`, reset `0px` saat unmount). Dipakai `StickyBuyBar` (detail produk) &
-  `CartCheckoutBar` (keranjang). **Halaman baru dengan bilah bawah cukup memanggil hook ini** —
-  jangan hardcode tinggi atau daftar route di `FloatingWhatsApp`.
-  Hook menerima argumen **`enabled`** (default `true`) untuk bilah yang mengambang hanya di sebagian
-  breakpoint: saat `false`, variable ditahan `0px`. Dipakai `StickyBuyBar` (`useStickyBarHeight(isMobile)`)
-  karena di desktop bilahnya statis — tanpa itu tombol WA terangkat tanpa ada yang perlu dihindari.
-  Bubble "Pesan melalui CS kami" muncul ~2.5s, auto-hide, tombol × tutup permanen.
-- **Link CS** = constant **`WHATSAPP_CS_LINK`** di `FloatingWhatsApp.tsx` (placeholder `/404`; ganti ke `https://wa.me/62…` saat siap).
+- **Sejak 2026-09-18 tidak ada lagi tombol WhatsApp mengambang.** Komponen `FloatingWhatsApp`
+  dihapus dan ikon WhatsApp pindah ke **baris sosial media di `Footer`** (`components/home/`),
+  sejajar Instagram/TikTok/Facebook/YouTube dengan ukuran & gaya yang sama.
+- **Alasannya bisnis, bukan kerapian**: tombol mengambang menempel sepanjang pembeli menelusuri
+  katalog, sehingga mengajak pindah ke percakapan WhatsApp justru saat ia sedang berbelanja di web —
+  pesanan lalu berpindah ke chat dan tak tercatat di sistem. Di footer, kanalnya tetap ada tapi baru
+  ditemui saat pembeli memang mencarinya. **Jangan kembalikan ke mode mengambang tanpa membahas ini.**
+- **Link CS** = constant **`WHATSAPP_CS_LINK`** (`src/lib/data/contact.ts`). Selama
+  `WHATSAPP_CS_NUMBER` kosong nilainya `/404`, jadi ikonnya sengaja mendarat di halaman 404 —
+  bukan tombol mati diam-diam. Begitu nomornya diisi, seluruh tautan WhatsApp ikut berubah.
+  Ikon dengan tautan internal dibuka di tab yang sama; hanya tautan `http…` yang buka tab baru.
+- **`useStickyBarHeight`** (`src/hooks/use-sticky-bar-height.ts`) tetap dipakai `StickyBuyBar` &
+  `CartCheckoutBar` untuk menulis `--sticky-bar-h`, tapi **sementara tak ada yang membacanya**
+  (dulu tombol WA). Dipertahankan supaya elemen mengambang berikutnya tinggal membaca variable itu.
 

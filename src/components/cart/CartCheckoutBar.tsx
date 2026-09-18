@@ -3,7 +3,7 @@
 // src/components/cart/CartCheckoutBar.tsx
 // Bilah aksi bawah (sticky): checkbox "Pilih Semua" + jumlah item, total harga dinamis,
 // dan tombol "Checkout (X)" yang nonaktif bila tidak ada item tercentang. Presentational,
-// selain mendaftarkan tingginya ke --sticky-bar-h (agar FloatingWhatsApp naik di atasnya).
+// selain mendaftarkan tingginya ke --sticky-bar-h (dibaca elemen mengambang, lihat hook-nya).
 
 import { Check } from 'lucide-react'
 import { formatRupiah } from '@/lib/format'

@@ -5,7 +5,7 @@
 //
 // SENGAJA MINIMAL — halaman checkout berada di luar route group (store) sehingga `AppBar` tidak
 // pernah dirender di sini: tidak ada search bar, ikon keranjang, maupun ikon akun. Tujuannya
-// menjaga fokus penyelesaian pembayaran (FloatingWhatsApp juga self-gate di /checkout).
+// menjaga fokus penyelesaian pembayaran.
 // JANGAN menambahkan navigasi keluar baru ke header ini.
 //
 // Logo TIDAK dibungkus <Link>: satu-satunya jalan keluar yang disengaja adalah tombol kembali,

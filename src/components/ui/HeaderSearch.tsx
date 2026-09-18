@@ -252,7 +252,7 @@ export default function HeaderSearch() {
       </button>
 
       {/* === Mobile: overlay search full-width menutupi baris header ===
-          z-[70] harus di atas FloatingWhatsApp (z-[60]) agar saran paling bawah tetap bisa di-tap */}
+          z-[70] sengaja tinggi agar saran paling bawah tak tertutup elemen mengambang mana pun */}
       {expanded && (
         <div className="fixed inset-0 z-[70] flex flex-col sm:hidden">
           {/* Baris search menggantikan header */}

@@ -119,12 +119,10 @@ export default async function CheckoutSuccessPage({
         <h1 className="text-lg font-bold text-white">{headerTitle}</h1>
       </header>
 
-      {/* pb-28 (mobile): ruang aman agar konten paling bawah tak tertutup tombol WhatsApp
-          mengambang (fixed, kanan bawah, ±76px tinggi area). Halaman ini tak punya bilah aksi
-          bawah sehingga --sticky-bar-h = 0 dan tombol WA duduk di posisi dasarnya.
-          lg:pb-8 — di desktop ruang aman itu TIDAK diperlukan untuk kolom kiri: tombol berada di
-          x ±405–970 sementara tombol WA di x ±1900, jadi keduanya tak pernah bertabrakan. Sisa
-          32px hanya jarak bernapas, sehingga tombol benar-benar turun ke dasar layar. */}
+      {/* pb-28 (mobile): dulu ruang aman agar konten paling bawah tak tertutup tombol WhatsApp
+          mengambang. Tombol itu sudah pindah ke footer (2026-09-18), jadi sekarang perannya tinggal
+          jarak bernapas di ujung halaman — aman dikecilkan bila tampilannya terasa terlalu longgar.
+          lg:pb-8 — di desktop ruangnya memang tak pernah diperlukan. */}
       <main className="mx-auto w-full max-w-md px-5 pb-28 pt-6 md:max-w-xl lg:max-w-4xl lg:px-8 lg:pb-8">
         {/* TIGA blok anak dengan URUTAN BERBEDA per breakpoint — karena itu blok tombol berdiri
             sendiri, bukan bersarang di dalam blok status:
