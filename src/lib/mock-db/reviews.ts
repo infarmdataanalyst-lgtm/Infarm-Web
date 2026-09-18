@@ -36,6 +36,9 @@ type ReviewRow = {
   visible: boolean
   created_at: string
   order_invoice: string | null // terisi = ulasan dari pembeli terverifikasi (terikat ke pesanan)
+  // Opsional: kolom baru (migration 20260918160000). Absen/NULL = lingkungan yang belum
+  // menjalankannya → dianggap 'buyer', sama seperti seluruh data lama.
+  source?: string | null
 }
 
 // Baris reviews + data produk hasil join (untuk tampilan OMS)
@@ -75,6 +78,24 @@ export type OmsReviewData = {
   date: string
   reply?: string
   visible: boolean
+  // 'internal' = dimasukkan admin lewat OMS, bukan dari pembeli. Hanya dipakai layar OMS;
+  // storefront sengaja tidak menampilkannya (lihat migration 20260918160000).
+  source: ReviewSource
+}
+
+// Asal ulasan. 'buyer' = dari pembeli lewat /review; 'internal' = dimasukkan admin lewat OMS.
+export type ReviewSource = 'buyer' | 'internal'
+
+// Masukan pembuatan ulasan internal dari OMS.
+export type ManualReviewInput = {
+  productId: string
+  authorName: string
+  rating: number
+  comment: string
+  category?: string
+  // Tanggal tampil ulasan. Boleh mundur — ulasan awal katalog biasanya menyalin testimoni lama,
+  // dan menaruhnya semua di hari peluncuran membuat deretan tanggalnya terlihat janggal.
+  createdAt?: string
 }
 
 // === Baca (storefront) ===
@@ -103,7 +124,6 @@ export async function getReviewsByProduct(productId: string): Promise<ProductRev
     category: r.category ?? 'Umum',
     imageUrls: r.image_urls?.length ? r.image_urls : undefined,
     reply: r.reply ?? undefined,
-    verified: Boolean(r.order_invoice), // order_invoice terisi → pembeli terverifikasi
   }))
 }
 
@@ -237,6 +257,7 @@ export async function listReviewsForOms(): Promise<OmsReviewData[]> {
     date: r.created_at,
     reply: r.reply ?? undefined,
     visible: r.visible,
+    source: r.source === 'internal' ? 'internal' : 'buyer',
   }))
 }
 
@@ -260,4 +281,65 @@ export async function setReviewVisibility(id: string, visible: boolean): Promise
     return false
   }
   return true
+}
+
+// === Ulasan internal (dimasukkan admin lewat OMS) ===
+
+// Menyimpan ulasan internal. order_invoice sengaja NULL: ulasan ini memang tidak terikat pesanan,
+// jadi ia juga tak ikut aturan "satu ulasan per pesanan per produk" yang menjaga ulasan pembeli.
+// Mengembalikan id ulasan baru.
+export async function createManualReview(input: ManualReviewInput): Promise<string> {
+  const supabase = createAdminClient()
+
+  const { data, error } = await supabase
+    .from('reviews')
+    .insert({
+      product_id: input.productId,
+      author_name: input.authorName,
+      rating: input.rating,
+      comment: input.comment,
+      category: input.category ?? null,
+      image_urls: [],
+      order_invoice: null,
+      source: 'internal',
+      // created_at diserahkan ke DEFAULT now() bila tanggal tak diisi.
+      ...(input.createdAt ? { created_at: input.createdAt } : {}),
+    })
+    .select('id')
+    .single()
+
+  // 42703/PGRST204 = kolom source belum ada (migration 20260918160000 belum dijalankan). Sengaja
+  // TIDAK ada fallback menyimpan tanpa kolom itu: ulasan internal yang masuk tanpa penanda tak bisa
+  // dibedakan lagi dari ulasan pembeli selamanya — lebih baik gagal keras dan menyuruh migrasi.
+  if (error?.code === '42703' || error?.code === 'PGRST204') {
+    throw new Error(
+      'Kolom reviews.source belum ada. Jalankan migration 20260918160000 lebih dulu sebelum menambah ulasan internal.',
+    )
+  }
+  if (error || !data) {
+    throw new Error(`Gagal menyimpan ulasan internal: ${error?.message ?? 'tidak diketahui'}`)
+  }
+
+  return data.id as string
+}
+
+// Menghapus ulasan berdasarkan id. HANYA ulasan internal yang boleh terhapus lewat fungsi ini —
+// filter `source = 'internal'` ada di query, bukan cuma di layar, supaya ulasan pembeli sungguhan
+// tak bisa lenyap karena salah id atau payload yang disusun tangan.
+// Mengembalikan jumlah baris yang benar-benar terhapus.
+export async function deleteInternalReviews(ids: string[]): Promise<number> {
+  if (ids.length === 0) return 0
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('reviews')
+    .delete()
+    .in('id', ids)
+    .eq('source', 'internal')
+    .select('id')
+
+  if (error) {
+    console.error('Gagal menghapus ulasan internal:', error.message)
+    return 0
+  }
+  return (data ?? []).length
 }
