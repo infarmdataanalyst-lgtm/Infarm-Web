@@ -9,6 +9,13 @@
 // checkout DAN dari tombol "Bayar Sekarang" di halaman sukses — tanpa pemakaian ulang, setiap
 // tekan menerbitkan tagihan baru untuk pesanan yang sama (API-XND-027).
 //
+// ── Metode pembayaran dipilih di halaman Xendit, bukan di sini ──
+// Sempat ada pemilih metode di checkout yang meneruskan pilihannya lewat `payment_methods`
+// (2026-09-18, dicabut hari yang sama). Keputusan pemilik proyek: satu tempat memilih saja, dan
+// tempat itu halaman Xendit — ia sudah menampilkan seluruh metode aktif beserta instruksinya.
+// Konsekuensinya endpoint ini tak perlu tahu metode apa pun: satu pesanan, satu tagihan, dan
+// pembeli yang berubah pikiran cukup memilih ulang di halaman Xendit tanpa tagihan diterbitkan lagi.
+//
 // ── Yang TIDAK dipercaya dari client ──
 // Client hanya mengirim NOMOR INVOICE. Nominal, nama, dan nomor telepon dibaca dari tabel
 // `orders`. Kalau nominal diambil dari body, siapa pun bisa membuat invoice Rp1.000 untuk pesanan

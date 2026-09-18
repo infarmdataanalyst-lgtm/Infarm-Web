@@ -1,8 +1,9 @@
 'use client'
 
-// src/app/checkout/success/PayNowButton.tsx
-// Tombol "Bayar Sekarang" di halaman sukses — menerbitkan ulang tagihan Xendit lalu membawa
-// pembeli ke halaman pembayarannya.
+// src/components/payment/PayNowButton.tsx
+// Tombol "Bayar Sekarang" — menerbitkan/memakai ulang tagihan Xendit lalu membawa pembeli ke
+// halaman pembayarannya. Dipakai halaman status pesanan (/checkout/success) DAN lacak pesanan
+// (/track): pesanan yang belum dibayar harus bisa dibayar dari mana pun pembeli menemukannya.
 //
 // Kenapa perlu ada: penerbitan tagihan bisa gagal (Xendit down, konfigurasi belum lengkap), dan
 // pembeli bisa saja menutup halaman pembayaran tanpa menyelesaikannya. Tanpa tombol ini, pesanan
@@ -30,8 +31,12 @@ export default function PayNowButton({ invoice }: { invoice: string }) {
       const data = (await res.json().catch(() => ({}))) as { invoiceUrl?: string; error?: string }
 
       if (res.ok && data.invoiceUrl) {
-        // FULL redirect — tujuannya domain Xendit, di luar aplikasi ini.
-        window.location.replace(data.invoiceUrl)
+        // FULL navigation — tujuannya domain Xendit, di luar aplikasi ini.
+        //
+        // `assign`, BUKAN `replace`: halaman status pesanan harus tetap tertinggal di riwayat,
+        // supaya tombol "kembali" dari halaman pembayaran mendarat di sini — tempat tombol bayar
+        // ulang dan ganti metode berada — bukan melompat keluar ke halaman sebelumnya.
+        window.location.assign(data.invoiceUrl)
         return
       }
       setError(data.error ?? 'Gagal membuat halaman pembayaran. Silakan coba lagi.')

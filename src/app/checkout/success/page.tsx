@@ -17,7 +17,7 @@ import { getOrderByOrderId } from '@/lib/mock-db/orders'
 import { generateCancelToken } from '@/lib/order-token'
 import { formatRupiah } from '@/lib/format'
 import type { Order } from '@/types/order'
-import PayNowButton from './PayNowButton'
+import PayNowButton from '@/components/payment/PayNowButton'
 
 // Order contoh bila halaman dibuka tanpa ?order= (mis. preview langsung)
 const FALLBACK_ORDER: Order = {
@@ -210,7 +210,21 @@ export default async function CheckoutSuccessPage({
                 </div>
                 <div className="text-right">
                   <p className="text-xs text-zinc-400">{formatShortDate(data.date)}</p>
-                  <p className="mt-0.5 text-sm font-semibold text-brand-primary">Berhasil</p>
+                  {/* Status NYATA pesanan, bukan kata "Berhasil" yang dulu ditulis tetap di sini.
+                      Pesanan yang belum dibayar pun menampilkannya, sehingga pembeli yang kembali
+                      dari halaman pembayaran membaca "Berhasil" dan mengira urusannya selesai —
+                      padahal uangnya belum masuk dan pesanan akan batal sendiri dalam 24 jam. */}
+                  <p
+                    className={`mt-0.5 text-sm font-semibold ${
+                      isCancelled
+                        ? 'text-rose-600'
+                        : isPaid
+                          ? 'text-brand-primary'
+                          : 'text-amber-600'
+                    }`}
+                  >
+                    {isCancelled ? 'Dibatalkan' : isPaid ? 'Lunas' : 'Belum Dibayar'}
+                  </p>
                 </div>
               </div>
 
@@ -266,7 +280,11 @@ export default async function CheckoutSuccessPage({
               {/* Total — angka terpenting di halaman ini, jadi ukurannya dinaikkan jauh di atas
                   label lain dan diberi warna harga (brand-primary, sesuai aturan palet). */}
               <div className="mt-4 flex items-end justify-between border-t border-dashed border-zinc-200 pt-4">
-                <span className="pb-1 text-sm font-medium text-zinc-500">Total Terbayar</span>
+                {/* "Terbayar" hanya benar bila memang sudah lunas. Pada pesanan yang menunggu,
+                    kata itu ikut menguatkan kesan keliru bahwa urusannya sudah selesai. */}
+                <span className="pb-1 text-sm font-medium text-zinc-500">
+                  {isPaid ? 'Total Terbayar' : 'Total Tagihan'}
+                </span>
                 <span className="text-2xl font-bold leading-none text-brand-primary sm:text-3xl">
                   {formatRupiah(data.totalAmount)}
                 </span>

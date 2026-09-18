@@ -18,7 +18,7 @@ import AddressForm, {
 import OrderSummary from '@/components/checkout/OrderSummary'
 import CheckoutBottomBar from '@/components/checkout/CheckoutBottomBar'
 import ShippingOptions from '@/components/checkout/ShippingOptions'
-import PaymentMethodsInfo from '@/components/checkout/PaymentMethodsInfo'
+
 import EmailConfirmModal from '@/components/checkout/EmailConfirmModal'
 import CheckoutSkeleton from '@/components/checkout/CheckoutSkeleton'
 import {
@@ -591,10 +591,27 @@ export default function CheckoutPage() {
       clearCart()
 
       if (payRes.ok && payData.invoiceUrl) {
-        // FULL redirect (bukan router.push): tujuannya domain Xendit, di luar aplikasi ini.
-        // `replace` supaya tombol "kembali" browser tak memantulkan pembeli ke halaman checkout
-        // yang keranjangnya sudah dikosongkan.
-        window.location.replace(payData.invoiceUrl)
+        // ── Tombol "kembali" browser harus mendarat di HALAMAN STATUS PESANAN ──
+        //
+        // Sebelumnya di sini dipakai `location.replace`, yang menukar entri checkout dengan halaman
+        // Xendit. Akibatnya menekan "kembali" dari halaman pembayaran membawa pembeli ke halaman
+        // SEBELUM checkout (beranda/keranjang) — pesanannya sudah tersimpan dan stok sudah
+        // dipotong, tapi ia kehilangan satu-satunya jalan untuk membayar atau mengganti metode.
+        //
+        // Sekarang entri checkout ditukar dulu dengan halaman LACAK PESANAN (lewat replaceState),
+        // baru halaman Xendit DIDORONG sebagai entri baru (`assign`, bukan `replace`). Jadi
+        // "kembali" mendarat di halaman lacak: status pesanannya terbaca di sana, lengkap dengan
+        // tombol "Bayar Sekarang" untuk membuka lagi halaman pembayaran.
+        // Checkout sendiri tetap tak bisa dikunjungi lagi — keranjangnya memang sudah dikosongkan.
+        const statusUrl = `/track?order=${encodeURIComponent(data.invoice)}`
+        try {
+          window.history.replaceState(null, '', statusUrl)
+        } catch {
+          // replaceState bisa ditolak di konteks tertentu; pembayaran tak boleh ikut batal
+          // karenanya. Paling buruk, perilaku "kembali" kembali seperti sebelumnya.
+        }
+        // FULL navigation (bukan router.push): tujuannya domain Xendit, di luar aplikasi ini.
+        window.location.assign(payData.invoiceUrl)
         return
       }
 
@@ -732,11 +749,6 @@ export default function CheckoutPage() {
             selected={selectedCourier}
             onSelect={setSelectedCourier}
           />
-        </CheckoutCard>
-
-        {/* 4 — Metode pembayaran: INFORMASI saja. Pemilihannya terjadi di halaman Xendit. */}
-        <CheckoutCard className="lg:col-start-2">
-          <PaymentMethodsInfo />
         </CheckoutCard>
 
         {/* 5 — Ringkasan pesanan (rincian harga) */}

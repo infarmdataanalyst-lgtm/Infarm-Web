@@ -12,8 +12,9 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import Image from 'next/image'
-import { Phone, MapPin, Package } from 'lucide-react'
+import { Phone, MapPin, Package, Clock } from 'lucide-react'
 import TrackSearchForm from '@/components/track/TrackSearchForm'
+import PayNowButton from '@/components/payment/PayNowButton'
 import ShippingStepper from '@/components/track/ShippingStepper'
 import TrackingDetail from '@/components/track/TrackingDetail'
 import OrderItemsCard from '@/components/track/OrderItemsCard'
@@ -80,6 +81,13 @@ export default async function TrackPage({ searchParams }: TrackPageProps) {
 async function TrackResult({ order }: { order: Order }) {
   const cancelled = isOrderCancelled(order)
   const invoiceLabel = order.orderId.startsWith('#') ? order.orderId : `#${order.orderId}`
+  // Pesanan yang masih menunggu pembayaran harus bisa dibayar DARI SINI juga.
+  //
+  // Sebelumnya tombolnya hanya ada di halaman /checkout/success, yang praktis cuma sekali dilihat
+  // pembeli tepat setelah memesan. Begitu ia menutup tab lalu mencari pesanannya lewat Lacak
+  // Pesanan — jalan yang paling wajar — tak ada satu pun tombol bayar di layar, padahal pesanannya
+  // akan batal sendiri dalam 24 jam.
+  const awaitingPayment = !cancelled && order.paymentStatus !== 'Lunas'
 
   // === Detail pelacakan dari kurir ===
   //
@@ -191,6 +199,27 @@ async function TrackResult({ order }: { order: Order }) {
           </button>
         </div>
       </section>
+
+      {/* 5b — Pembayaran (hanya bila belum lunas) —— ringkas, satu blok kecil.
+          Letaknya sengaja setelah info kurir/resi dan sebelum alamat: pembeli yang membuka halaman
+          ini datang untuk melihat status, jadi blok aksi tak perlu merebut layar pertama. Tapi ia
+          juga tak boleh terkubur di dasar halaman — pesanan yang belum dibayar batal sendiri
+          dalam 24 jam, dan halaman inilah jalan pulang pembeli dari halaman pembayaran Xendit. */}
+      {awaitingPayment && (
+        <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+          <div className="flex items-center gap-2 text-amber-900">
+            <Clock className="h-4 w-4 shrink-0" />
+            <p className="text-sm font-semibold">Menunggu Pembayaran</p>
+          </div>
+          <p className="mt-1 text-xs leading-relaxed text-amber-800">
+            Selesaikan dalam 24 jam — setelah itu pesanan dibatalkan otomatis dan stok dilepas
+            kembali. Metode pembayaran dipilih di halaman berikutnya.
+          </p>
+          <div className="mt-3">
+            <PayNowButton invoice={order.orderId} />
+          </div>
+        </section>
+      )}
 
       {/* 6 — Alamat pengiriman */}
       <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">

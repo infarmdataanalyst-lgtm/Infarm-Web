@@ -281,6 +281,10 @@ export async function expireXenditInvoice(invoiceId: string): Promise<ExpireInvo
 // `origin` = asal URL situs kita (mis. 'https://infarm-web-mu.vercel.app'), dipakai menyusun
 // success/failure redirect. Diteruskan dari route handler karena hanya di situ header request
 // tersedia — modul ini tak boleh menebak domainnya sendiri.
+//
+// `payment_methods` SENGAJA tidak pernah dikirim: seluruh metode aktif di akun ditampilkan, dan
+// pembeli memilih di halaman Xendit. Pemilih metode di checkout sempat ada (2026-09-18) lalu
+// dicabut — keputusan pemilik proyek, satu tempat memilih saja.
 export async function createXenditInvoice(
   order: Order,
   origin: string,
