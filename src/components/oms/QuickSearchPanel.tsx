@@ -199,7 +199,24 @@ export default function QuickSearchPanel() {
 
   const { data, loading, error, query } = qs
   const count = data?.results.length ?? 0
-  const singleToken = data?.mode === 'orders' && data.notFound.length === 1 && count === 0
+
+  // Kata kunci yang ditawarkan ke halaman Produk / Kelola Stok saat pencarian NIHIL hasil.
+  //
+  // Dua keadaan yang sama-sama buntu bagi admin, dan keduanya perlu jalan keluar:
+  //   - mode 'orders' dengan satu kata kunci tak dikenal → kemungkinan SKU produk yang salah kamar;
+  //   - mode 'name' tanpa hasil → admin mengetik NAMA BARANG (mis. "polybag") ke kotak yang hanya
+  //     mengenal nama pembeli. Ini yang paling sering terjadi, dan dulu justru tak ditawari apa pun.
+  //
+  // Mode 'phone' sengaja TIDAK ikut: nomor telepon tak pernah masuk akal dicari di katalog produk,
+  // dan menawarkannya hanya membuat panel berisik.
+  const fallbackTerm =
+    count > 0 || !data
+      ? null
+      : data.mode === 'orders'
+        ? (data.notFound.length === 1 ? (data.notFound[0] ?? null) : null)
+        : data.mode === 'name'
+          ? query.trim() || null
+          : null
 
   return (
     <>
@@ -285,7 +302,17 @@ export default function QuickSearchPanel() {
                 )}
 
                 {count === 0 && data.mode !== 'orders' && (
-                  <p className="px-1 py-4 text-sm text-gray-500">Tidak ada pesanan yang cocok.</p>
+                  <div className="px-1 py-4">
+                    <p className="text-sm text-gray-500">Tidak ada pesanan yang cocok.</p>
+                    {fallbackTerm && (
+                      <>
+                        <p className="mt-1 text-xs text-gray-400">
+                          Kotak ini mencari pesanan. Kalau yang Anda maksud nama barang, lanjutkan ke:
+                        </p>
+                        <TautanLuar term={fallbackTerm} />
+                      </>
+                    )}
+                  </div>
                 )}
 
                 {data.notFound.length > 0 && (
@@ -298,22 +325,7 @@ export default function QuickSearchPanel() {
                     </p>
                     {/* Satu kata kunci yang tak cocok kemungkinan SKU/nama produk — tawarkan halaman
                         yang memang punya pencarian untuk itu, alih-alih jalan buntu. */}
-                    {singleToken && (
-                      <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                        <Link
-                          href={`/oms/dashboard/products?q=${encodeURIComponent(data.notFound[0] ?? '')}`}
-                          className="rounded-full border border-emerald-200 px-2.5 py-1 font-medium text-emerald-700 hover:bg-emerald-50"
-                        >
-                          Cari di Produk →
-                        </Link>
-                        <Link
-                          href={`/oms/dashboard/gudang/stok?search=${encodeURIComponent(data.notFound[0] ?? '')}`}
-                          className="rounded-full border border-emerald-200 px-2.5 py-1 font-medium text-emerald-700 hover:bg-emerald-50"
-                        >
-                          Cari di Kelola Stok →
-                        </Link>
-                      </div>
-                    )}
+                    {fallbackTerm && <TautanLuar term={fallbackTerm} />}
                   </div>
                 )}
               </>
@@ -337,6 +349,30 @@ export default function QuickSearchPanel() {
 }
 
 // === Kartu satu pesanan ===
+
+// Dua tautan keluar: ke halaman yang MEMANG punya pencarian untuk barang.
+//
+// Dipakai di dua tempat (hasil nihil pada pencarian nama, dan kata kunci tak dikenal pada pencarian
+// nomor) supaya keduanya tak pernah berbeda bunyi.
+function TautanLuar({ term }: { term: string }) {
+  const kunci = encodeURIComponent(term)
+  return (
+    <div className="mt-2 flex flex-wrap gap-2 text-xs">
+      <Link
+        href={`/oms/dashboard/products?q=${kunci}`}
+        className="rounded-full border border-emerald-200 px-2.5 py-1 font-medium text-emerald-700 hover:bg-emerald-50"
+      >
+        Cari di Produk →
+      </Link>
+      <Link
+        href={`/oms/dashboard/gudang/stok?search=${kunci}`}
+        className="rounded-full border border-emerald-200 px-2.5 py-1 font-medium text-emerald-700 hover:bg-emerald-50"
+      >
+        Cari di Kelola Stok →
+      </Link>
+    </div>
+  )
+}
 
 function ResultCard({
   result,
