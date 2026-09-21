@@ -15,8 +15,9 @@
 
 import { useState } from 'react'
 import { Calendar, Loader2 } from 'lucide-react'
-import { PERIOD_OPTIONS, type PeriodPreset } from '@/lib/dashboard-period'
+import { DEFAULT_PERIOD, PERIOD_OPTIONS, type PeriodPreset } from '@/lib/dashboard-period'
 import { useDashboardTransition } from '@/components/oms/DashboardTransition'
+import DateRangePicker from '@/components/oms/DateRangePicker'
 
 type Props = {
   preset: PeriodPreset
@@ -33,8 +34,6 @@ export default function DashboardPeriodFilter({ preset, fromDate, toDate, today 
 
   // Panel custom terbuka bila periode aktif memang custom, atau saat admin menekan "Custom".
   const [customOpen, setCustomOpen] = useState(preset === 'custom')
-  const [draftFrom, setDraftFrom] = useState(fromDate)
-  const [draftTo, setDraftTo] = useState(toDate)
 
   function navigate(params: Record<string, string>) {
     const query = new URLSearchParams(params).toString()
@@ -51,14 +50,17 @@ export default function DashboardPeriodFilter({ preset, fromDate, toDate, today 
     navigate({ periode: value })
   }
 
-  // Rentang custom diterapkan lewat tombol (bukan otomatis saat tanggal berubah) supaya
-  // mengubah tanggal awal tidak memicu navigasi dengan rentang setengah jadi.
-  function applyCustom() {
-    if (!draftFrom || !draftTo || draftFrom > draftTo) return
-    navigate({ periode: 'custom', dari: draftFrom, sampai: draftTo })
+  // Rentang custom diterapkan SETELAH dua klik di kalender — tak ada lagi keadaan "setengah jadi"
+  // yang dulu perlu ditahan tombol Terapkan: DateRangePicker baru memanggil balik saat rentangnya
+  // sudah lengkap. Rentang kosong (tombol Reset) mengembalikan dashboard ke periode bawaan.
+  function applyRange(from: string, to: string) {
+    if (!from || !to) {
+      setCustomOpen(false)
+      navigate({ periode: DEFAULT_PERIOD })
+      return
+    }
+    navigate({ periode: 'custom', dari: from, sampai: to })
   }
-
-  const customInvalid = !draftFrom || !draftTo || draftFrom > draftTo
 
   return (
     <div className="flex flex-col gap-3">
@@ -92,43 +94,23 @@ export default function DashboardPeriodFilter({ preset, fromDate, toDate, today 
         )}
       </div>
 
-      {/* === Panel custom range === */}
+      {/* === Panel custom range ===
+          Dulu dua kolom input tanggal + tombol Terapkan. Sekarang satu kalender: rentang
+          diterapkan begitu klik kedua jatuh, jadi tak ada lagi rentang setengah jadi yang perlu
+          divalidasi sendiri ("tanggal awal tidak boleh melewati tanggal akhir" — kalender menukar
+          keduanya otomatis). Preset di dalam kalender sengaja DIMATIKAN: chip di atas sudah
+          menyediakannya, dan dua tempat memilih hal yang sama hanya membingungkan. */}
       {customOpen && (
-        <div className="flex flex-wrap items-end gap-3 rounded-xl border border-gray-200 bg-white p-3">
-          <label className="flex flex-col gap-1 text-xs font-semibold text-gray-500">
-            Dari
-            <input
-              type="date"
-              value={draftFrom}
-              max={draftTo || today}
-              onChange={(e) => setDraftFrom(e.target.value)}
-              className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-normal text-gray-900 focus:border-brand-primary focus:outline-none"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-xs font-semibold text-gray-500">
-            Sampai
-            <input
-              type="date"
-              value={draftTo}
-              min={draftFrom || undefined}
-              max={today}
-              onChange={(e) => setDraftTo(e.target.value)}
-              className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-normal text-gray-900 focus:border-brand-primary focus:outline-none"
-            />
-          </label>
-          <button
-            type="button"
-            onClick={applyCustom}
-            disabled={customInvalid}
-            className="rounded-lg bg-brand-primary px-4 py-2 text-sm font-semibold text-white transition hover:brightness-90 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-400"
-          >
-            Terapkan
-          </button>
-          {customInvalid && (
-            <p className="text-xs text-rose-600">
-              Isi kedua tanggal; tanggal awal tidak boleh melewati tanggal akhir.
-            </p>
-          )}
+        <div className="rounded-xl border border-gray-200 bg-white p-3">
+          <DateRangePicker
+            from={preset === 'custom' ? fromDate : ''}
+            to={preset === 'custom' ? toDate : ''}
+            onApply={applyRange}
+            max={today}
+            showPresets={false}
+            placeholder="Pilih rentang tanggal"
+            className="sm:max-w-xs"
+          />
         </div>
       )}
     </div>
