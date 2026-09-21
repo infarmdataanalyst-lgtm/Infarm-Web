@@ -11,24 +11,13 @@ import { Download, ChevronLeft, ChevronRight, Inbox, Eye, AlertTriangle } from '
 import OmsHeader from '@/components/oms/OmsHeader'
 import OrderStatusModal from '@/components/oms/OrderStatusModal'
 import WarehouseMultiFilter from '@/components/oms/WarehouseMultiFilter'
+import DateRangePicker from '@/components/oms/DateRangePicker'
 import { paymentMethodLabel } from '@/lib/payment-method'
 import type {
   Order,
   OrderFulfillmentStatus,
   OrderPaymentStatus,
 } from '@/types/order'
-
-// Shortcut tanggal untuk filter range
-type DateShortcut = {
-  label: string
-  days: number
-  isMonthStart?: boolean
-}
-const DATE_SHORTCUTS: DateShortcut[] = [
-  { label: 'Hari Ini', days: 0 },
-  { label: '7 Hari', days: 7 },
-  { label: 'Bulan Ini', days: 0, isMonthStart: true },
-]
 
 // Jeda polling sinkronisasi status kurir selama tab OMS dibuka.
 // 90 detik: cukup rapat untuk terasa hidup bagi admin yang sedang memantau, cukup longgar untuk
@@ -222,22 +211,6 @@ function OrdersContent() {
     }
   }, [pageInvoices])
 
-  // === Helper: Date Shortcuts ===
-  function applyDateShortcut(days: number, isMonthStart: boolean = false) {
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-
-    const fromDate = new Date(today)
-    if (isMonthStart) {
-      fromDate.setDate(1)
-    } else {
-      fromDate.setDate(today.getDate() - days)
-    }
-
-    const formatDate = (d: Date) => d.toISOString().split('T')[0]
-    return { dari: formatDate(fromDate), sampai: formatDate(today) }
-  }
-
   // === Helper: Check if ANY filter is active ===
   function hasActiveFilters() {
     return !!(dari || sampai || kurir || gudang || pembayaran || sortBy || (activeTab !== 'Semua'))
@@ -375,50 +348,15 @@ function OrdersContent() {
         {/* === Filter Section === */}
         <div className="mt-6 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {/* Tanggal Dari */}
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Tanggal Dari
-              </label>
-              <input
-                type="date"
-                value={dari}
-                onChange={(e) => updateFilters({ dari: e.target.value || null })}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
-              />
-              {/* Date shortcuts */}
-              <div className="mt-2 flex gap-1.5 flex-wrap">
-                {DATE_SHORTCUTS.map((shortcut) => (
-                  <button
-                    key={shortcut.label}
-                    type="button"
-                    onClick={() => {
-                      const { dari: d, sampai: s } = applyDateShortcut(
-                        shortcut.days,
-                        shortcut.isMonthStart,
-                      )
-                      updateFilters({ dari: d, sampai: s })
-                    }}
-                    className="text-xs px-2 py-1 rounded bg-emerald-50 text-emerald-700 hover:bg-emerald-100 font-medium transition"
-                  >
-                    {shortcut.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Tanggal Sampai */}
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Tanggal Sampai
-              </label>
-              <input
-                type="date"
-                value={sampai}
-                onChange={(e) => updateFilters({ sampai: e.target.value || null })}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
-              />
-            </div>
+            {/* Rentang tanggal — SATU kalender, bukan lagi dua kolom terpisah.
+                Pintasan (Hari ini / 7 hari / 30 hari / Bulan ini) kini hidup di dalam kalender,
+                jadi deretan chip yang dulu menempel di bawah kolom "Tanggal Dari" tak perlu lagi. */}
+            <DateRangePicker
+              label="Rentang Tanggal"
+              from={dari}
+              to={sampai}
+              onApply={(f, t) => updateFilters({ dari: f || null, sampai: t || null })}
+            />
 
             {/* Filter Kurir */}
             <div>

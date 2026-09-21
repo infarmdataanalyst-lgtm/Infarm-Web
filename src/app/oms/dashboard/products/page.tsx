@@ -17,6 +17,7 @@ import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 
 import OmsHeader from '@/components/oms/OmsHeader'
+import DateRangePicker from '@/components/oms/DateRangePicker'
 import VariantManagerModal from '@/components/oms/VariantManagerModal'
 import ProductImagePreview from '@/components/oms/ProductImagePreview'
 import { PRODUCT_CATEGORIES, getCategoryLabel } from '@/lib/data/categories'
@@ -904,33 +905,15 @@ function ProductsContent() {
               </select>
             </div>
 
-            {/* Rentang tanggal dibuat — input date native (tanpa library) */}
-            <div>
-              <label htmlFor="pf-dari" className={FILTER_LABEL_CLASS}>
-                Dibuat dari
-              </label>
-              <input
-                id="pf-dari"
-                type="date"
-                value={dari}
-                max={sampai || undefined}
-                onChange={(e) => updateFilters({ dari: e.target.value || null })}
-                className={FILTER_FIELD_CLASS}
-              />
-            </div>
-            <div>
-              <label htmlFor="pf-sampai" className={FILTER_LABEL_CLASS}>
-                Sampai
-              </label>
-              <input
-                id="pf-sampai"
-                type="date"
-                value={sampai}
-                min={dari || undefined}
-                onChange={(e) => updateFilters({ sampai: e.target.value || null })}
-                className={FILTER_FIELD_CLASS}
-              />
-            </div>
+            {/* Rentang tanggal dibuat — SATU kalender (DateRangePicker), bukan lagi dua kolom
+                terpisah yang mengharuskan admin menjaga sendiri urutan dari/sampai. */}
+            <DateRangePicker
+              label="Dibuat pada"
+              labelClassName={FILTER_LABEL_CLASS}
+              from={dari}
+              to={sampai}
+              onApply={(f, t) => updateFilters({ dari: f || null, sampai: t || null })}
+            />
           </div>
 
           {/* Pintasan rentang tanggal */}
