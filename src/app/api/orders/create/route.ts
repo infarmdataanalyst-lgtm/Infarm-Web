@@ -9,7 +9,7 @@ import { NextResponse } from 'next/server'
 import { RATE_LIMITS, enforceRateLimit, getClientIp } from '@/lib/rate-limit'
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { saveOrder, OrderStockError } from '@/lib/mock-db/orders'
-import { readProducts } from '@/lib/mock-db/products'
+import { readProductsByIds } from '@/lib/mock-db/products'
 import { readPromotions } from '@/lib/mock-db/promotions'
 import { getComboById } from '@/lib/mock-db/combos'
 import { allocateComboPrices, computeOrderPromos } from '@/lib/promo-cart'
@@ -131,14 +131,24 @@ async function pickVerifiedWarehouse(
   const warehouse = await getWarehouseById(warehouseId)
   if (!warehouse || !warehouse.isActive) return null
 
-  for (const need of requirements) {
-    const stock = await getEffectiveStock(need.productId, {
-      variantId: need.variantId,
-      warehouseId,
-    })
+  // Stok tiap kebutuhan diperiksa BERSAMAAN, bukan bergiliran. Dulu satu putaran `for await`:
+  // keranjang 5 item = 5 perjalanan berurutan ke database, dan fungsi ini sendiri bisa dipanggil
+  // beberapa kali (gudang yang diminta, lalu kandidat lain). Semuanya pembacaan murni tanpa efek
+  // samping, jadi menjalankannya serempak tak mengubah hasil — hanya menghilangkan antreannya.
+  //
+  // Konsekuensi yang disengaja: tak ada lagi keluar lebih awal saat kebutuhan pertama sudah gagal.
+  // Menjalankan sisa pembacaan yang hasilnya tak terpakai jauh lebih murah daripada menunggu
+  // giliran satu per satu.
+  const stocks = await Promise.all(
+    requirements.map((need) =>
+      getEffectiveStock(need.productId, { variantId: need.variantId, warehouseId }),
+    ),
+  )
+  for (const [index, need] of requirements.entries()) {
     // null = produk belum punya baris stok per gudang (mis. data belum di-backfill). Jangan tolak
     // gudangnya karena itu — RPC checkout masih punya jalur fallback ke kolom stok lama.
-    if (stock !== null && stock < need.quantity) return null
+    const stock = stocks[index]
+    if (stock !== null && stock !== undefined && stock < need.quantity) return null
   }
   return warehouse
 }
@@ -275,14 +285,47 @@ export async function POST(request: Request) {
     warehouseId?: unknown
     weight?: unknown
   }
-  const products = await readProducts()
-  const byId = new Map(products.map((p) => [p.id, p]))
-
   // Varian yang dipilih (fresh, bukan cache) — untuk harga & validasi otoritatif produk bervarian.
   const variantIds = body.items
     .map((it) => (it as OrderItem).variantId)
     .filter((v): v is string => typeof v === 'string' && v.length > 0)
-  const variantMap = await getVariantsByIds(variantIds)
+
+  const claimedComboIds = [...new Set(body.items.map(comboIdOf).filter((v) => v !== undefined))]
+
+  // === SATU GELOMBANG PEMBACAAN, bukan enam giliran ===
+  //
+  // Keenam pembacaan di bawah hanya bergantung pada `body` — tak satu pun menunggu hasil yang lain.
+  // Dulu dipanggil berurutan di sepanjang berkas ini, jadi ongkosnya dijumlahkan: pada fungsi yang
+  // berjarak dari database, sepuluh giliran berurutan ≈ dua detik hanya untuk perjalanan pulang
+  // pergi, sebelum satu baris pun ditulis (diukur 2026-09-21; lihat catatan region di CLAUDE.md).
+  //
+  // ⚠️ Yang berubah hanya KAPAN data diambil. URUTAN PEMERIKSAAN di bawah tidak boleh bergeser:
+  // minimal belanja tetap diperiksa sebelum ongkir, paket sebelum harga, dan seterusnya. Menarik
+  // pembacaan ke depan aman karena semuanya BACA; memindahkan pemeriksaannya tidak.
+  const [products, variantMap, claimedCombos, minOrderAmount, promotions, maxDiscountPercent] =
+    await Promise.all([
+      // Hanya produk yang ada di keranjang — bukan seluruh tabel. Produk hadiah promo (yang
+      // mungkin tak ada di keranjang) diambil menyusul, lihat blok di bawah.
+      readProductsByIds(body.items.map((it) => it.productId)),
+      getVariantsByIds(variantIds),
+      Promise.all(claimedComboIds.map((id) => getComboById(id))),
+      getMinOrderAmount(),
+      readPromotions(),
+      getMaxDiscountPercent(),
+    ])
+
+  const byId = new Map(products.map((p) => [p.id, p]))
+
+  // Produk HADIAH promo belum tentu ada di keranjang, jadi belum tentu ikut terambil di atas.
+  // Diambil menyusul dalam SATU pembacaan tambahan, dan hanya bila memang ada promo hadiah yang
+  // produknya belum dikenal — bukan dengan menarik seluruh katalog seperti sebelumnya.
+  const freeProductIds = promotions
+    .filter((p) => p.type === 'free_product' && p.isActive && p.freeProductId)
+    .map((p) => p.freeProductId as string)
+    .filter((id) => !byId.has(id))
+  if (freeProductIds.length > 0) {
+    for (const prod of await readProductsByIds(freeProductIds)) byId.set(prod.id, prod)
+  }
 
   // === Harga paket/combo — OTORITATIF dari DB (SEC-033) ===
   //
@@ -294,7 +337,6 @@ export async function POST(request: Request) {
   // Polanya menyalin dua cabang yang sudah terbukti di bawah (promo_price produk & harga varian):
   // ambil baris otoritatif dari DB, pastikan anak benar-benar milik induknya, baru tetapkan harga.
   const comboUnitPrice = new Map<string, number>() // kunci: `${comboId}::${productId}`
-  const claimedComboIds = [...new Set(body.items.map(comboIdOf).filter((v) => v !== undefined))]
 
   // Paket yang diklaim tapi TIDAK lolos verifikasi kini DITOLAK 422, bukan diam-diam dihargai
   // satuan seperti sebelumnya (SEC-033 lanjutan).
@@ -315,8 +357,9 @@ export async function POST(request: Request) {
       { status: 422 },
     )
 
-  for (const comboId of claimedComboIds) {
-    const combo = await getComboById(comboId)
+  for (const [index, comboId] of claimedComboIds.entries()) {
+    // Sudah diambil bersama pembacaan lain di atas; urutannya sama dengan claimedComboIds.
+    const combo = claimedCombos[index]
     if (!combo || !combo.isActive) return comboRejected('yang dipilih') // dihapus/dinonaktifkan
 
     const lines = body.items.filter((it) => comboIdOf(it) === comboId)
@@ -420,7 +463,6 @@ export async function POST(request: Request) {
   // konsisten antara keranjang, checkout, dan penolakan di server ini.
   // Dicek SEBELUM pembuatan invoice payment gateway agar tak membuang API call untuk transaksi
   // yang pasti ditolak (batas minimum Xendit ±Rp10.000).
-  const minOrderAmount = await getMinOrderAmount()
   if (subtotal < minOrderAmount) {
     return NextResponse.json(
       {
@@ -438,7 +480,6 @@ export async function POST(request: Request) {
   // hasil hitung sendiri (harga DB). Hanya promo yang benar-benar memenuhi syarat yang menambahkan
   // produk gratis → cegah manipulasi dapat barang gratis tanpa memenuhi min_purchase.
   // subtotal dihitung SEBELUM blok ini (item gratis harga 0 → tak mengubah subtotal).
-  const promotions = await readPromotions()
   const nowMs = Date.now()
   const addedFreeIds = new Set<string>()
   // Peringatan yang ikut dikirim ke pembeli bersama respons sukses (bukan error — pesanannya tetap
@@ -632,7 +673,6 @@ export async function POST(request: Request) {
   //
   // Sebelum ini `discount` dipaku 0 sementara keranjang sudah mengurangi totalnya sendiri, sehingga
   // pembeli melihat satu angka lalu ditagih angka yang lebih besar.
-  const maxDiscountPercent = await getMaxDiscountPercent()
   const promoResult = computeOrderPromos(promotions, subtotal, shippingCost, nowMs, {
     maxDiscountPercent,
     minTotal: XENDIT_MIN_AMOUNT,
