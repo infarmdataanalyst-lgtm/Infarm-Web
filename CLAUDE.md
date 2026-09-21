@@ -477,6 +477,29 @@ Cache Components (`use cache`/PPR) **belum aktif** → pakai caching klasik Next
 
 ---
 
+## Region Fungsi Vercel (`vercel.json`)
+
+`"regions": ["sin1"]` — SINGAPURA. **Jangan diubah tanpa memindahkan database dulu.**
+
+Sebelum ini tak disetel, jadi Vercel memakai bawaannya: `iad1` (Washington DC). Padahal Supabase
+project ini ada di Singapura. Akibatnya SETIAP query menyeberangi Pasifik pulang-pergi — terukur
+2026-09-21 lewat header `X-Vercel-Id: sin1::iad1::…` (masuk lewat edge Singapura, dieksekusi di
+Virginia) dan `x-envoy-upstream-service-time: 2` dari Supabase: databasenya menjawab dalam **2 ms**,
+tapi satu tanya-jawab dari fungsi tetap memakan ±230 ms.
+
+Dampaknya menumpuk karena jalur `POST /api/orders/create` memanggil DB **sepuluh kali lebih**
+secara berurutan (produk, varian, combo, minimal belanja, promo, ongkir, plafon diskon, gudang,
+stok, simpan) — ±2,5 detik hanya untuk perjalanan, sebelum Xendit disentuh sama sekali. Endpoint
+pembaca biasa pun 0,87–1,67 detik untuk data yang di sisi DB selesai dalam milidetik.
+
+JSON tak bisa memuat komentar, jadi alasannya dicatat di sini. Kalau suatu hari database dipindah
+(mis. ke region lain karena alasan kepatuhan data), region ini WAJIB ikut dipindah — nilai lama
+akan membuat seluruh aplikasi lambat tanpa satu pun galat yang terlihat.
+
+Paket Hobby hanya boleh SATU region. Cron di berkas yang sama ikut berjalan di region ini.
+
+---
+
 ## Supabase (sudah terpasang)
 
 - **Client**: server `src/lib/supabase/server.ts` (`createClient` anon/SSR + `createAdminClient`
