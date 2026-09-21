@@ -479,22 +479,28 @@ Cache Components (`use cache`/PPR) **belum aktif** → pakai caching klasik Next
 
 ## Region Fungsi Vercel (`vercel.json`)
 
-`"regions": ["sin1"]` — SINGAPURA. **Jangan diubah tanpa memindahkan database dulu.**
+`"regions": ["syd1"]` — SYDNEY, **karena database Supabase project ini ada di Sydney**
+(AWS ap-southeast-2; dipastikan 2026-09-21 dengan menyelesaikan `db.<ref>.supabase.co` ke
+`2406:da1c:…` → Sydney, AU). Region fungsi WAJIB mengikuti region database, bukan mengikuti lokasi
+pembeli.
 
-Sebelum ini tak disetel, jadi Vercel memakai bawaannya: `iad1` (Washington DC). Padahal Supabase
-project ini ada di Singapura. Akibatnya SETIAP query menyeberangi Pasifik pulang-pergi — terukur
-2026-09-21 lewat header `X-Vercel-Id: sin1::iad1::…` (masuk lewat edge Singapura, dieksekusi di
-Virginia) dan `x-envoy-upstream-service-time: 2` dari Supabase: databasenya menjawab dalam **2 ms**,
-tapi satu tanya-jawab dari fungsi tetap memakan ±230 ms.
+── Kenapa bukan `sin1`, padahal pembeli di Indonesia ──
+Di serverless, tiap pemanggilan kerap membuka koneksi BARU ke database: DNS + TCP + TLS = tiga
+perjalanan bolak-balik sebelum satu query pun terkirim. Ongkos itu dibayar per query, sedangkan
+jarak pembeli→fungsi hanya dibayar sekali per permintaan. `POST /api/orders/create` memanggil DB
+sepuluh kali lebih berurutan, jadi kedekatan ke DB menang telak.
 
-Dampaknya menumpuk karena jalur `POST /api/orders/create` memanggil DB **sepuluh kali lebih**
-secara berurutan (produk, varian, combo, minimal belanja, promo, ongkir, plafon diskon, gudang,
-stok, simpan) — ±2,5 detik hanya untuk perjalanan, sebelum Xendit disentuh sama sekali. Endpoint
-pembaca biasa pun 0,87–1,67 detik untuk data yang di sisi DB selesai dalam milidetik.
+Terukur di endpoint satu-query (`/api/combos/active`), setelah fungsi panas:
+  iad1 (Virginia) → 0,87–1,67 dtk   ·   sin1 (Singapura) → ~0,55 dtk   ·   syd1 → lihat catatan PR
+Lonjakan 2–9 detik yang sesekali muncul adalah COLD START (trafik masih sepi), bukan query lambat:
+Supabase sendiri menjawab dalam 2 ms (`x-envoy-upstream-service-time: 2`).
 
-JSON tak bisa memuat komentar, jadi alasannya dicatat di sini. Kalau suatu hari database dipindah
-(mis. ke region lain karena alasan kepatuhan data), region ini WAJIB ikut dipindah — nilai lama
-akan membuat seluruh aplikasi lambat tanpa satu pun galat yang terlihat.
+⚠️ JANGAN menyimpulkan region database dari header `CF-Ray: …-SIN`. Itu menunjukkan edge Cloudflare
+terdekat dengan PENGUKUR, bukan lokasi database — kekeliruan yang sempat terjadi dan membuat region
+pertama kali disetel ke Singapura.
+
+Kalau database kelak dipindah (mis. ke Singapura supaya dekat pembeli DAN fungsi), region di sini
+WAJIB ikut. Nilai yang keliru membuat seluruh aplikasi lambat tanpa satu pun galat yang terlihat.
 
 Paket Hobby hanya boleh SATU region. Cron di berkas yang sama ikut berjalan di region ini.
 
