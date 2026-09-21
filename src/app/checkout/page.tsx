@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ShoppingBag, PackageX } from 'lucide-react'
+import { ShoppingBag, PackageX, Wallet } from 'lucide-react'
 import type { Product } from '@/types/product'
 import CheckoutHeader from '@/components/checkout/CheckoutHeader'
 import CheckoutProductSummary from '@/components/checkout/CheckoutProductSummary'
@@ -749,6 +749,27 @@ export default function CheckoutPage() {
             selected={selectedCourier}
             onSelect={setSelectedCourier}
           />
+        </CheckoutCard>
+
+        {/* 4 — Metode pembayaran: KETERANGAN, bukan pilihan.
+            Seksi berlogo yang dulu ada di sini dihapus bersama pemilih metode (2026-09-18). Yang
+            tersisa satu baris, dan itu memang perlu: tanpanya checkout tak menyebut pembayaran sama
+            sekali, dan pembeli menekan "Lanjutkan Checkout" tanpa tahu nanti bisa bayar pakai apa.
+            Daftarnya sengaja berupa kategori, bukan merek — merek berubah mengikuti kanal yang
+            aktif di Xendit, dan daftar merek di sini akan basi tanpa ada yang menyadarinya. */}
+        <CheckoutCard className="lg:col-start-2">
+          <section className="flex items-center gap-3 bg-white px-4 py-4">
+            <span className="shrink-0 text-brand-primary">
+              <Wallet className="h-6 w-6" />
+            </span>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-zinc-800">Metode Pembayaran</p>
+              <p className="text-xs leading-relaxed text-zinc-500">
+                Transfer Virtual Account, e-wallet, QRIS, atau direct debit — dipilih di halaman
+                pembayaran setelah ini.
+              </p>
+            </div>
+          </section>
         </CheckoutCard>
 
         {/* 5 — Ringkasan pesanan (rincian harga) */}
