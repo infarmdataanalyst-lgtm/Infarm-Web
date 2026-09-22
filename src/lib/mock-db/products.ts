@@ -197,6 +197,30 @@ async function applyEffectiveStock(products: StoredProduct[]): Promise<StoredPro
   })
 }
 
+// Membaca SEBAGIAN produk berdasarkan daftar id — bukan seluruh tabel.
+//
+// Kenapa ada, padahal readProducts() sudah ada: jalur checkout hanya butuh produk yang benar-benar
+// ada di keranjang (biasanya 1–5), sementara readProducts() menarik SETIAP baris beserta SEMUA
+// kolomnya, termasuk deskripsi panjang dan daftar gambar. Pada katalog 11 produk itu masih murah;
+// pada 500 produk ia menjadi beban yang dibayar setiap kali ada yang checkout.
+//
+// Stok efektif tetap dihitung lewat applyEffectiveStock, sama seperti readProducts, jadi pemanggil
+// tak perlu tahu bedanya. Array kosong bila `ids` kosong — tanpa menyentuh database sama sekali.
+export async function readProductsByIds(ids: string[]): Promise<StoredProduct[]> {
+  const unik = [...new Set(ids.filter((id) => typeof id === 'string' && id.length > 0))]
+  if (unik.length === 0) return []
+
+  const supabase = createAdminClient()
+  const { data, error } = await supabase.from('products').select('*').in('id', unik)
+
+  if (error) {
+    console.error('Gagal membaca produk (by ids) dari Supabase:', error.message)
+    return []
+  }
+
+  return applyEffectiveStock((data as ProductRow[]).map(rowToStored))
+}
+
 // Membaca satu produk berdasarkan id. null bila tidak ditemukan.
 export async function getProductById(id: string): Promise<StoredProduct | null> {
   const supabase = createAdminClient()
