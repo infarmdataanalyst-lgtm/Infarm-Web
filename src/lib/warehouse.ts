@@ -132,13 +132,62 @@ export async function getOriginIdForWarehouse(warehouseId?: string): Promise<str
 // (orders.warehouse_id NULL) dan gudang yang belum didaftarkan alamatnya tetap harus bisa dibooking.
 // String kosong hanya bila env itu pun kosong — pemanggil memperlakukannya sebagai 'not-configured'.
 //
-// Belum dipanggil siapa pun: disiapkan untuk booking & slot pickup per gudang (langkah 3-4 di
-// docs/multi-gudang-panduan-implementasi.md). Sampai itu masuk, perilaku booking tidak berubah.
+// SATU TUAS dengan getQuoteOriginId: selama MENGANTAR_PICKUP_ORIGIN_ID terpasang, fungsi ini SELALU
+// mengembalikan alamat lama (lihat isSinglePickupMode). Dipanggil booking kurir (mengantar-shipment.ts)
+// dengan orders.warehouse_id pesanan.
 export async function getPickupAddressIdForWarehouse(warehouseId?: string): Promise<string> {
+  const legacy = process.env.MENGANTAR_STORE_ADDRESS_ID?.trim() || ''
+  if (isSinglePickupMode()) return legacy
   const warehouse = warehouseId ? await getWarehouseById(warehouseId) : await getDefaultWarehouse()
-  return (
-    warehouse?.mengantarAddressId?.trim() || process.env.MENGANTAR_STORE_ADDRESS_ID?.trim() || ''
-  )
+  return warehouse?.mengantarAddressId?.trim() || legacy
+}
+
+// true selama kutipan ongkir dipaku ke satu origin lewat MENGANTAR_PICKUP_ORIGIN_ID.
+//
+// KENAPA penjemputan ikut tuas ini, bukan berdiri sendiri: Mengantar menagih dari PICKUP_AUTOFILL
+// alamat penjemputan (MGT-58, MGT-60), sedangkan pembeli melihat harga dari origin kutipan. Kalau
+// penjemputan pindah ke alamat per gudang sementara kutipan masih dipaku, pesanan Gudang Utama
+// (Surabaya) dikutip dari Cengkareng tapi ditagih dari Surabaya — di sandbox Rp5.100 lawan Rp83.400
+// ke Jakarta Pusat. Itu insiden INV-20260820-4876 dengan arah terbalik, dan mengenai hampir semua
+// pesanan karena Gudang Utama adalah gudang default.
+//
+// Dengan satu tuas, dua keadaan itu tak mungkin berselisih:
+//   env terpasang → kutipan dari origin env,         penjemputan di MENGANTAR_STORE_ADDRESS_ID
+//                   (PICKUP_AUTOFILL alamat itu = origin env — pasangan konfigurasi yang sama)
+//   env dicabut   → kutipan dari origin tiap gudang, penjemputan di alamat tiap gudang
+//                   (PICKUP_AUTOFILL tiap alamat = origin gudangnya — gerbang A3, MGT-62)
+// Mencabut env = satu-satunya langkah yang memindahkan KEDUANYA sekaligus.
+function isSinglePickupMode(): boolean {
+  return Boolean(process.env.MENGANTAR_PICKUP_ORIGIN_ID?.trim())
+}
+
+// Seluruh alamat penjemputan yang perlu punya slot pickup harian — dipakai cron.
+//
+// De-duplikasi DISENGAJA: dua gudang boleh berbagi satu alamat Mengantar (mis. saat gudang baru
+// belum didaftarkan alamatnya sendiri). Slot dibuat per ALAMAT, bukan per gudang, karena itulah
+// satuan yang dikenal Mengantar — membuat dua slot untuk alamat yang sama hanya menumpuk sampah
+// di sistem kurir.
+//
+// Hanya gudang AKTIF: gudang nonaktif tak memenuhi pesanan, jadi tak ada paket yang perlu dijemput.
+// Gudang aktif yang kolomnya masih kosong ikut diwakili oleh MENGANTAR_STORE_ADDRESS_ID, karena
+// booking pesanannya jatuh ke alamat itu (getPickupAddressIdForWarehouse) — tanpa slot untuk
+// alamat itu, pesanan dari gudang tersebut akan jatuh ke jalur fallback di jalur bayar.
+//
+// Mode satu alamat (MENGANTAR_PICKUP_ORIGIN_ID terpasang): hanya alamat lama, persis seperti sebelum
+// kolom ini ada — booking memang hanya memakai alamat itu (getPickupAddressIdForWarehouse).
+export async function listPickupAddressIds(): Promise<string[]> {
+  const fallback = process.env.MENGANTAR_STORE_ADDRESS_ID?.trim()
+  if (isSinglePickupMode()) return fallback ? [fallback] : []
+
+  const warehouses = await readWarehouses(true)
+  const ids = new Set<string>()
+  for (const w of warehouses) {
+    const id = w.mengantarAddressId?.trim() || fallback
+    if (id) ids.add(id)
+  }
+  // Tabel gudang kosong / belum di-migrate: cron tetap berjalan seperti sebelum kolom ini ada.
+  if (ids.size === 0 && fallback) ids.add(fallback)
+  return [...ids]
 }
 
 // === Origin KUTIPAN ongkir (boleh berbeda dari origin gudang) ===

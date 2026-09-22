@@ -1,5 +1,6 @@
 // src/app/api/cron/mengantar-pickup/route.ts
-// Cron harian: membuat slot pickup Mengantar untuk hari ini (06:00 WIB, Senin–Sabtu).
+// Cron harian: membuat slot pickup Mengantar untuk hari ini, SATU PER ALAMAT PENJEMPUTAN
+// (06:00 WIB, Senin–Sabtu).
 //
 // GET, bukan POST: Vercel Cron memanggil endpoint-nya dengan GET. Method lain otomatis 405 karena
 // hanya GET yang diekspor di file ini.
@@ -18,6 +19,7 @@
 import { NextResponse } from 'next/server'
 import { ensurePickupForDate } from '@/lib/mengantar-pickup'
 import { resolvePickupDate, wibDateString, wibHour } from '@/lib/pickup-schedule'
+import { listPickupAddressIds } from '@/lib/warehouse'
 import { timingSafeEqual } from 'node:crypto'
 
 // createAdminClient (Supabase) + node:crypto butuh runtime Node.js, bukan Edge
@@ -64,31 +66,56 @@ export async function GET(request: Request) {
   const today = wibDateString(nowMs)
   const resolved = resolvePickupDate(nowMs)
 
+  // Satu slot per ALAMAT penjemputan. Sebelum tiap gudang punya alamat sendiri, satu panggilan
+  // sudah cukup; sekarang alamat yang tak kebagian slot akan menjatuhkan booking-nya ke jalur
+  // fallback saat checkout — mahal, dan tepat di jalur bayar.
+  const addressIds = await listPickupAddressIds()
+  if (addressIds.length === 0) {
+    console.error(`${LOG} tak ada alamat penjemputan — isi warehouses.mengantar_address_id`)
+    return NextResponse.json({ error: 'Alamat penjemputan belum dikonfigurasi.' }, { status: 500 })
+  }
+
   console.log(
-    `${LOG} mulai — hari ini ${today} jam ${wibHour(nowMs)} WIB (target checkout saat ini: ${resolved.date}/${resolved.reason})`,
+    `${LOG} mulai — hari ini ${today} jam ${wibHour(nowMs)} WIB, ${addressIds.length} alamat (target checkout saat ini: ${resolved.date}/${resolved.reason})`,
   )
 
-  const outcome = await ensurePickupForDate(today)
+  // PARALEL, bukan berurutan: tiap panggilan POST /time bertimeout 8 detik (TIME_REQUEST_TIMEOUT_MS)
+  // sementara fungsi serverless Vercel punya anggaran waktunya sendiri. Dua alamat berurutan sudah
+  // menghabiskan 16 detik pada kasus terburuk dan fungsinya dimatikan sebelum sempat menulis ke DB.
+  // Tiap alamat menulis BARIS yang berbeda, jadi tak ada yang perlu diserialkan.
+  const results = await Promise.all(
+    addressIds.map(async (addressId) => ({
+      addressId,
+      outcome: await ensurePickupForDate(today, addressId),
+    })),
+  )
 
-  switch (outcome.status) {
-    case 'skipped-non-pickup-day':
-      // Minggu. Terjadi bila jadwal cron diubah atau cron dipicu manual — bukan kesalahan.
-      console.log(`${LOG} ${today} bukan hari pickup — dilewati`)
-      return NextResponse.json({ date: today, status: 'skipped', reason: 'BUKAN_HARI_PICKUP' })
+  const items = results.map(({ addressId, outcome }) => ({
+    addressId,
+    status: outcome.status,
+    ...(outcome.status === 'failed' ? { reason: outcome.reason } : {}),
+    ...('pickup' in outcome ? { timeId: outcome.pickup.timeId } : {}),
+  }))
 
-    case 'existing':
-      return NextResponse.json({ date: today, status: 'existing', timeId: outcome.pickup.timeId })
-
-    case 'created':
-    case 'raced':
-      return NextResponse.json({ date: today, status: outcome.status, timeId: outcome.pickup.timeId })
-
-    case 'failed':
-      // 500 supaya kegagalan terlihat di log & dasbor cron Vercel, bukan tenggelam sebagai 200.
-      console.error(`${LOG} gagal untuk ${today}: ${outcome.reason}`)
-      return NextResponse.json(
-        { date: today, status: 'failed', reason: outcome.reason },
-        { status: 500 },
-      )
+  // SEBAGIAN gagal tetap 500: satu alamat tanpa slot berarti seluruh pesanan dari gudang itu jatuh
+  // ke fallback di jalur bayar. Menyembunyikannya di balik 200 membuat dasbor cron Vercel hijau
+  // untuk keadaan yang perlu ditangani hari itu juga.
+  const gagal = items.filter((i) => i.status === 'failed')
+  if (gagal.length > 0) {
+    console.error(
+      `${LOG} gagal untuk ${today} pada ${gagal.length}/${items.length} alamat: ${gagal
+        .map((i) => `${i.addressId}=${i.reason}`)
+        .join(', ')}`,
+    )
+    return NextResponse.json({ date: today, status: 'failed', items }, { status: 500 })
   }
+
+  // Minggu. Terjadi bila jadwal cron diubah atau cron dipicu manual — bukan kesalahan. Seluruh
+  // alamat sama-sama dilewati karena isPickupDay tak bergantung pada alamat.
+  if (items.every((i) => i.status === 'skipped-non-pickup-day')) {
+    console.log(`${LOG} ${today} bukan hari pickup — dilewati`)
+    return NextResponse.json({ date: today, status: 'skipped', reason: 'BUKAN_HARI_PICKUP' })
+  }
+
+  return NextResponse.json({ date: today, status: 'ok', items })
 }

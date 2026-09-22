@@ -19,6 +19,12 @@
 //            batch, batch_id, courier, errors: [], ordersClosedDestination: [] }
 // Nomor resi = data[0].cnote_no (mis. "JO9253592535").
 //
+// `pickup.address_id` = alamat penjemputan GUDANG PEMENUH (warehouses.mengantar_address_id), bukan
+// satu alamat global. Field inilah yang menentukan dari mana kurir mengambil paket DAN dari mana
+// Mengantar menagih ongkirnya (terbukti di sandbox, Notion Testing Mengantar MGT-58 & MGT-60).
+// `pickup.time_id` WAJIB slot milik alamat yang sama — Mengantar tidak menolak pasangan yang tak
+// cocok (MGT-57), jadi pasangan itu dijaga di sini.
+//
 // ── TIGA nomor, dan ketiganya harus disimpan ──
 // Satu pengiriman punya tiga identitas di Mengantar, dan masing-masing dipakai di tempat berbeda:
 //   cnote_no  nomor resi — untuk MELACAK (GET /order?tracking_id=…), tercetak di label paket
@@ -45,6 +51,7 @@ import { mengantarWriteHost } from '@/lib/mengantar-host'
 import { getTodayPickupTimeId } from '@/lib/mengantar-pickup'
 import { readProducts } from '@/lib/mock-db/products'
 import { shippingWeightKg } from '@/lib/shipping-weight'
+import { getPickupAddressIdForWarehouse } from '@/lib/warehouse'
 import type { Order } from '@/types/order'
 
 const LOG = '[mengantar-shipment]'
@@ -198,7 +205,15 @@ export async function createShipmentOrder(order: Order): Promise<ShipmentResult>
   const base = writeHost.host
 
   const key = process.env.MENGANTAR_API_KEY
-  const addressId = process.env.MENGANTAR_STORE_ADDRESS_ID
+  // Alamat penjemputan = milik GUDANG PEMENUH pesanan ini (orders.warehouse_id), bukan satu alamat
+  // global. Inilah satu-satunya field yang menentukan dari mana kurir mengambil paket DAN dari mana
+  // Mengantar menagih ongkirnya — `POST /order` tak punya field origin sama sekali.
+  //
+  // Pesanan LAMA (warehouse_id NULL, dibuat sebelum sistem multi-gudang) dan gudang yang belum
+  // didaftarkan alamatnya tetap terlayani: getPickupAddressIdForWarehouse jatuh ke
+  // MENGANTAR_STORE_ADDRESS_ID. Fallback itu BUKAN sisa yang bisa dibersihkan — tanpanya, pesanan
+  // warisan yang baru dibayar akan gagal dibooking padahal uangnya sudah masuk.
+  const addressId = await getPickupAddressIdForWarehouse(order.warehouseId)
   if (!key || !addressId) {
     return { ok: false, reason: 'not-configured', detail: 'env Mengantar belum lengkap' }
   }
@@ -216,10 +231,29 @@ export async function createShipmentOrder(order: Order): Promise<ShipmentResult>
     return { ok: false, reason: 'incomplete-order', detail: 'alamat pengiriman kosong' }
   }
 
-  // Slot penjemputan. Tanpa time_id, `scheduledPickup` tak bisa dipakai.
-  const pickup = await getTodayPickupTimeId()
+  // Slot penjemputan MILIK ALAMAT DI ATAS. Tanpa time_id, `scheduledPickup` tak bisa dipakai.
+  // Slot alamat lain tak boleh dipinjam: paketnya akan terdaftar pada penjemputan di gudang
+  // yang berbeda dari tempat barangnya benar-benar berada.
+  const pickup = await getTodayPickupTimeId(addressId)
   if (!pickup) {
     return { ok: false, reason: 'no-pickup-time', detail: 'time_id pickup tak tersedia' }
+  }
+
+  // Pemeriksaan terakhir sebelum payload dikirim. getTodayPickupTimeId sudah dirancang hanya
+  // mengembalikan slot milik alamat yang diminta, jadi baris ini tak semestinya pernah terpicu.
+  // Tetap dipasang karena Mengantar MENERIMA pasangan address_id/time_id yang tak cocok tanpa
+  // error (MGT-57): kalau suatu saat ada perubahan yang merusak jaminan di atas, akibatnya bukan
+  // galat melainkan kurir yang datang ke gudang salah tanpa jejak. Lebih baik booking gagal
+  // terang-terangan — admin masih bisa membooking ulang — daripada salah alamat diam-diam.
+  if (pickup.addressId !== addressId) {
+    console.error(
+      `${LOG} booking ${order.orderId} DIBATALKAN — slot ${pickup.timeId} milik alamat ${pickup.addressId}, bukan ${addressId}`,
+    )
+    return {
+      ok: false,
+      reason: 'no-pickup-time',
+      detail: 'slot pickup bukan milik alamat gudang pemenuh',
+    }
   }
 
   const weight = await buildWeightKg(order)
@@ -248,7 +282,7 @@ export async function createShipmentOrder(order: Order): Promise<ShipmentResult>
   }
 
   console.log(
-    `${LOG} booking ${order.orderId}: kurir=${JT_COURIER_ID} berat=${weight}kg time_id=${pickup.timeId} (sumber ${pickup.source}, tanggal ${pickup.date})`,
+    `${LOG} booking ${order.orderId}: kurir=${JT_COURIER_ID} berat=${weight}kg gudang=${order.warehouseId ?? 'warisan/default'} address_id=${addressId} time_id=${pickup.timeId} (sumber ${pickup.source}, tanggal ${pickup.date})`,
   )
 
   try {
