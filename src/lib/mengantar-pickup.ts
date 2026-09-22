@@ -1,13 +1,17 @@
 // src/lib/mengantar-pickup.ts
 // Jadwal pickup Mengantar: SATU PINTU pengambilan `time_id` untuk booking kurir.
-// SERVER ONLY — memegang MENGANTAR_API_KEY & MENGANTAR_STORE_ADDRESS_ID. Jangan pernah diimpor
-// dari komponen 'use client'; api key tidak boleh sampai ke bundel browser.
+// SERVER ONLY — memegang MENGANTAR_API_KEY. Jangan pernah diimpor dari komponen 'use client';
+// api key tidak boleh sampai ke bundel browser.
+//
+// Alamat penjemputan TIDAK dibaca dari env di sini: pemanggil mengirimkannya (alamat gudang pemenuh,
+// lewat lib/warehouse.ts). MENGANTAR_STORE_ADDRESS_ID hanya disentuh untuk membatasi slot statis
+// ke alamat pemiliknya — lihat lapis ketiga getTodayPickupTimeId.
 //
 // ── Kenapa ada tabel perantara, bukan panggil POST /time per transaksi ──
 // Booking kurir butuh `time_id` yang mewakili slot penjemputan. Satu slot dipakai untuk SEMUA
-// paket hari itu, jadi memanggil POST /time tiap checkout berarti: satu round-trip API tambahan di
-// jalur bayar, kuota terbuang, dan satu titik gagal baru tepat saat pembeli menekan bayar.
-// Cron harian membuatnya sekali; checkout hanya membaca baris DB.
+// paket hari itu dari alamat yang sama, jadi memanggil POST /time tiap checkout berarti: satu
+// round-trip API tambahan di jalur bayar, kuota terbuang, dan satu titik gagal baru tepat saat
+// pembeli menekan bayar. Cron harian membuatnya sekali per alamat; checkout hanya membaca baris DB.
 //
 // ── Tiga jebakan kontrak API Mengantar ──
 // 1. API KEY ADA DI DALAM URL, bukan header: {BASE}/api/public/{API_KEY}/time. Konsekuensinya URL
@@ -96,17 +100,24 @@ function extractTimeId(body: unknown): string | null {
   return null
 }
 
-// Meminta slot pickup baru ke Mengantar untuk satu tanggal. TIDAK menyentuh DB — pemisahan ini
-// membuat pemanggil yang menyimpan hasilnya bisa memutuskan sendiri apa yang dilakukan saat gagal.
-export async function createPickupTime(date: string): Promise<CreateTimeResult> {
+// Meminta slot pickup baru ke Mengantar untuk satu tanggal DI SATU ALAMAT. TIDAK menyentuh DB —
+// pemisahan ini membuat pemanggil yang menyimpan hasilnya bisa memutuskan sendiri apa yang
+// dilakukan saat gagal.
+//
+// `addressId` datang dari pemanggil (warehouses.mengantar_address_id lewat lib/warehouse.ts),
+// BUKAN dari env: sejak tiap gudang punya alamat sendiri, membaca env di sini berarti seluruh
+// gudang kembali berbagi satu slot — persis keadaan yang hendak ditinggalkan.
+export async function createPickupTime(
+  date: string,
+  addressId: string,
+): Promise<CreateTimeResult> {
   const key = process.env.MENGANTAR_API_KEY
-  const addressId = process.env.MENGANTAR_STORE_ADDRESS_ID
 
   // Host lewat penjaga tulis (lib/mengantar-host.ts): host produksi hanya boleh ditulis dari
   // deployment produksi. Membaca MENGANTAR_BASE_URL langsung di sini akan memutar balik penjaganya.
   const writeHost = mengantarWriteHost()
   if (!writeHost.allowed) {
-    console.warn(`${LOG} slot pickup ${date} DIBATALKAN — ${writeHost.reason}`)
+    console.warn(`${LOG} slot pickup ${date} alamat ${addressId} DIBATALKAN — ${writeHost.reason}`)
     return { ok: false, reason: 'blocked-environment', detail: writeHost.reason }
   }
   const base = writeHost.host
@@ -177,32 +188,43 @@ export type EnsurePickupOutcome =
   | { status: 'skipped-non-pickup-day' }
   | { status: 'failed'; reason: string }
 
-// Memastikan sebuah tanggal punya time_id. Idempoten — inilah yang membuat cron aman di-run ulang.
+// Memastikan sebuah tanggal punya time_id DI SATU ALAMAT. Idempoten — inilah yang membuat cron
+// aman di-run ulang.
 //
 // Urutan disengaja: BACA DULU, baru panggil Mengantar. Kalau dibalik, setiap re-run cron membuat
 // slot pickup baru di sisi Mengantar (sampah di sistem kurir) meski barisnya sudah ada di DB kita.
-export async function ensurePickupForDate(date: string): Promise<EnsurePickupOutcome> {
+export async function ensurePickupForDate(
+  date: string,
+  addressId: string,
+): Promise<EnsurePickupOutcome> {
   if (parsePickupDate(date) === null) {
     return { status: 'failed', reason: `format tanggal tidak valid: ${date}` }
+  }
+  if (!addressId.trim()) {
+    // Alamat kosong berarti konfigurasi gudang belum lengkap, bukan gangguan Mengantar —
+    // dibedakan supaya log cron tidak menuding pihak ketiga untuk kesalahan kita sendiri.
+    return { status: 'failed', reason: 'alamat-pickup-kosong' }
   }
   if (!isPickupDay(date)) {
     // Minggu: tak ada penjemputan, jadi tak ada slot yang perlu dibuat.
     return { status: 'skipped-non-pickup-day' }
   }
 
-  const existing = await getPickupByDate(date)
+  const existing = await getPickupByDate(date, addressId)
   if (existing) {
-    console.log(`${LOG} ${date} sudah ada time_id — dilewati (idempoten)`)
+    console.log(`${LOG} ${date} alamat ${addressId} sudah ada time_id — dilewati (idempoten)`)
     return { status: 'existing', pickup: existing }
   }
 
-  const created = await createPickupTime(date)
+  const created = await createPickupTime(date, addressId)
   if (!created.ok) {
-    console.error(`${LOG} gagal membuat time_id ${date}: ${created.reason} ${created.detail ?? ''}`)
+    console.error(
+      `${LOG} gagal membuat time_id ${date} alamat ${addressId}: ${created.reason} ${created.detail ?? ''}`,
+    )
     return { status: 'failed', reason: created.reason }
   }
 
-  const saved = await savePickup(date, created.timeId)
+  const saved = await savePickup(date, addressId, created.timeId)
   if (!saved) {
     // time_id sudah TERBUAT di Mengantar tapi gagal tercatat. Dilaporkan gagal supaya cron
     // tampak merah dan admin memeriksanya — bukan disimpan diam-diam di memori yang akan
@@ -211,7 +233,7 @@ export async function ensurePickupForDate(date: string): Promise<EnsurePickupOut
   }
 
   console.log(
-    `${LOG} ${date} -> time_id ${saved.inserted ? 'dibuat' : 'sudah ditulis pemanggil lain'}`,
+    `${LOG} ${date} alamat ${addressId} -> time_id ${saved.inserted ? 'dibuat' : 'sudah ditulis pemanggil lain'}`,
   )
   return saved.inserted
     ? { status: 'created', pickup: saved.pickup }
@@ -227,6 +249,7 @@ export type PickupTimeIdSource =
 
 export type PickupTimeId = {
   timeId: string
+  addressId: string // alamat yang slot ini miliki — dicatat agar log booking bisa dicocokkan
   date: string // tanggal pickup yang berlaku
   reason: PickupDateReason
   source: PickupTimeIdSource
@@ -243,34 +266,49 @@ export type PickupTimeId = {
 //      DISIMPAN, jadi hanya pesanan PERTAMA sore itu yang memanggil Mengantar; sisanya lapis 1.
 //      Ini juga membuat cron esok hari melewati tanggal itu karena barisnya sudah ada.
 //   3. MENGANTAR_PICKUP_TIME_ID — slot statis dari era sebelum tabel ini ada. Dipertahankan
-//      supaya gangguan Mengantar/DB tak sampai menggagalkan pesanan. Bukan sumber utama.
+//      supaya gangguan Mengantar/DB tak sampai menggagalkan pesanan. Bukan sumber utama, dan HANYA
+//      berlaku untuk alamat pemiliknya.
+//
+// `addressId` = alamat penjemputan gudang PEMENUH pesanan ini. Parameter pertama, bukan opsional:
+// slot penjemputan hanya sah untuk alamatnya sendiri, jadi tak ada nilai bawaan yang masuk akal.
 //
 // null hanya bila ketiga lapis gagal; pemanggil yang memutuskan apakah order tetap dibuat tanpa
 // jadwal pickup (dijadwalkan manual) atau ditolak.
 export async function getTodayPickupTimeId(
+  addressId: string,
   nowMs: number = Date.now(),
 ): Promise<PickupTimeId | null> {
   const { date, reason, today, hour } = resolvePickupDate(nowMs)
 
-  const existing = await getPickupByDate(date)
-  if (existing) return { timeId: existing.timeId, date, reason, source: 'tabel' }
+  const existing = await getPickupByDate(date, addressId)
+  if (existing) return { timeId: existing.timeId, addressId, date, reason, source: 'tabel' }
 
   console.warn(
-    `${LOG} tabel kosong untuk ${date} (sekarang ${today} jam ${hour} WIB, alasan ${reason}) — fallback panggil Mengantar`,
+    `${LOG} tabel kosong untuk ${date} alamat ${addressId} (sekarang ${today} jam ${hour} WIB, alasan ${reason}) — fallback panggil Mengantar`,
   )
-  const outcome = await ensurePickupForDate(date)
+  const outcome = await ensurePickupForDate(date, addressId)
   if (outcome.status === 'created' || outcome.status === 'raced' || outcome.status === 'existing') {
-    return { timeId: outcome.pickup.timeId, date, reason, source: 'fallback-api' }
+    return { timeId: outcome.pickup.timeId, addressId, date, reason, source: 'fallback-api' }
   }
 
+  // Slot statis MENGANTAR_PICKUP_TIME_ID dibuat untuk SATU alamat: alamat env lama. Memakainya
+  // untuk alamat gudang lain berarti mendaftarkan paket ke slot penjemputan yang bukan miliknya.
+  //
+  // Penjaga ini WAJIB, bukan jaga-jaga. Uji sandbox 22 Sep 2026 (Notion Testing Mengantar MGT-57)
+  // mengirim address_id Cengkareng berpasangan dengan time_id milik alamat lain, dan Mengantar
+  // MENERIMANYA tanpa error: resi terbit, waybill mencatat lokasi jemput dari address_id sementara
+  // slotnya milik alamat lain. Tidak ada yang menolak pasangan itu selain baris di bawah ini.
   const staticId = process.env.MENGANTAR_PICKUP_TIME_ID
-  if (staticId) {
+  const legacyAddressId = process.env.MENGANTAR_STORE_ADDRESS_ID?.trim()
+  if (staticId && legacyAddressId && addressId === legacyAddressId) {
     console.error(
-      `${LOG} fallback API gagal untuk ${date} — memakai MENGANTAR_PICKUP_TIME_ID statis. Periksa cron & konfigurasi Mengantar.`,
+      `${LOG} fallback API gagal untuk ${date} alamat ${addressId} — memakai MENGANTAR_PICKUP_TIME_ID statis. Periksa cron & konfigurasi Mengantar.`,
     )
-    return { timeId: staticId, date, reason, source: 'env-statis' }
+    return { timeId: staticId, addressId, date, reason, source: 'env-statis' }
   }
 
-  console.error(`${LOG} TIDAK ADA time_id untuk ${date} dan MENGANTAR_PICKUP_TIME_ID belum di-set`)
+  console.error(
+    `${LOG} TIDAK ADA time_id untuk ${date} alamat ${addressId} (slot statis hanya berlaku untuk alamat ${legacyAddressId || 'env yang belum di-set'})`,
+  )
   return null
 }
