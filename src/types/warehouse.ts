@@ -10,6 +10,9 @@
 export type WarehouseMode = 'single' | 'multi'
 
 // Satu gudang. `mengantarOriginId` dipakai sebagai origin_id saat cek ongkir / booking kurir.
+// `mengantarAddressId` BERBEDA: itu _id ALAMAT PENJEMPUTAN milik akun Mengantar kita, yang
+// menentukan dari mana kurir mengambil paket DAN dari mana Mengantar menagih ongkirnya.
+// Dua nilai ini sama-sama ObjectId 24 hex, jadi tertukar tidak akan ketahuan sampai booking gagal.
 // latitude/longitude opsional dan TIDAK dipakai logika pemilihan gudang (pemilihan memakai
 // perbandingan ongkir riil). Disimpan untuk keperluan tampilan/peta di masa depan.
 export type Warehouse = {
@@ -17,6 +20,7 @@ export type Warehouse = {
   nama: string
   alamat?: string
   mengantarOriginId?: string
+  mengantarAddressId?: string
   latitude?: number
   longitude?: number
   isDefault: boolean

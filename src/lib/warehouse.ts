@@ -120,6 +120,27 @@ export async function getOriginIdForWarehouse(warehouseId?: string): Promise<str
   )
 }
 
+// Mengambil _id ALAMAT PENJEMPUTAN Mengantar milik satu gudang — dipakai sebagai `address_id`
+// pada POST /time dan `pickup.address_id` pada POST /order.
+//
+// Kenapa terpisah dari getOriginIdForWarehouse: origin adalah KELURAHAN (dipakai cek ongkir),
+// alamat adalah BARIS ALAMAT milik akun kita (dipakai penjemputan & penagihan). Keduanya ObjectId
+// 24 hex, jadi kalau dilayani satu fungsi yang sama, tertukarnya tak akan tertangkap tipe mana pun
+// dan baru ketahuan saat kurir datang ke gudang yang salah.
+//
+// Fallback ke MENGANTAR_STORE_ADDRESS_ID DISENGAJA dan TIDAK BOLEH DIHAPUS: pesanan lama
+// (orders.warehouse_id NULL) dan gudang yang belum didaftarkan alamatnya tetap harus bisa dibooking.
+// String kosong hanya bila env itu pun kosong — pemanggil memperlakukannya sebagai 'not-configured'.
+//
+// Belum dipanggil siapa pun: disiapkan untuk booking & slot pickup per gudang (langkah 3-4 di
+// docs/multi-gudang-panduan-implementasi.md). Sampai itu masuk, perilaku booking tidak berubah.
+export async function getPickupAddressIdForWarehouse(warehouseId?: string): Promise<string> {
+  const warehouse = warehouseId ? await getWarehouseById(warehouseId) : await getDefaultWarehouse()
+  return (
+    warehouse?.mengantarAddressId?.trim() || process.env.MENGANTAR_STORE_ADDRESS_ID?.trim() || ''
+  )
+}
+
 // === Origin KUTIPAN ongkir (boleh berbeda dari origin gudang) ===
 
 // Origin yang dipakai untuk MENGUTIP ongkir ke pembeli.

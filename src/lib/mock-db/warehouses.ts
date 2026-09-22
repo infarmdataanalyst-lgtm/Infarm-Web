@@ -36,6 +36,7 @@ type WarehouseRow = {
   nama: string
   alamat: string | null
   mengantar_origin_id: string | null
+  mengantar_address_id: string | null
   latitude: number | string | null
   longitude: number | string | null
   is_default: boolean
@@ -64,6 +65,7 @@ function rowToWarehouse(row: WarehouseRow): Warehouse {
     nama: row.nama,
     alamat: row.alamat ?? undefined,
     mengantarOriginId: row.mengantar_origin_id ?? undefined,
+    mengantarAddressId: row.mengantar_address_id ?? undefined,
     latitude: toNumber(row.latitude),
     longitude: toNumber(row.longitude),
     isDefault: row.is_default,
