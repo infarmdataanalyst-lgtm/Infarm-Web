@@ -39,6 +39,7 @@ export default function ShippingOptions({
   items,
   selected,
   onSelect,
+  refreshKey = 0,
 }: {
   destinationId: string
   weight: number
@@ -47,6 +48,11 @@ export default function ShippingOptions({
   items: { productId: string; quantity: number; variantId?: string }[]
   selected: WarehouseShippingOption | null
   onSelect: (courier: WarehouseShippingOption | null) => void
+  // Dinaikkan induk untuk MEMAKSA tarik ulang tarif walau tujuan/berat/keranjang tak berubah —
+  // dipakai saat server menolak ongkir karena stok gudang pilihan baru saja habis (MGT-67).
+  // Ikut membentuk kunci daftar tarif, jadi daftar lama langsung tak berlaku dan efek auto-pilih
+  // tak sempat memilih ulang tarif basi selagi tarif baru diambil.
+  refreshKey?: number
 }) {
   // Daftar tarif DISIMPAN BERSAMA kunci permintaan yang menghasilkannya (tujuan + berat + isi
   // keranjang), lalu hanya dipakai bila kuncinya sama dengan permintaan yang berlaku sekarang.
@@ -84,14 +90,14 @@ export default function ShippingOptions({
 
   // Kunci permintaan tarif yang berlaku SEKARANG. Harus dibentuk sama persis dengan `kunci` di
   // efek fetch di bawah — keduanya dicocokkan untuk memutuskan apakah daftar tarif masih berlaku.
-  const kunciPermintaan = `${destinationId}|${weight}|${itemsKey}`
+  const kunciPermintaan = `${destinationId}|${weight}|${itemsKey}|${refreshKey}`
 
   // === Fetch ongkir otomatis saat alamat tujuan / berat / isi keranjang berubah (atau "Coba lagi") ===
   useEffect(() => {
     if (!destinationId) return
     // Kunci yang MELEKAT pada hasil tarikan ini (lihat `hasilTarif`). Sama bentuknya dengan
     // `kunciPermintaan` di luar efek; dibentuk ulang di sini supaya efek tak bergantung padanya.
-    const kunci = `${destinationId}|${weight}|${itemsKey}`
+    const kunci = `${destinationId}|${weight}|${itemsKey}|${refreshKey}`
     const ctrl = new AbortController()
     // items dibangun ulang dari itemsKey agar efek ini tidak bergantung pada referensi array
     const parsedItems = itemsKey
@@ -175,7 +181,7 @@ export default function ShippingOptions({
       clearTimeout(timer)
       ctrl.abort()
     }
-  }, [destinationId, weight, itemsKey, retry])
+  }, [destinationId, weight, itemsKey, retry, refreshKey])
 
   // Server sudah memfilter kurir (daftar putih J&T + yang benar-benar melayani) dan mengurutkan
   // termurah; pengurutan diulang di sini sebagai jaring pengaman bila bentuk respons berubah.

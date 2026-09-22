@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ShoppingBag, PackageX, Wallet } from 'lucide-react'
+import { ShoppingBag, PackageX, Wallet, AlertTriangle } from 'lucide-react'
 import type { Product } from '@/types/product'
 import CheckoutHeader from '@/components/checkout/CheckoutHeader'
 import CheckoutProductSummary from '@/components/checkout/CheckoutProductSummary'
@@ -71,6 +71,27 @@ const subscribeNothing = () => () => {}
 // ber-overflow-hidden — pencarian alamat jadi tak terpakai. Sebagai gantinya, sudut membulat
 // diteruskan ke anak langsung (`section` / `button`) lewat arbitrary variant, sehingga latar putih
 // anaknya tak menyembul di sudut. BottomSheet (root-nya `div`) tak ikut tersentuh.
+// Teks pesan "ongkir berubah". `newPrice` null = tarif baru belum tiba (atau gagal dimuat — kartu
+// kurir di atasnya sudah menampilkan galat & tombol coba lagi sendiri).
+//
+// Nama gudang sengaja tak disebut: pembeli tak pernah memilih gudang, jadi "lokasi pengiriman"
+// cukup menjelaskan sebabnya tanpa memperkenalkan konsep baru di titik bayar.
+function shippingNoticeText(
+  notice: { reason: 'SHIPPING_CHANGED' | 'SHIPPING_MISMATCH'; previousPrice: number },
+  newPrice: number | null,
+): string {
+  const sebab =
+    notice.reason === 'SHIPPING_CHANGED'
+      ? 'Stok dari lokasi pengiriman terdekat baru saja habis. Pesanan Anda akan dikirim dari lokasi lain'
+      : 'Ongkos kirim untuk pesanan ini baru saja diperbarui'
+  if (newPrice === null) return `${sebab}. Ongkos kirim sedang dihitung ulang…`
+  const perubahan =
+    newPrice === notice.previousPrice
+      ? `ongkos kirim tetap ${formatRupiah(newPrice)}`
+      : `ongkos kirim berubah dari ${formatRupiah(notice.previousPrice)} menjadi ${formatRupiah(newPrice)}`
+  return `${sebab}, sehingga ${perubahan}. Periksa kembali total pembayaran, lalu tekan Bayar Sekarang.`
+}
+
 function CheckoutCard({ className = '', children }: { className?: string; children: ReactNode }) {
   return (
     <div
@@ -123,9 +144,37 @@ export default function CheckoutPage() {
     () => draftTersimpan?.courier ?? null,
   )
 
+  // === Ongkir ditolak server karena berubah (MGT-67) ===
+  //
+  // Pembeli bisa kalah balapan stok: gudang yang tarifnya ia lihat kehabisan stok sebelum ia menekan
+  // bayar, dan pesanannya hanya bisa dipenuhi gudang lain dengan ongkir berbeda. Server menolak
+  // (SHIPPING_CHANGED / SHIPPING_MISMATCH) alih-alih menagih angka yang belum ia lihat.
+  //
+  // Di sini checkout memuat ulang tarif (`shippingRefreshKey`) dan menyimpan ongkir LAMA supaya
+  // pesan bisa menyebut "dari Rp… menjadi Rp…". Pesannya MENETAP — bukan toast 3 detik — sampai
+  // pembeli menekan bayar lagi atau mengganti alamat: ongkir yang berubah menyentuh uang, dan
+  // pembeli yang sedang melirik ke tempat lain tak boleh melewatkannya.
+  const [shippingRefreshKey, setShippingRefreshKey] = useState(0)
+  const [shippingNotice, setShippingNotice] = useState<{
+    reason: 'SHIPPING_CHANGED' | 'SHIPPING_MISMATCH'
+    previousPrice: number
+  } | null>(null)
+  const shippingNoticeRef = useRef<HTMLDivElement>(null)
+
+  // Pesan baru muncul → gulirkan ke sana. Di layar ponsel kartu kurir ada jauh di atas bilah bayar,
+  // jadi tanpa ini pesannya muncul di luar pandangan pembeli yang jarinya masih di tombol bayar.
+  useEffect(() => {
+    if (!shippingNotice) return
+    shippingNoticeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [shippingNotice])
+
   // Saat alamat berubah/di-reset (destination_id berganti), reset pilihan kurir → cek ongkir ulang.
   function handleAddressChange(next: AddressFormState) {
-    if (next.destination_id !== address.destination_id) setSelectedCourier(null)
+    if (next.destination_id !== address.destination_id) {
+      setSelectedCourier(null)
+      // Pesan ongkir berubah milik alamat lama; untuk alamat baru angkanya tak lagi relevan.
+      setShippingNotice(null)
+    }
     setAddress(next)
   }
 
@@ -488,6 +537,8 @@ export default function CheckoutPage() {
     if (isPaying || !selectedCourier) return
     setIsEmailConfirmOpen(false)
     setIsPaying(true)
+    // Pembeli sudah melihat ongkir baru dan memutuskan bayar → pesannya selesai tugas.
+    setShippingNotice(null)
 
     try {
       const res = await fetch('/api/orders/create', {
@@ -537,7 +588,23 @@ export default function CheckoutPage() {
         }),
       })
 
-      const data = (await res.json().catch(() => ({}))) as { invoice?: string; error?: string }
+      const data = (await res.json().catch(() => ({}))) as {
+        invoice?: string
+        error?: string
+        code?: string
+      }
+
+      // Ongkir yang dikirim tak lagi berlaku untuk gudang yang sanggup memenuhi pesanan → muat
+      // ulang tarif dan tampilkan pesan menetap di kartu pengiriman (bukan toast). Pilihan kurir
+      // dikosongkan supaya tombol bayar terkunci sampai tarif baru tiba dan terpilih otomatis.
+      if (res.status === 409 && (data.code === 'SHIPPING_CHANGED' || data.code === 'SHIPPING_MISMATCH')) {
+        setShippingNotice({ reason: data.code, previousPrice: selectedCourier.price })
+        setSelectedCourier(null)
+        setShippingRefreshKey((n) => n + 1)
+        setIsPaying(false)
+        return
+      }
+
       if (!res.ok || !data.invoice) {
         // Mis. stok tidak cukup (409) → tampilkan pesan dari server
         setToast(data.error ?? 'Gagal memproses pesanan. Silakan coba lagi.')
@@ -748,7 +815,24 @@ export default function CheckoutPage() {
             items={shippingItems}
             selected={selectedCourier}
             onSelect={setSelectedCourier}
+            refreshKey={shippingRefreshKey}
           />
+          {/* Latar putih sendiri: di mobile CheckoutCard tak berlatar, jadi tanpa ini pesannya
+              melayang di atas warna halaman, terpisah dari baris kurir yang ia jelaskan. */}
+          {shippingNotice && (
+            <div className="bg-white px-4 pb-4 lg:rounded-b-2xl">
+              <div
+                ref={shippingNoticeRef}
+                role="alert"
+                className="flex items-start gap-2 rounded-lg border border-orange-200 bg-orange-50 p-3 text-orange-800"
+              >
+                <AlertTriangle className="mt-0.5 h-5 w-5 flex-none" />
+                <p className="text-sm leading-relaxed">
+                  {shippingNoticeText(shippingNotice, selectedCourier?.price ?? null)}
+                </p>
+              </div>
+            </div>
+          )}
         </CheckoutCard>
 
         {/* 4 — Metode pembayaran: KETERANGAN, bukan pilihan.

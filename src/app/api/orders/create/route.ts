@@ -16,13 +16,19 @@ import { allocateComboPrices, computeOrderPromos } from '@/lib/promo-cart'
 import { XENDIT_MIN_AMOUNT } from '@/lib/payment-limits'
 import { getVariantsByIds } from '@/lib/mock-db/variants'
 import { getMinOrderAmount, getMaxDiscountPercent } from '@/lib/mock-db/settings'
-import { getEffectiveStock, resolveWarehouseForOrder, type StockRequirement } from '@/lib/warehouse'
+import {
+  getEffectiveStock,
+  getQuoteOriginId,
+  resolveWarehouseForOrder,
+  type StockRequirement,
+} from '@/lib/warehouse'
 import { getWarehouseById } from '@/lib/mock-db/warehouses'
 import { MENGANTAR_ORIGIN_ID_REGEX } from '@/lib/warehouse-validation'
 import {
   getCachedShippingOptions,
   resolveShippingOptions,
   shippingOptionsKey,
+  type WarehouseShippingOption,
 } from '@/lib/warehouse-shipping'
 import { shippingWeightKg } from '@/lib/shipping-weight'
 import type { Warehouse } from '@/types/warehouse'
@@ -151,6 +157,47 @@ async function pickVerifiedWarehouse(
     if (stock !== null && stock !== undefined && stock < need.quantity) return null
   }
   return warehouse
+}
+
+// Gudang termurah dari daftar tarif yang aktif & stoknya cukup, BESERTA tarifnya. `options` sudah
+// urut termurah → termahal, jadi yang pertama lolos pasti yang termurah. Gudang di `skip` dilewati.
+async function pickQuotedWarehouseWithStock(
+  options: WarehouseShippingOption[],
+  requirements: StockRequirement[],
+  skip: Set<string>,
+): Promise<{ warehouse: Warehouse; price: number } | null> {
+  const tried = new Set(skip)
+  for (const option of options) {
+    if (tried.has(option.warehouseId)) continue
+    tried.add(option.warehouseId)
+    const warehouse = await pickVerifiedWarehouse(option.warehouseId, requirements)
+    if (warehouse) return { warehouse, price: Math.round(option.price) }
+  }
+  return null
+}
+
+// 409 SHIPPING_CHANGED: gudang pilihan pembeli tak bisa lagi memenuhi pesanan, dan ongkir dari
+// gudang penggantinya belum ia setujui. Checkout memuat ulang ongkir dan menampilkan pesan menetap.
+//
+// Pesannya sengaja TIDAK menyebut nama gudang — pembeli tak pernah memilih gudang, ia memilih
+// kurir & harga. `newShippingCost` hanya perkiraan server; angka yang ditampilkan ke pembeli tetap
+// hasil muat ulang opsi ongkir di checkout.
+function shippingChangedResponse(previousShippingCost: number, newShippingCost?: number) {
+  console.warn(
+    `${LOG} ongkir berubah karena stok gudang pilihan habis: ` +
+      `Rp${previousShippingCost} → ${newShippingCost !== undefined ? `Rp${newShippingCost}` : '(belum dikutip)'}`,
+  )
+  return NextResponse.json(
+    {
+      error:
+        'Stok dari lokasi pengiriman terdekat baru saja habis, sehingga ongkos kirim berubah. ' +
+        'Periksa kembali ongkos kirim dan total pembayaran, lalu coba lagi.',
+      code: 'SHIPPING_CHANGED',
+      previousShippingCost,
+      ...(newShippingCost !== undefined ? { newShippingCost } : {}),
+    },
+    { status: 409 },
+  )
 }
 
 // Menyimpan pesanan baru dari checkout
@@ -569,15 +616,6 @@ export async function POST(request: Request) {
 
   const tarifSah = quoted ? quoted.options.map((o) => Math.round(o.price)) : []
 
-  // `const`: nilainya tak pernah ditimpa. KEDUA cabang kegagalan di bawah MENOLAK permintaan
-  // (return) alih-alih menimpa dengan tarif server — lihat alasannya di komentar masing-masing.
-  //
-  // Sejak 2026-09-01 berlaku jaminan yang lebih kuat: begitu eksekusi melewati kedua cabang itu,
-  // `shippingCost` DIPASTIKAN salah satu tarif yang server sendiri terima dari Mengantar untuk
-  // (tujuan + berat + isi keranjang) yang sama. Tak ada lagi jalur yang meloloskan angka client
-  // tanpa pembanding.
-  const shippingCost = clientShipping
-
   // ⚠️ "Tak ada tarif" punya DUA sebab yang sama sekali berbeda, dan keduanya tak boleh
   // diperlakukan sama:
   //
@@ -642,8 +680,25 @@ export async function POST(request: Request) {
     )
   }
 
-  if (!tarifSah.includes(clientShipping)) {
-    // Angka yang dikirim client bukan salah satu tarif yang benar-benar ditawarkan.
+  const requestedWarehouseId =
+    typeof extra.warehouseId === 'string' && extra.warehouseId ? extra.warehouseId : undefined
+
+  // Yang dicocokkan adalah PASANGAN (gudang, harga), bukan harga saja.
+  //
+  // Sampai MGT-67 (uji lokal 22 Sep 2026) yang diperiksa hanya "harga ini ada di daftar tarif".
+  // Sejak tiap gudang dikutip dari origin-nya sendiri, harga Gudang Jakarta (Rp4.080) lolos
+  // pemeriksaan itu walau pesanannya berakhir di Gudang Utama (Rp66.720) — pembeli membayar ongkir
+  // rute yang tak pernah dipakai, dan selisihnya dipotong dari saldo Mengantar toko.
+  //
+  // Tanpa `warehouseId` (klien lama) jatuh ke pencocokan harga saja, seperti perilaku sebelumnya.
+  const chosen = quoted!.options.find(
+    (o) =>
+      Math.round(o.price) === clientShipping &&
+      (!requestedWarehouseId || o.warehouseId === requestedWarehouseId),
+  )
+
+  if (!chosen) {
+    // Angka yang dikirim client bukan tarif yang benar-benar ditawarkan untuk gudang itu.
     //
     // DITOLAK, bukan diam-diam ditimpa dengan tarif server. Menimpanya berarti pembeli ditagih
     // angka yang berbeda dari yang ia lihat di layar — dan bila tarif server lebih mahal, ia
@@ -652,16 +707,74 @@ export async function POST(request: Request) {
     // Tarif juga bisa berubah wajar antara buyer melihat harga dan menekan bayar (cache 10 menit).
     // Karena itu pesannya diarahkan ke tindakan, bukan ke tuduhan.
     console.warn(
-      `${LOG} ongkir ditolak: client=Rp${clientShipping} tak ada di tarif sah [${tarifSah.join(', ')}]`,
+      `${LOG} ongkir ditolak: client=Rp${clientShipping} gudang=${requestedWarehouseId ?? '-'} ` +
+        `tak ada di tarif sah [${tarifSah.join(', ')}]`,
     )
     return NextResponse.json(
       {
         error:
-          'Ongkos kirim sudah berubah. Silakan pilih ulang kurir pengiriman lalu coba lagi.',
+          'Ongkos kirim sudah berubah. Silakan periksa kembali ongkos kirim lalu coba lagi.',
         code: 'SHIPPING_MISMATCH',
+        previousShippingCost: clientShipping,
       },
       { status: 409 },
     )
+  }
+
+  // === Gudang pemenuh pesanan — DITENTUKAN SEBELUM ongkir dibekukan ===
+  //
+  // Urutan ini inti perbaikan MGT-67. Dulu ongkir dikunci lebih dulu (harga pilihan pembeli), promo
+  // & total dihitung darinya, BARU gudang dipilih — dan bila gudang pilihan kehabisan stok, gudang
+  // penggantinya dipakai dengan ongkir gudang lama. Sekarang gudang final dipilih dulu, lalu
+  // ongkir mengikuti gudang itu:
+  //
+  //   1. Gudang pilihan pembeli masih aktif & stoknya cukup → pakai, dengan harga pilihannya.
+  //   2. Tidak → opsi termurah berikutnya dari daftar tarif yang SAMA (`quoted`) yang stoknya cukup:
+  //        tarifnya ≤ yang disetujui pembeli → diterima, dan `shippingCost` = tarif gudang itu,
+  //                                           supaya ongkos_kirim tetap tarif Mengantar yang asli;
+  //        tarifnya > yang disetujui pembeli → DITOLAK (SHIPPING_CHANGED). Pembeli tak boleh
+  //                                           ditagih lebih mahal tanpa melihat angkanya.
+  //   3. Tak satu pun gudang di daftar tarif punya stok → resolveWarehouseForOrder. Bila gudang itu
+  //      ternyata punya stok, tarifnya belum pernah dikutip (daftar `quoted` basi) — diterima hanya
+  //      bila origin kutipannya sama dengan gudang pilihan (tarifnya pasti identik, mis. selama
+  //      MENGANTAR_PICKUP_ORIGIN_ID terpasang); selain itu SHIPPING_CHANGED. Bila tak punya stok,
+  //      biarkan RPC yang menolak dengan pesan stok per produk.
+  //
+  // `requirements` & `serverWeight` sengaja TIDAK dihitung lagi di sini — keduanya sudah dibuat di
+  // atas untuk memverifikasi ongkir. Menghitungnya dua kali pernah membuat kunci cache di blok ini
+  // berbeda tipis dari kunci di blok ongkir, dan fallback gudang jadi selalu meleset tanpa gejala.
+  let shippingCost = clientShipping
+  let warehouse = await pickVerifiedWarehouse(chosen.warehouseId, requirements)
+
+  if (!warehouse) {
+    const pengganti = await pickQuotedWarehouseWithStock(
+      quoted!.options,
+      requirements,
+      new Set([chosen.warehouseId]),
+    )
+    if (pengganti) {
+      if (pengganti.price > clientShipping) {
+        return shippingChangedResponse(clientShipping, pengganti.price)
+      }
+      warehouse = pengganti.warehouse
+      shippingCost = pengganti.price
+    }
+  }
+
+  if (!warehouse) {
+    const cadangan = await resolveWarehouseForOrder(requirements)
+    const cadanganPunyaStok =
+      cadangan !== null && (await pickVerifiedWarehouse(cadangan.id, requirements)) !== null
+    if (cadangan && cadanganPunyaStok) {
+      const [originCadangan, originPilihan] = await Promise.all([
+        getQuoteOriginId(cadangan.id),
+        getQuoteOriginId(chosen.warehouseId),
+      ])
+      if (!originCadangan || originCadangan !== originPilihan) {
+        return shippingChangedResponse(clientShipping)
+      }
+    }
+    warehouse = cadangan
   }
 
   // === Promo: dihitung SERVER, tak pernah diterima dari client ===
@@ -695,42 +808,6 @@ export async function POST(request: Request) {
   const discount = promoResult.discount
   const shippingSubsidy = promoResult.shippingSubsidy
   const totalAmount = Math.max(0, subtotal + shippingCost - discount - shippingSubsidy)
-
-  // === Gudang pemenuh pesanan ===
-  // Gudang berasal dari kurir yang DIPILIH BUYER (hasil perbandingan ongkir riil antar gudang di
-  // /api/mengantar/shipping/options). Client mengirim `warehouseId`, tapi TIDAK dipercaya:
-  //   1. id-nya diverifikasi ada, aktif, dan stoknya masih cukup (guard race condition — stok bisa
-  //      habis di antara buyer melihat ongkir dan menekan bayar),
-  //   2. bila tak lolos, jatuh ke opsi ongkir termurah BERIKUTNYA dari hasil perbandingan yang
-  //      masih tersimpan di server (tanpa memanggil Mengantar lagi),
-  //   3. bila itu pun tak ada, resolveWarehouseForOrder memilih gudang ber-stok cukup / default.
-  //
-  // `requirements` & `serverWeight` sengaja TIDAK dihitung lagi di sini — keduanya sudah dibuat di
-  // atas untuk memverifikasi ongkir. Menghitungnya dua kali pernah membuat kunci cache di blok ini
-  // berbeda tipis dari kunci di blok ongkir, dan fallback gudang jadi selalu meleset tanpa gejala.
-  const requestedWarehouseId =
-    typeof extra.warehouseId === 'string' && extra.warehouseId ? extra.warehouseId : undefined
-
-  let warehouse = await pickVerifiedWarehouse(requestedWarehouseId, requirements)
-
-  if (!warehouse && quoted) {
-    // Gudang pilihan buyer tak lolos verifikasi → coba opsi termurah berikutnya dari daftar tarif
-    // yang SAMA dengan yang dipakai memverifikasi ongkir (`quoted`), bukan membaca cache ulang.
-    // Urutannya sudah termurah → termahal.
-    const tried = new Set<string>(requestedWarehouseId ? [requestedWarehouseId] : [])
-    for (const option of quoted.options) {
-      if (tried.has(option.warehouseId)) continue
-      tried.add(option.warehouseId)
-      const candidate = await pickVerifiedWarehouse(option.warehouseId, requirements)
-      if (candidate) {
-        warehouse = candidate
-        break
-      }
-    }
-  }
-
-  // Masih belum dapat → jalur fallback lama (gudang ber-stok cukup, default didahulukan).
-  if (!warehouse) warehouse = await resolveWarehouseForOrder(requirements)
 
   const logistics = logistikDariBody((body as { logistics?: unknown }).logistics)
 
@@ -800,6 +877,17 @@ export async function POST(request: Request) {
   } catch (e) {
     // Stok tidak cukup → transaksi sudah di-rollback DB; beri tahu buyer produk mana
     if (e instanceof OrderStockError) {
+      // Kalah balapan di RPC: pemeriksaan stok di atas lolos, tapi pembeli lain mengunci & menghabiskan
+      // stok gudang ini lebih dulu. Bila gudang LAIN masih sanggup memenuhi pesanan, pembeli tak perlu
+      // disuruh menyerah — ongkirnya saja yang harus dihitung ulang dari gudang itu.
+      const lain = quoted
+        ? await pickQuotedWarehouseWithStock(
+            quoted.options,
+            requirements,
+            new Set(warehouse ? [warehouse.id] : []),
+          )
+        : null
+      if (lain) return shippingChangedResponse(clientShipping, lain.price)
       return NextResponse.json({ error: `Stok produk ${e.productName} tidak mencukupi` }, { status: 409 })
     }
     console.error('Gagal membuat pesanan:', e)
