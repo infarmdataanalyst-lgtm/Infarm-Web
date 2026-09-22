@@ -189,10 +189,10 @@ grant execute on function public.create_order_with_items(
 -- =================================================================================================
 --
 -- 1. Adakah varian yang angka per gudangnya melenceng dari angka agregat?
---    Kosong = aman, jalankan migration. Ada isinya = rekonsiliasi dulu, jangan jalankan.
 --
 --    select v.id as variant_id, p.name as produk, v.nama_varian,
 --           v.stok as stok_agregat,
+--           count(s.id) as jml_baris_gudang,
 --           coalesce(sum(s.stok), 0) as jumlah_per_gudang,
 --           coalesce(sum(s.stok), 0) - v.stok as selisih
 --    from public.product_variants v
@@ -201,6 +201,16 @@ grant execute on function public.create_order_with_items(
 --    group by v.id, p.name, v.nama_varian, v.stok
 --    having coalesce(sum(s.stok), 0) <> v.stok
 --    order by abs(coalesce(sum(s.stok), 0) - v.stok) desc;
+--
+--    Cara membaca:
+--    - Kosong                     -> aman, jalankan migration.
+--    - jml_baris_gudang = 0       -> BUKAN drift. Varian ini tak punya baris gudang sama sekali, jadi
+--                                    setelah migration tetap memakai jalur cadangan (stok agregat).
+--                                    Tidak terdampak perpindahan gerbang.
+--    - jml_baris_gudang > 0 DAN   -> drift sungguhan. Gerbang baru akan membaca angka per gudang yang
+--      selisih bukan 0              salah. Rekonsiliasi dulu, jangan jalankan migration.
+--      Selisih POSITIF (per gudang > agregat) cocok dengan pola bug: pembatalan menambah baris gudang
+--      yang tak pernah dikurangi saat terjual.
 --
 -- 2. Adakah pesanan varian sejak overload 22 parameter hidup? Menentukan apakah drift mungkin ada.
 --
