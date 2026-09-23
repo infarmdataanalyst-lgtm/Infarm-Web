@@ -43,13 +43,24 @@ import {
   getCheckoutPromo,
   clearCart,
 } from '@/lib/cart-client'
+import {
+  trackBeginCheckout,
+  trackAddShippingInfo,
+  type AnalyticsLineItem,
+} from '@/lib/analytics'
+import { readGaClientId } from '@/lib/ga-client-id'
 import { setGuestPhone, incrementActiveOrderCount } from '@/lib/guest-phone'
 import { setGuestEmail } from '@/lib/guest-email'
 import type { CheckoutItem } from '@/lib/data/dummy-checkout'
 
 // Produk untuk kebutuhan halaman ini: Product + berat (gram) dari OMS. Produk dummy tak punya
 // berat → undefined, dan lib/shipping-weight memakai berat cadangan untuk item seperti itu.
-type CheckoutProduct = Product & { berat?: number }
+// `sku` ada di respons /api/products/by-ids (yang mengembalikan StoredProduct), hanya saja tak
+// pernah dideklarasikan di sini karena halaman ini tak menampilkannya. Sekarang ia dipakai:
+// item_id GA4 harus SAMA dengan yang dikirim halaman detail produk (`sku || id`), kalau tidak
+// GA4 menganggap produk yang sama sebagai dua item berbeda dan funnel view_item → purchase
+// terputus tepat di tengah.
+type CheckoutProduct = Product & { berat?: number; sku?: string }
 
 // Penanda "kode sudah berjalan di browser".
 //
@@ -279,6 +290,31 @@ export default function CheckoutPage() {
     [checkoutCookieItems],
   )
 
+  // Baris item untuk event GA4 checkout (begin_checkout, add_shipping_info).
+  //
+  // Kategori & SKU diambil dari `productById`, bukan dari CheckoutItem: cookie keranjang hanya
+  // menyimpan yang dibutuhkan untuk menampilkan ringkasan, sementara GA4 butuh keduanya agar
+  // item di funnel bisa dikelompokkan sama seperti di halaman detail produk.
+  //
+  // Item HADIAH PROMO (`freeCheckoutItems`) sengaja TIDAK ikut: harganya Rp0 dan pembeli tak
+  // pernah memutuskan untuk membelinya. Memasukkannya menaikkan jumlah item di laporan tanpa
+  // menambah nilai, dan membuat rata-rata harga per item terlihat turun setiap ada promo.
+  const analyticsLines: AnalyticsLineItem[] = useMemo(
+    () =>
+      orderItems.map((item) => {
+        const product = productById.get(item.id)
+        return {
+          id: item.id,
+          sku: product?.sku,
+          name: item.name,
+          category: product?.category ?? '',
+          price: item.price,
+          quantity: item.quantity,
+        }
+      }),
+    [orderItems, productById],
+  )
+
   // Kode sudah berjalan di browser (cookie hanya terbaca di klien).
   const hydrated = useSyncExternalStore(
     subscribeNothing,
@@ -328,6 +364,42 @@ export default function CheckoutPage() {
     () => orderItems.reduce((sum, item) => sum + item.price * item.quantity, 0),
     [orderItems],
   )
+
+  // === GA4 begin_checkout — SEKALI per kunjungan ===
+  //
+  // Menunggu `viewState === 'ready'`, bukan saat mount: sebelum /api/products/by-ids menjawab,
+  // `orderItems` masih bisa kosong atau separuh terisi. Event yang terlanjur terkirim dengan
+  // daftar item yang belum lengkap tak bisa diperbaiki — GA4 tak mengenal koreksi.
+  //
+  // Penjaganya `useRef`, bukan state: nilainya tak boleh memicu render, dan event ini harus tetap
+  // satu kali walau komponen render ulang puluhan kali (tiap huruf yang diketik di form alamat
+  // memicu render). `isPaying` yang mengosongkan keranjang di akhir juga tertahan oleh penjaga
+  // yang sama.
+  const beginCheckoutSent = useRef(false)
+  useEffect(() => {
+    if (beginCheckoutSent.current) return
+    if (viewState !== 'ready' || analyticsLines.length === 0) return
+    beginCheckoutSent.current = true
+    trackBeginCheckout(subtotal, analyticsLines)
+  }, [viewState, analyticsLines, subtotal])
+
+  // === GA4 add_shipping_info — tiap kali tarif yang BERLAKU berubah ===
+  //
+  // Sengaja tidak sekali saja. Pilihan kurir bisa diganti otomatis oleh ShippingOptions saat tarif
+  // dimuat ulang — persis yang terjadi setelah server menolak dengan 409 SHIPPING_CHANGED (MGT-67).
+  // Perpindahan itulah datanya: pembeli yang melihat ongkirnya melompat dari Rp4.080 ke Rp66.720
+  // adalah kasus yang paling ingin kita hitung, dan ia hanya terlihat kalau event kedua dikirim.
+  //
+  // Kuncinya nama+harga, jadi render ulang biasa (mengetik alamat) tidak mengirim ulang event —
+  // hanya perubahan yang benar-benar menyentuh uang yang dicatat.
+  const shippingInfoKey = useRef<string | null>(null)
+  useEffect(() => {
+    if (!selectedCourier || analyticsLines.length === 0) return
+    const key = `${selectedCourier.name}|${selectedCourier.price}`
+    if (shippingInfoKey.current === key) return
+    shippingInfoKey.current = key
+    trackAddShippingInfo(subtotal, selectedCourier.name, selectedCourier.price, analyticsLines)
+  }, [selectedCourier, subtotal, analyticsLines])
 
   // Id produk gratis promo (dari snapshot keranjang). Server tetap otoritatif saat create order;
   // ini hanya untuk TAMPILAN ringkasan & perhitungan berat kirim.
@@ -575,6 +647,15 @@ export default function CheckoutPage() {
           // opsi termurah berikutnya dari perbandingan ongkir yang masih tersimpan di server.
           warehouseId: selectedCourier.warehouseId,
           weight: shippingWeight,
+          // client_id GA4 dari cookie `_ga`. Dititipkan ke pesanan supaya webhook Xendit bisa
+          // mengirim event `purchase` atas nama pembeli ini — event itu TAK BISA dikirim dari
+          // browser, karena pembayaran VA/QRIS sering lunas berjam-jam kemudian tanpa pembeli
+          // pernah kembali ke halaman sukses.
+          //
+          // Dibaca DI SINI, bukan saat halaman mount: cookie `_ga` baru ditulis setelah skrip GA4
+          // selesai dimuat, dan pembeli yang langsung mendarat di checkout bisa saja menekan bayar
+          // sebelum itu. `undefined` (GA diblokir / mode privat) otomatis hilang dari JSON.
+          gaClientId: readGaClientId(),
           // Alamat terstruktur dari form + hasil search Mengantar
           address: {
             shippingAddress: address.street,

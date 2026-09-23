@@ -8,7 +8,7 @@
 import { NextResponse } from 'next/server'
 import { RATE_LIMITS, enforceRateLimit, getClientIp } from '@/lib/rate-limit'
 import { revalidatePath, revalidateTag } from 'next/cache'
-import { saveOrder, OrderStockError } from '@/lib/mock-db/orders'
+import { saveOrder, OrderStockError, attachGaClientId } from '@/lib/mock-db/orders'
 import { readProductsByIds } from '@/lib/mock-db/products'
 import { readPromotions } from '@/lib/mock-db/promotions'
 import { getComboById } from '@/lib/mock-db/combos'
@@ -331,7 +331,20 @@ export async function POST(request: Request) {
     discount?: unknown
     warehouseId?: unknown
     weight?: unknown
+    gaClientId?: unknown
   }
+
+  // client_id GA4 titipan checkout. Dipakai HANYA untuk pelaporan (lihat analytics-server.ts) —
+  // tak pernah menyentuh harga, stok, atau status pesanan, jadi field publik ini tak menambah
+  // permukaan serang yang berarti.
+  //
+  // Tetap disaring bentuknya: dua angka dipisah titik, persis seperti yang ditulis GA4. Nilai lain
+  // dibuang diam-diam. Tanpa penyaringan ini kolom `ga_client_id` jadi tempat menitipkan teks
+  // sembarang dari internet, dan isinya kelak ikut terkirim ke Google atas nama toko ini.
+  const gaClientId =
+    typeof extra.gaClientId === 'string' && /^\d+\.\d+$/.test(extra.gaClientId)
+      ? extra.gaClientId
+      : undefined
   // Varian yang dipilih (fresh, bukan cache) — untuk harga & validasi otoritatif produk bervarian.
   const variantIds = body.items
     .map((it) => (it as OrderItem).variantId)
@@ -852,6 +865,12 @@ export async function POST(request: Request) {
       shippingSubsidy,
       appliedPromos: promoResult.appliedPromos,
     })
+
+    // client_id GA4 dititipkan ke barisnya SETELAH pesanan tersimpan (UPDATE terpisah, bukan
+    // parameter RPC — alasannya di attachGaClientId). Sengaja TIDAK di-await bersama hal lain dan
+    // hasilnya tak diperiksa: pesanannya sudah nyata, dan kegagalan mencatat atribusi tak boleh
+    // mengubah apa pun yang dilihat pembeli.
+    if (gaClientId) await attachGaClientId(saved.orderId, gaClientId)
 
     // Stok produk berkurang → segarkan cache storefront agar stok tampil akurat.
     // Revalidasi halaman detail tiap produk yang dipesan + beranda + katalog.

@@ -100,6 +100,11 @@ export type Order = {
   logistics?: OrderLogistics
   trackingNumber?: string // no_tracking (diisi setelah kurir pickup)
   transactionId?: string // id_transaksi (dari Xendit setelah pembayaran)
+  // client_id GA4 pembeli, dititipkan checkout dari cookie `_ga` (migration 20260923120000).
+  // Dipakai webhook Xendit untuk mengirim event `purchase` atas nama pembeli yang benar — lihat
+  // src/lib/analytics-server.ts. `undefined` bila pembeli memblokir GA atau pesanannya dibuat
+  // sebelum kolom ini ada; keduanya normal dan tidak menghalangi apa pun selain atribusi.
+  gaClientId?: string
   // Tagihan Xendit yang masih berlaku, disimpan agar tombol "Bayar Sekarang" yang ditekan
   // berulang kali memakai ulang halaman pembayaran yang SAMA alih-alih menerbitkan tagihan baru
   // (API-XND-027). Keduanya `undefined` untuk pesanan yang belum pernah ditagih, dan untuk seluruh
