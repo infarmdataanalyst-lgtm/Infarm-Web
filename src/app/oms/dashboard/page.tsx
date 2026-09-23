@@ -30,7 +30,6 @@ import OmsHeader from '@/components/oms/OmsHeader'
 import RevenueChart from '@/components/oms/RevenueChart'
 import DashboardPeriodFilter from '@/components/oms/DashboardPeriodFilter'
 import DashboardTransition, { DashboardDim } from '@/components/oms/DashboardTransition'
-import PerluTindakanCard from '@/components/oms/PerluTindakanCard'
 import {
   getBestSellingProducts,
   getRecentOrders,
@@ -228,10 +227,10 @@ export default async function DashboardPage({
           />
         </div>
 
-        {/* Pesanan yang perlu tindakan manusia — DI ATAS semua angka, dan DI LUAR DashboardDim:
-            ia tidak bergantung periode, dan justru inilah yang harus dilihat admin lebih dulu
-            sebelum membaca pendapatan. Tak dirender sama sekali bila tak ada masalah. */}
-        <PerluTindakanCard />
+        {/* Pesanan yang perlu tindakan manusia (src/lib/order-issues.ts) SENGAJA tidak punya kotak
+            di sini. Sempat ada (PR #20), dicabut atas keputusan pemilik 23 Sep 2026: kotaknya
+            dirasa mengganggu ringkasan. Satu-satunya tempatnya kini lonceng di header — tampil
+            saat kursor diarahkan ke sana, dengan pesanan bermasalah di urutan teratas. */}
 
         {/* Semua yang bergantung periode diredupkan selagi data baru dimuat (tanpa skeleton →
             tanpa lompatan layout). Widget yang TIDAK bergantung periode (Pesanan Terbaru, Stok

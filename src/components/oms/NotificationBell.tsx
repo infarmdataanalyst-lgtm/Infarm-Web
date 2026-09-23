@@ -99,6 +99,8 @@ export default function NotificationBell() {
   const [loading, setLoading] = useState(true)
   const [failed, setFailed] = useState(false)
   const wrapperRef = useRef<HTMLDivElement>(null)
+  // Penunda tutup saat kursor keluar — lihat handleMouseLeave.
+  const hoverCloseTimer = useRef<number | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -145,6 +147,13 @@ export default function NotificationBell() {
     }
   }, [load])
 
+  // Penunda tutup-saat-hover tak boleh menembak setelah komponen dilepas.
+  useEffect(() => {
+    return () => {
+      if (hoverCloseTimer.current !== null) window.clearTimeout(hoverCloseTimer.current)
+    }
+  }, [])
+
   // Tutup saat klik di luar / tekan Escape
   useEffect(() => {
     if (!open) return
@@ -181,10 +190,42 @@ export default function NotificationBell() {
     router.push(href)
   }
 
+  // === Buka saat kursor diarahkan (keputusan pemilik 23 Sep 2026) ===
+  //
+  // Sejak kotak "Perlu tindakan" di dashboard dicabut, lonceng ini satu-satunya tempat pesanan
+  // bermasalah terlihat. Mengarahkan kursor cukup untuk MENGINTIP isinya, tanpa klik.
+  //
+  // Mengintip SENGAJA TIDAK menandai sudah dibaca — hanya klik yang melakukannya (handleToggle).
+  // Kalau sekadar lewat dengan kursor sudah menolkan lencana, peringatan yang belum sempat dibaca
+  // ikut lenyap, dan lencana berhenti bisa dipercaya.
+  //
+  // Tutupnya ditunda 150 ms: tombol dan panel adalah dua elemen terpisah, dan kursor melewati
+  // celah di antaranya. Tanpa jeda, panel menghilang tepat saat admin hendak mengkliknya.
+  // Di layar sentuh tak ada hover; klik tetap bekerja seperti semula.
+  function handleMouseEnter() {
+    if (hoverCloseTimer.current !== null) {
+      window.clearTimeout(hoverCloseTimer.current)
+      hoverCloseTimer.current = null
+    }
+    setOpen(true)
+  }
+
+  function handleMouseLeave() {
+    hoverCloseTimer.current = window.setTimeout(() => {
+      hoverCloseTimer.current = null
+      setOpen(false)
+    }, 150)
+  }
+
   const badge = unread > 9 ? '9+' : String(unread)
 
   return (
-    <div ref={wrapperRef} className="relative">
+    <div
+      ref={wrapperRef}
+      className="relative"
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
       <button
         type="button"
         onClick={handleToggle}

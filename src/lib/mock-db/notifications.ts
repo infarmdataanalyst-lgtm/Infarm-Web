@@ -243,6 +243,19 @@ function sortNewestFirst(a: OmsNotification, b: OmsNotification): number {
   return b.createdAt.localeCompare(a.createdAt)
 }
 
+// Pesanan bermasalah SELALU di atas, baru sisanya terbaru dulu.
+//
+// Sejak kotak "Perlu tindakan" di dashboard dicabut (keputusan pemilik 23 Sep 2026), lonceng
+// adalah SATU-SATUNYA tempat kegagalan uang/kurir terlihat. Panelnya hanya memuat 10 baris; kalau
+// diurutkan murni menurut waktu, tiga pesanan baru sudah cukup untuk mendorong "penjemputan kurir
+// belum dihapus" keluar dari pandangan — persis kesunyian yang ingin ditutup.
+function sortIssuesFirst(a: OmsNotification, b: OmsNotification): number {
+  const ia = a.type === 'pesanan_bermasalah' ? 0 : 1
+  const ib = b.type === 'pesanan_bermasalah' ? 0 : 1
+  if (ia !== ib) return ia - ib
+  return sortNewestFirst(a, b)
+}
+
 // Daftar notifikasi OMS terurut terbaru dulu, sudah dipotong sesuai limit/offset.
 // `lastSeen` null (admin belum pernah membuka panel) → SEMUA dianggap belum dibaca.
 export async function getOmsNotifications(options: {
@@ -267,7 +280,7 @@ export async function getOmsNotifications(options: {
       // admin berhenti mempercayainya.
       unread: lastSeen === null ? true : n.createdAt !== null && n.createdAt > lastSeen,
     }))
-    .sort(sortNewestFirst)
+    .sort(sortIssuesFirst)
 
   return {
     items: all.slice(offset, offset + limit),
