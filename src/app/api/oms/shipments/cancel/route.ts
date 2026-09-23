@@ -19,6 +19,8 @@
 //                                          gunanya melihat bentuk respons penolakan Mengantar.
 //   { "invoice": "INV-…", "dryRun": true } → tampilkan payload yang AKAN dikirim, tanpa memanggil.
 //   { "invoice": "INV-…" }               → hapus sungguhan. PERMANEN, tak bisa diurungkan.
+//   { "invoice": "INV-…", "tandaiManual": true } → TANPA memanggil Mengantar: catat bahwa admin
+//                                          sudah menghapusnya sendiri di dashboard Mengantar.
 
 import { NextResponse } from 'next/server'
 import { requireAdminRole } from '@/lib/oms-guard'
@@ -94,6 +96,45 @@ export async function POST(request: Request) {
   // Sengaja TANPA tuas paksa. Jalan keluarnya sudah ada dan lebih benar: batalkan pesanannya
   // lewat OMS, dan penghapusan ini ikut berjalan dengan jejak yang lengkap.
   const bolehDihapus = order.status === 'Dibatalkan'
+
+  // === Mode TANDAI MANUAL ===
+  //
+  // Admin sudah menghapus pengirimannya sendiri di dashboard Mengantar, dan menegaskan itu di sini.
+  //
+  // KENAPA PERLU TOMBOL TERSENDIRI, bukan disimpulkan dari jawaban Mengantar: DELETE untuk
+  // pengiriman yang sudah terhapus dijawab "Orders already deleted" — jawaban yang SAMA PERSIS
+  // dengan `_id` karangan (terukur 9 Sep 2026). Jadi jawaban itu tak bisa dipakai menyimpulkan
+  // apa pun, dan penghapusan manual — jalan terakhir yang kita sarankan sendiri saat percobaan
+  // ulang gagal — tak punya cara membersihkan tandanya. Tandanya menetap sebagai alarm palsu,
+  // dan alarm palsu yang dibiarkan membuat alarm berikutnya ikut diabaikan.
+  //
+  // Yang disimpan adalah PERNYATAAN MANUSIA, dan dicatat apa adanya sebagai itu — bukan seolah
+  // sistem yang memastikannya.
+  if (body.tandaiManual === true) {
+    if (!bolehDihapus) {
+      return NextResponse.json(
+        {
+          error: `Pesanan ${invoice} berstatus "${order.status ?? 'tidak diketahui'}", bukan "Dibatalkan".`,
+          code: 'ORDER_NOT_CANCELLED',
+        },
+        { status: 409 },
+      )
+    }
+
+    const ditandai = await setShipmentCancellation(invoice, {
+      cancelled: true,
+      note: `ditandai manual oleh admin pada ${new Date().toISOString()} — dihapus lewat dashboard Mengantar, bukan lewat sistem`,
+    })
+
+    return NextResponse.json({
+      mode: 'tandaiManual',
+      catatan:
+        'Tidak ada panggilan ke Mengantar. shipment_status ditulis CANCELLED berdasarkan pernyataan admin, beserta catatannya.',
+      invoice,
+      resi: order.trackingNumber ?? null,
+      dbDiperbarui: ditandai,
+    })
+  }
 
   const target = {
     ...(order.mengantarObjectId ? { objectId: order.mengantarObjectId } : {}),

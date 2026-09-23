@@ -1466,8 +1466,12 @@ export async function updateShipment(
 //
 // `cancelled: true` juga MENGOSONGKAN shipment_error: baris ini sudah selesai urusannya, dan pesan
 // galat lama yang tertinggal akan membuat admin mengira masih ada yang perlu dikerjakan.
+// `note` dipakai saat penghapusannya TIDAK dilakukan sistem, melainkan ditegaskan manusia (admin
+// yang sudah menghapusnya sendiri di dashboard Mengantar). Nilainya tetap disimpan di
+// shipment_error supaya jejaknya ada — kolom itu hanya ditampilkan sebagai galat pada baris
+// berstatus FAILED/CANCEL_FAILED, jadi catatan pada baris CANCELLED tak akan terbaca sebagai alarm.
 export type ShipmentCancellationUpdate =
-  | { cancelled: true }
+  | { cancelled: true; note?: string }
   | { cancelled: false; error: string }
 
 export async function setShipmentCancellation(
@@ -1476,7 +1480,7 @@ export async function setShipmentCancellation(
 ): Promise<boolean> {
   const supabase = createAdminClient()
   const patch: Record<string, string | null> = update.cancelled
-    ? { shipment_status: 'CANCELLED', shipment_error: null }
+    ? { shipment_status: 'CANCELLED', shipment_error: update.note?.slice(0, 500) ?? null }
     : { shipment_status: 'CANCEL_FAILED', shipment_error: update.error.slice(0, 500) }
 
   const { data, error } = await supabase
