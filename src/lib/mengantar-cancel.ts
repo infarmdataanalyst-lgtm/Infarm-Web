@@ -254,9 +254,22 @@ async function attemptCancel(
 
     return { ok: true, deletedCount, deletedIds, deletedHumanReadable, raw: aman(text) }
   } catch (e) {
-    // Hanya `name`, bukan `message`: pesan error fetch di sebagian runtime memuat URL — yang di
-    // sini berisi API key.
-    return { ok: false, reason: 'network', detail: e instanceof Error ? e.name : 'unknown' }
+    // `message` dan `cause.code` ikut dicatat, TAPI selalu lewat aman(): pesan error fetch di
+    // sebagian runtime memuat URL — yang di sini berisi API key.
+    //
+    // Sebelum ini yang tersimpan hanya `name`. Terjadi 23 Sep 2026 pada resi JO9001419509: ketiga
+    // percobaan gagal dan yang tercatat cuma "network: TypeError" — bentuk yang sama untuk DNS
+    // mati, koneksi diputus, TLS ditolak, maupun Mengantar tak terjangkau. Tanpa `cause.code`
+    // (ENOTFOUND, ECONNRESET, UND_ERR_CONNECT_TIMEOUT, …) kejadian berikutnya tetap tak bisa
+    // dibedakan, dan satu-satunya jejaknya sudah telanjur lewat.
+    if (!(e instanceof Error)) return { ok: false, reason: 'network', detail: 'unknown' }
+    const cause = (e as { cause?: unknown }).cause
+    const kode =
+      typeof cause === 'object' && cause !== null && 'code' in cause
+        ? String((cause as { code?: unknown }).code)
+        : undefined
+    const bagian = [e.name, e.message, kode ? `cause=${kode}` : ''].filter(Boolean)
+    return { ok: false, reason: 'network', detail: aman(bagian.join(': '), 200) }
   }
 }
 
