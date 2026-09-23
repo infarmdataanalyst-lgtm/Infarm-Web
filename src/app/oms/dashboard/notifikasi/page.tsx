@@ -22,7 +22,8 @@ import {
 } from 'lucide-react'
 import OmsHeader from '@/components/oms/OmsHeader'
 
-type NotificationType = 'pesanan_baru' | 'stok_habis' | 'ulasan_baru' | 'pesanan_bermasalah'
+// Hanya PERINGATAN — pesanan baru yang normal tidak lagi masuk notifikasi (pemilik, 23 Sep 2026).
+type NotificationType = 'stok_habis' | 'ulasan_baru' | 'pesanan_bermasalah'
 
 type NotificationItem = {
   id: string
@@ -98,11 +99,11 @@ export default function NotifikasiPage() {
 
       <div className="px-4 py-6 sm:px-6 lg:px-8">
         <div className="mb-4">
-          <h2 className="text-lg font-bold text-gray-900">Semua Notifikasi</h2>
+          <h2 className="text-lg font-bold text-gray-900">Semua Peringatan</h2>
           <p className="mt-1 text-sm text-gray-500">
-            Pesanan yang menunggu diproses dan produk yang kehabisan stok. Daftar ini dihitung dari
-            keadaan terkini, sehingga notifikasi hilang sendiri begitu pesanan diproses atau stok
-            diisi ulang.
+            Pesanan yang perlu tindakan (kurir, pembayaran, refund), produk yang kehabisan stok, dan
+            ulasan yang belum ditanggapi. Daftar ini dihitung dari keadaan terkini, sehingga
+            peringatan hilang sendiri begitu masalahnya diselesaikan.
           </p>
         </div>
 
@@ -124,7 +125,7 @@ export default function NotifikasiPage() {
 
           {!loading && !error && items.length === 0 && (
             <p className="px-4 py-12 text-center text-sm text-gray-500">
-              Tidak ada notifikasi. Semua pesanan sudah diproses dan stok aman.
+              Tidak ada peringatan. Kurir, pembayaran, stok, dan ulasan semuanya aman.
             </p>
           )}
 

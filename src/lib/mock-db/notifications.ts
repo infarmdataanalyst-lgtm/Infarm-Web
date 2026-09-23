@@ -1,5 +1,12 @@
 // src/lib/mock-db/notifications.ts
-// Notifikasi OMS — DIHITUNG dari keadaan terkini (orders + stok), BUKAN dari tabel notifikasi.
+// Notifikasi OMS — DIHITUNG dari keadaan terkini (orders + stok + ulasan), BUKAN dari tabel
+// notifikasi.
+//
+// HANYA PERINGATAN (keputusan pemilik 23 Sep 2026). Pesanan baru yang masuk normal TIDAK lagi
+// menjadi notifikasi: ia sudah punya tempatnya di daftar Pesanan dan widget "Pesanan Terbaru" di
+// dashboard, dan kalau kabar normal ikut berbunyi, admin belajar mengabaikan lonceng — termasuk
+// saat isinya penjemputan kurir yang gagal dihapus. Yang tersisa di sini semuanya berarti ADA
+// YANG HARUS DITINDAK: pesanan bermasalah (uang/kurir), stok habis, ulasan yang belum ditanggapi.
 //
 // Kenapa computed, bukan tabel persisten:
 //   1. Nol titik tulis baru. Tabel persisten harus diisi di SETIAP tempat yang mengubah stok
@@ -20,11 +27,11 @@ import { readProducts } from '@/lib/mock-db/products'
 import { readOrderIssues } from '@/lib/mock-db/order-issues'
 import { ORDER_ISSUE_META } from '@/lib/order-issues'
 
-export type NotificationType = 'pesanan_baru' | 'stok_habis' | 'ulasan_baru' | 'pesanan_bermasalah'
+export type NotificationType = 'stok_habis' | 'ulasan_baru' | 'pesanan_bermasalah'
 
 export type OmsNotification = {
-  // id stabil lintas request (`order:<invoice>` / `stock:<productId>`) supaya React punya key
-  // yang tidak berubah tiap polling.
+  // id stabil lintas request (`issue:<jenis>:<invoice>` / `stock:<productId>` / `review:<id>`)
+  // supaya React punya key yang tidak berubah tiap polling.
   id: string
   type: NotificationType
   title: string
@@ -43,22 +50,8 @@ export type NotificationPage = {
 }
 
 // Batas pengambilan per sumber. Bukan paginasi — hanya pagar agar backlog besar tak menarik
-// ribuan baris ke memori hanya untuk ditampilkan 10 teratas. Ambang naikkan bila pesanan
-// menunggu proses rutin melewati angka ini.
+// ribuan baris ke memori hanya untuk ditampilkan 10 teratas.
 const SOURCE_LIMIT = 200
-
-// Status pesanan yang dianggap "butuh perhatian admin". order_status NULL (18 baris warisan)
-// sengaja TIDAK ikut: .in() memang tak pernah cocok dengan NULL, dan baris itu tak punya status
-// yang bisa dipercaya sehingga memunculkannya sebagai "pesanan baru" akan menyesatkan.
-const PENDING_DB_STATUSES = ['PENDING', 'PROCESSING'] as const
-
-type PendingOrderRow = {
-  nomor_invoice: string | null
-  nama_customer: string | null
-  jumlah_total: number | null
-  order_status: string | null
-  created_at: string
-}
 
 // Rupiah tanpa Intl: fungsi ini jalan di server dan hasilnya masuk ke pesan notifikasi,
 // jadi tak boleh bergantung pada locale mesin yang menjalankannya.
@@ -66,40 +59,9 @@ function rupiah(value: number): string {
   return `Rp${Math.round(value).toLocaleString('id-ID')}`
 }
 
-// === Sumber 1: pesanan yang menunggu diproses ===
-
-async function buildOrderNotifications(): Promise<OmsNotification[]> {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from('orders')
-    .select('nomor_invoice, nama_customer, jumlah_total, order_status, created_at')
-    .in('order_status', PENDING_DB_STATUSES)
-    .order('created_at', { ascending: false })
-    .limit(SOURCE_LIMIT)
-
-  if (error) {
-    console.error('Gagal membaca notifikasi pesanan:', error.message)
-    return []
-  }
-
-  return ((data as PendingOrderRow[]) ?? []).map((row) => {
-    const invoice = row.nomor_invoice ?? '(tanpa invoice)'
-    const customer = row.nama_customer?.trim() || 'Pembeli'
-    const total = rupiah(row.jumlah_total ?? 0)
-    // Halaman Pesanan tidak punya pencarian per-invoice, jadi tautan mengarah ke daftar yang
-    // sudah tersaring ke status pesanan tersebut — itu tempat terdekat yang benar-benar ada.
-    const statusLabel = row.order_status === 'PROCESSING' ? 'Diproses' : 'Menunggu Pembayaran'
-    return {
-      id: `order:${invoice}`,
-      type: 'pesanan_baru' as const,
-      title: `Pesanan baru ${invoice}`,
-      message: `dari ${customer} — ${total}`,
-      href: `/oms/dashboard/orders?status=${encodeURIComponent(statusLabel)}`,
-      createdAt: row.created_at,
-      unread: false, // diisi pemanggil setelah lastSeen diketahui
-    }
-  })
-}
+// Sumber "pesanan baru yang menunggu diproses" DIHAPUS 23 Sep 2026 (lihat catatan di atas).
+// Jangan dihidupkan lagi tanpa keputusan pemilik: satu-satunya fungsinya adalah mengubur
+// peringatan yang benar-benar penting di bawah kabar rutin.
 
 // === Sumber 2: produk yang stoknya habis ===
 
@@ -265,14 +227,13 @@ export async function getOmsNotifications(options: {
 }): Promise<NotificationPage> {
   const { lastSeen, limit = 10, offset = 0 } = options
 
-  const [orders, stock, reviews, issues] = await Promise.all([
-    buildOrderNotifications(),
+  const [stock, reviews, issues] = await Promise.all([
     buildStockNotifications(),
     buildReviewNotifications(),
     buildIssueNotifications(),
   ])
 
-  const all = [...orders, ...stock, ...reviews, ...issues]
+  const all = [...stock, ...reviews, ...issues]
     .map((n) => ({
       ...n,
       // Notifikasi tanpa waktu dihitung belum dibaca HANYA sebelum admin pernah membuka panel.

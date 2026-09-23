@@ -14,7 +14,8 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { AlertTriangle, Bell, MessageSquare, PackageX, ShoppingCart } from 'lucide-react'
 
-type NotificationType = 'pesanan_baru' | 'stok_habis' | 'ulasan_baru' | 'pesanan_bermasalah'
+// Hanya PERINGATAN — pesanan baru yang normal tidak lagi masuk lonceng (pemilik, 23 Sep 2026).
+type NotificationType = 'stok_habis' | 'ulasan_baru' | 'pesanan_bermasalah'
 
 type NotificationItem = {
   id: string
@@ -271,7 +272,7 @@ export default function NotificationBell() {
 
             {!loading && !failed && items.length === 0 && (
               <p className="px-4 py-8 text-center text-sm text-gray-500">
-                Tidak ada notifikasi. Semua pesanan sudah diproses dan stok aman.
+                Tidak ada peringatan. Kurir, pembayaran, stok, dan ulasan semuanya aman.
               </p>
             )}
 
