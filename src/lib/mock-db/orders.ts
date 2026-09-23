@@ -17,6 +17,11 @@
 import { createAdminClient } from '@/lib/supabase/server'
 import { readWarehouses } from '@/lib/mock-db/warehouses'
 import { recordOrderStockChanges } from '@/lib/stock-audit'
+import {
+  ORDER_ISSUE_CANDIDATE_FILTER,
+  classifyOrderIssue,
+  type OrderIssueKind,
+} from '@/lib/order-issues'
 import type { RevenueOrderRow } from '@/lib/dashboard-revenue'
 import { paymentMethodLabel } from '@/lib/payment-method'
 import type { OmsSearchResult } from '@/types/oms-search'
@@ -48,6 +53,9 @@ export type OrderFilterOptions = {
   gudang?: string[]
   sortBy?: 'total' | 'tanggal'
   order?: 'asc' | 'desc'
+  // Hanya pesanan yang PERLU TINDAKAN jenis ini (lihat src/lib/order-issues.ts). Tujuan tautan
+  // dari kotak "Perlu tindakan" di dashboard & notifikasi lonceng.
+  masalah?: OrderIssueKind
 }
 
 // === Pemetaan enum DB <-> app ===
@@ -431,6 +439,13 @@ export async function readOrdersFiltered(opts: OrderFilterOptions = {}): Promise
     }
   }
 
+  // Filter pesanan bermasalah — dua tahap, seperti readOrderIssues (mock-db/order-issues.ts):
+  // penyaringan KASAR di database (hanya pesanan berjalan / yang meninggalkan jejak galat),
+  // lalu penilaian TEPAT di JS karena dua kriterianya bergantung waktu (15 menit, 2 hari).
+  if (opts.masalah) {
+    query = query.or(ORDER_ISSUE_CANDIDATE_FILTER)
+  }
+
   // Sorting
   const sortColumn = opts.sortBy === 'total' ? 'jumlah_total' : 'created_at'
   const ascending = opts.order === 'asc'
@@ -443,7 +458,12 @@ export async function readOrdersFiltered(opts: OrderFilterOptions = {}): Promise
     return []
   }
 
-  const rows = (data as OrderRow[]) ?? []
+  let rows = (data as OrderRow[]) ?? []
+  if (opts.masalah) {
+    const nowMs = Date.now()
+    const masalah = opts.masalah
+    rows = rows.filter((r) => classifyOrderIssue(r, nowMs) === masalah)
+  }
   if (rows.length === 0) return []
 
   // Ambil items & resolve produk (sama seperti readOrders)

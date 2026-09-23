@@ -17,8 +17,10 @@
 
 import { createAdminClient } from '@/lib/supabase/server'
 import { readProducts } from '@/lib/mock-db/products'
+import { readOrderIssues } from '@/lib/mock-db/order-issues'
+import { ORDER_ISSUE_META } from '@/lib/order-issues'
 
-export type NotificationType = 'pesanan_baru' | 'stok_habis' | 'ulasan_baru'
+export type NotificationType = 'pesanan_baru' | 'stok_habis' | 'ulasan_baru' | 'pesanan_bermasalah'
 
 export type OmsNotification = {
   // id stabil lintas request (`order:<invoice>` / `stock:<productId>`) supaya React punya key
@@ -206,6 +208,30 @@ async function buildReviewNotifications(): Promise<OmsNotification[]> {
   })
 }
 
+// === Sumber 4: pesanan yang perlu tindakan manusia (lihat src/lib/order-issues.ts) ===
+//
+// Berbeda dari tiga sumber di atas yang bersifat "ada pekerjaan rutin", ini adalah KEGAGALAN yang
+// tercatat di kolom pesanan tapi sampai 23 Sep 2026 tak pernah dikumpulkan di mana pun: penjemputan
+// kurir yang gagal dihapus (MGT-66), booking yang gagal setelah bayar, tagihan batal yang masih
+// hidup, refund yang tertunda. Semuanya menyangkut uang atau kurir, dan semuanya sunyi.
+//
+// Ikut aturan berkas ini: KEADAAN, bukan peristiwa — lenyap sendiri begitu kolomnya berubah.
+async function buildIssueNotifications(): Promise<OmsNotification[]> {
+  const issues = await readOrderIssues()
+  return issues.map((it) => {
+    const meta = ORDER_ISSUE_META[it.kind]
+    return {
+      id: `issue:${it.kind}:${it.invoice}`,
+      type: 'pesanan_bermasalah' as const,
+      title: `${meta.label}: ${it.invoice}`,
+      message: `${it.customer} — ${rupiah(it.total)}`,
+      href: meta.href,
+      createdAt: it.since,
+      unread: false, // diisi pemanggil setelah lastSeen diketahui
+    }
+  })
+}
+
 // === Gabungan ===
 
 // Mengurutkan terbaru dulu. Notifikasi tanpa waktu (produk habis tanpa jejak mutasi) ditaruh
@@ -226,13 +252,14 @@ export async function getOmsNotifications(options: {
 }): Promise<NotificationPage> {
   const { lastSeen, limit = 10, offset = 0 } = options
 
-  const [orders, stock, reviews] = await Promise.all([
+  const [orders, stock, reviews, issues] = await Promise.all([
     buildOrderNotifications(),
     buildStockNotifications(),
     buildReviewNotifications(),
+    buildIssueNotifications(),
   ])
 
-  const all = [...orders, ...stock, ...reviews]
+  const all = [...orders, ...stock, ...reviews, ...issues]
     .map((n) => ({
       ...n,
       // Notifikasi tanpa waktu dihitung belum dibaca HANYA sebelum admin pernah membuka panel.
