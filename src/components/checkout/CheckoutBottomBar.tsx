@@ -53,9 +53,12 @@ export default function CheckoutBottomBar({
 
   return (
     <div className={shell}>
-      {/* Minimum belanja belum tercapai → jelaskan kekurangannya, tombol bayar dikunci */}
+      {/* Minimum belanja belum tercapai → jelaskan kekurangannya, tombol bayar dikunci.
+          11px, bukan text-xs: masukan pembeli 23 Sep 2026 — di ponsel, baris ini bersaing
+          dengan angka Total Pembayaran tepat di bawahnya dan terbaca lebih mencolok dari yang
+          seharusnya. Ukuran yang sama sudah dipakai badge status di OMS. */}
       {minOrderShortfall > 0 && (
-        <p className={`${inner} pt-2 text-xs leading-snug text-orange-700`}>
+        <p className={`${inner} pt-2 text-[11px] leading-snug text-orange-700`}>
           Minimal belanja {formatRupiah(minOrderAmount)}, tambah {formatRupiah(minOrderShortfall)} lagi
           untuk checkout.
         </p>
