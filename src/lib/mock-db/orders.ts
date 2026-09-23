@@ -112,6 +112,8 @@ type OrderRow = {
   refund_at?: string | null
   refund_by?: string | null
   refund_reference?: string | null
+  // client_id GA4 pembeli (migration 20260923120000) — optional, alasan sama.
+  ga_client_id?: string | null
   // Kolom baru (migration 20260827120000). Optional di tipe ini supaya kode tetap jalan bila
   // migration belum di-apply — PostgREST tak mengembalikan kolom yang belum ada.
   ongkos_kirim?: number | null
@@ -309,6 +311,7 @@ function rowToOrder(row: OrderRow, items: OrderItem[], warehouseNames?: Map<stri
   if (row.mengantar_order_id) order.mengantarOrderId = row.mengantar_order_id
   if (row.mengantar_batch_id) order.mengantarBatchId = row.mengantar_batch_id
   if (row.id_transaksi) order.transactionId = row.id_transaksi
+  if (row.ga_client_id) order.gaClientId = row.ga_client_id
   if (row.invoice_url) order.invoiceUrl = row.invoice_url
   if (row.invoice_expires_at) order.invoiceExpiresAt = row.invoice_expires_at
   if (row.invoice_expired_at) order.invoiceExpiredAt = row.invoice_expired_at
@@ -1038,6 +1041,31 @@ export async function getOrderUuidByInvoice(invoice: string): Promise<string | n
 // Menyimpan pesanan baru + item + kurangi stok, ATOMIK lewat Postgres RPC
 // create_order_with_items (lihat supabase/migrations). Mengembalikan Order tersimpan.
 // Melempar OrderStockError bila stok salah satu produk tidak cukup (transaksi di-rollback DB).
+// Menitipkan client_id GA4 ke pesanan yang BARU tersimpan.
+//
+// UPDATE terpisah, bukan parameter RPC create_order_with_items. Menambah parameter ke RPC berarti
+// overload baru, dan overload RPC di project ini punya riwayat panjang (20260922110000) untuk
+// sesuatu yang bukan uang dan tak perlu atomik. Kegagalan di sini paling buruk berarti satu
+// pesanan kehilangan atribusi GA4 — pesanannya sendiri sudah aman tersimpan.
+//
+// Sengaja mengembalikan boolean dan TIDAK melempar: pemanggilnya ada di jalur checkout, tepat
+// setelah pesanan berhasil dibuat. Tak ada kegagalan analitik yang boleh membatalkan pesanan yang
+// stoknya sudah dipotong.
+export async function attachGaClientId(invoice: string, clientId: string): Promise<boolean> {
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('orders')
+    .update({ ga_client_id: clientId })
+    .eq('nomor_invoice', invoice)
+
+  if (error) {
+    // Termasuk kasus "kolomnya belum ada" (migration belum di-apply). Dicatat, tidak dilempar.
+    console.error(`[orders] gagal menyimpan ga_client_id untuk ${invoice}:`, error.message)
+    return false
+  }
+  return true
+}
+
 export async function saveOrder(input: CreateOrderInput): Promise<Order> {
   const supabase = createAdminClient()
   const paymentDb = PAYMENT_TO_DB[input.paymentStatus ?? 'Menunggu']

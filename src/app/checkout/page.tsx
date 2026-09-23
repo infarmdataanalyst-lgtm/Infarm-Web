@@ -48,6 +48,7 @@ import {
   trackAddShippingInfo,
   type AnalyticsLineItem,
 } from '@/lib/analytics'
+import { readGaClientId } from '@/lib/ga-client-id'
 import { setGuestPhone, incrementActiveOrderCount } from '@/lib/guest-phone'
 import { setGuestEmail } from '@/lib/guest-email'
 import type { CheckoutItem } from '@/lib/data/dummy-checkout'
@@ -646,6 +647,15 @@ export default function CheckoutPage() {
           // opsi termurah berikutnya dari perbandingan ongkir yang masih tersimpan di server.
           warehouseId: selectedCourier.warehouseId,
           weight: shippingWeight,
+          // client_id GA4 dari cookie `_ga`. Dititipkan ke pesanan supaya webhook Xendit bisa
+          // mengirim event `purchase` atas nama pembeli ini — event itu TAK BISA dikirim dari
+          // browser, karena pembayaran VA/QRIS sering lunas berjam-jam kemudian tanpa pembeli
+          // pernah kembali ke halaman sukses.
+          //
+          // Dibaca DI SINI, bukan saat halaman mount: cookie `_ga` baru ditulis setelah skrip GA4
+          // selesai dimuat, dan pembeli yang langsung mendarat di checkout bisa saja menekan bayar
+          // sebelum itu. `undefined` (GA diblokir / mode privat) otomatis hilang dari JSON.
+          gaClientId: readGaClientId(),
           // Alamat terstruktur dari form + hasil search Mengantar
           address: {
             shippingAddress: address.street,

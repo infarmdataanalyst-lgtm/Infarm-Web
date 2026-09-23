@@ -28,6 +28,8 @@ import {
   updatePaymentStatus,
 } from '@/lib/mock-db/orders'
 import { expireOrder, revalidateAfterExpiry } from '@/lib/order-expiry'
+import { getCachedProducts } from '@/lib/mock-db/cached-reads'
+import { sendPurchaseEvent, type ProductMeta } from '@/lib/analytics-server'
 import { bookShipmentForPaidOrder } from '@/lib/shipment-booking'
 import {
   parseXenditCallback,
@@ -249,7 +251,46 @@ async function handlePaid(
   // alamat yang salah, dan retry berulang justru menumpuk percobaan booking.
   const shipment = await bookShipmentForPaidOrder(updated, LOG)
 
+  // === GA4 purchase ===
+  //
+  // Dikirim DI SINI dan tak di tempat lain. Ini satu-satunya titik yang tahu uangnya benar-benar
+  // masuk, dan halaman sukses bukan penggantinya: pembayaran VA/QRIS sering lunas berjam-jam
+  // kemudian tanpa pembeli pernah kembali ke sana.
+  //
+  // Idempoten karena posisinya: callback kembar sudah berhenti di cabang ALREADY_PAID jauh di
+  // atas, jadi baris ini hanya tercapai pada perpindahan status yang BERHASIL — sekali per
+  // pesanan. `transaction_id` di payload jadi lapis keduanya.
+  //
+  // SETELAH booking kurir, bukan sebelum: keduanya di-await sebelum membalas Xendit, dan yang
+  // menyangkut paket sungguhan berhak jalan lebih dulu. Kegagalan di sini tak mengubah balasan —
+  // pembayarannya sah dan sudah tercatat apa pun kata Google.
+  await sendPurchaseEvent(updated, await productMetaFor(updated), LOG)
+
   return NextResponse.json({ received: true, handled: true, status: 'PAID', shipment })
+}
+
+// SKU & kategori tiap produk dalam pesanan — keduanya TIDAK tersimpan di order_items.
+//
+// SKU-nya yang penting: halaman detail produk mengirim `sku || id` sebagai item_id GA4, jadi
+// purchase harus memakai aturan yang sama atau GA4 mencatat barang yang sama sebagai dua item
+// berbeda, dan funnel view_item → purchase putus di langkah terakhir.
+//
+// Dibaca dari cache storefront yang memang sudah hangat (tag `products`), jadi ini bukan
+// perjalanan tambahan ke database pada jalur webhook.
+async function productMetaFor(order: Order): Promise<Map<string, ProductMeta>> {
+  const meta = new Map<string, ProductMeta>()
+  try {
+    const dibutuhkan = new Set(order.items.map((it) => it.productId))
+    for (const product of await getCachedProducts()) {
+      if (!dibutuhkan.has(product.id)) continue
+      meta.set(product.id, { sku: product.sku, category: product.category })
+    }
+  } catch (e) {
+    // Gagal membaca produk TIDAK boleh membatalkan pengiriman event: payload tetap terkirim
+    // dengan item_id jatuh ke productId. Laporannya jadi kurang rapi, bukan hilang.
+    console.error(`${LOG} gagal membaca SKU produk untuk GA4:`, e instanceof Error ? e.message : e)
+  }
+  return meta
 }
 
 // === Pembayaran kedaluwarsa / gagal ===

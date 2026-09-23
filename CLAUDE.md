@@ -166,7 +166,10 @@ punya pemilik yang bisa dibuktikan lewat jalur email, jadi tak akan pernah muncu
 - **Analytics**: Google Analytics 4 via `@next/third-parties` — dipasang lewat
   `<GoogleAnalyticsGate>` (`src/components/analytics/`) di `src/app/layout.tsx`: render kondisional
   bila `NEXT_PUBLIC_GA_ID` terisi, dan di-gate agar TIDAK aktif di area `/oms` (tak melacak admin).
-  Event GA4 (`view_item`, `add_to_cart`) via `src/lib/analytics.ts`. Strategi load = `afterInteractive`
+  Event GA4 sisi klien (`view_item`, `add_to_cart`, `begin_checkout`, `add_shipping_info`) via
+  `src/lib/analytics.ts`. Event `purchase` TIDAK dikirim dari browser: pembayaran Xendit asinkron,
+  jadi ia dikirim dari webhook lewat Measurement Protocol (`src/lib/analytics-server.ts`, butuh
+  `GA_API_SECRET` + kolom `orders.ga_client_id`). Strategi load = `afterInteractive`
   (default @next/third-parties) — disengaja demi akurasi analytics (tak di-defer ke `lazyOnload`).
 
 ### Roadmap integrasi (belum terpasang)
@@ -799,6 +802,14 @@ MENGANTAR_ORIGIN_ID              # server-only, OPSIONAL; alias non-public dari 
 NEXT_PUBLIC_GA_ID                # PUBLIC/client; Measurement ID GA4 (format G-XXXXXXXXXX). Dipasang di
                                  # src/app/layout.tsx via <GoogleAnalytics> (@next/third-parties). Render
                                  # kondisional — GA hanya jalan bila terisi. Set di Vercel juga + redeploy.
+GA_API_SECRET                    # server-only, OPSIONAL. API secret Measurement Protocol GA4 (Admin →
+                                 # Data Streams → pilih stream → Measurement Protocol API secrets).
+                                 # Dipakai POST /api/webhooks/xendit untuk mengirim event `purchase`
+                                 # dari SERVER — event itu tak bisa dikirim dari browser karena
+                                 # VA/QRIS sering lunas berjam-jam kemudian tanpa pembeli kembali ke
+                                 # halaman sukses. Kosong = event purchase dilewati diam-diam (dicatat
+                                 # di log); pesanannya sendiri tidak terpengaruh sama sekali.
+                                 # Dipasangkan dengan NEXT_PUBLIC_GA_ID di atas — keduanya harus ada.
 
 # Sudah dipakai sekarang (Webhook Xendit)
 XENDIT_CALLBACK_TOKEN            # server-only, WAJIB. Dibandingkan waktu-konstan dengan header
