@@ -30,6 +30,7 @@ import OmsHeader from '@/components/oms/OmsHeader'
 import RevenueChart from '@/components/oms/RevenueChart'
 import DashboardPeriodFilter from '@/components/oms/DashboardPeriodFilter'
 import DashboardTransition, { DashboardDim } from '@/components/oms/DashboardTransition'
+import PerluTindakanCard from '@/components/oms/PerluTindakanCard'
 import {
   getBestSellingProducts,
   getRecentOrders,
@@ -226,6 +227,11 @@ export default async function DashboardPage({
             today={toWibDateString(new Date().toISOString())}
           />
         </div>
+
+        {/* Pesanan yang perlu tindakan manusia — DI ATAS semua angka, dan DI LUAR DashboardDim:
+            ia tidak bergantung periode, dan justru inilah yang harus dilihat admin lebih dulu
+            sebelum membaca pendapatan. Tak dirender sama sekali bila tak ada masalah. */}
+        <PerluTindakanCard />
 
         {/* Semua yang bergantung periode diredupkan selagi data baru dimuat (tanpa skeleton →
             tanpa lompatan layout). Widget yang TIDAK bergantung periode (Pesanan Terbaru, Stok

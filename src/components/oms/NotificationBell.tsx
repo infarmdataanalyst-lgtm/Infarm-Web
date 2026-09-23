@@ -12,9 +12,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Bell, MessageSquare, PackageX, ShoppingCart } from 'lucide-react'
+import { AlertTriangle, Bell, MessageSquare, PackageX, ShoppingCart } from 'lucide-react'
 
-type NotificationType = 'pesanan_baru' | 'stok_habis' | 'ulasan_baru'
+type NotificationType = 'pesanan_baru' | 'stok_habis' | 'ulasan_baru' | 'pesanan_bermasalah'
 
 type NotificationItem = {
   id: string
@@ -57,6 +57,16 @@ function relativeTime(iso: string | null): string {
 
 // Ikon + warna per kategori notifikasi
 function NotificationIcon({ type }: { type: NotificationType }) {
+  // Pesanan yang perlu tindakan manusia (kurir/uang) — oranye, dibedakan dari merah "stok habis"
+  // dan amber "ulasan": ini satu-satunya kategori yang berarti ada yang SALAH, bukan sekadar
+  // pekerjaan rutin.
+  if (type === 'pesanan_bermasalah') {
+    return (
+      <span className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-orange-50 text-orange-600">
+        <AlertTriangle className="h-4 w-4" aria-hidden />
+      </span>
+    )
+  }
   // Ulasan baru yang belum dibalas (SEC-042) — warna amber, sengaja dibedakan dari merah
   // "stok habis" supaya admin bisa memilah antreannya sekilas tanpa membaca judulnya.
   if (type === 'ulasan_baru') {

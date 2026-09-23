@@ -13,6 +13,7 @@ import OrderStatusModal from '@/components/oms/OrderStatusModal'
 import WarehouseMultiFilter from '@/components/oms/WarehouseMultiFilter'
 import DateRangePicker from '@/components/oms/DateRangePicker'
 import { paymentMethodLabel } from '@/lib/payment-method'
+import { ORDER_ISSUE_META, isOrderIssueKind } from '@/lib/order-issues'
 import type {
   Order,
   OrderFulfillmentStatus,
@@ -85,6 +86,11 @@ function OrdersContent() {
   const pembayaran = (searchParams.get('pembayaran') as OrderPaymentStatus | null) || null
   const sortBy = (searchParams.get('sortBy') as 'total' | 'tanggal' | null) || null
   const order = (searchParams.get('order') as 'asc' | 'desc' | null) || null
+  // Pesanan bermasalah — tujuan tautan dari kotak "Perlu tindakan" di dashboard & notifikasi.
+  // Nilai asing diabaikan di sini juga (bukan hanya di server) supaya chip-nya tak menampilkan
+  // label kosong untuk URL yang usang.
+  const rawMasalah = searchParams.get('masalah')
+  const masalah = isOrderIssueKind(rawMasalah) ? rawMasalah : null
 
   // Auto-sembunyikan toast
   useEffect(() => {
@@ -206,6 +212,7 @@ function OrdersContent() {
     if (sortBy) params.set('sortBy', sortBy)
     if (order) params.set('order', order)
     if (activeTab !== 'Semua') params.set('status', activeTab)
+    if (masalah) params.set('masalah', masalah)
 
     const queryString = params.toString()
     const url = `/api/orders/list${queryString ? '?' + queryString : ''}`
@@ -229,7 +236,7 @@ function OrdersContent() {
     return () => {
       active = false
     }
-  }, [dari, sampai, kurir, gudang, pembayaran, sortBy, order, activeTab])
+  }, [dari, sampai, kurir, gudang, pembayaran, sortBy, order, activeTab, masalah])
 
   // Pesanan untuk halaman saat ini (orders sudah di-filter di server)
   const totalPages = Math.max(1, Math.ceil(orders.length / PAGE_SIZE))
@@ -304,7 +311,16 @@ function OrdersContent() {
 
   // === Helper: Check if ANY filter is active ===
   function hasActiveFilters() {
-    return !!(dari || sampai || kurir || gudang || pembayaran || sortBy || (activeTab !== 'Semua'))
+    return !!(
+      dari ||
+      sampai ||
+      kurir ||
+      gudang ||
+      pembayaran ||
+      sortBy ||
+      masalah ||
+      activeTab !== 'Semua'
+    )
   }
 
   // Nama gudang untuk ditampilkan di kolom tabel. warehouseName di-resolve server; kosong berarti
@@ -534,6 +550,27 @@ function OrdersContent() {
             )}
           </div>
         </div>
+
+        {/* === Chip filter "pesanan bermasalah" ===
+            Filter ini tidak punya kontrol di panel filter di atas — ia hanya bisa datang dari
+            tautan (dashboard/notifikasi). Tanpa chip, admin yang mendarat di sini melihat daftar
+            pendek tanpa tahu kenapa, dan mengira pesanan lainnya hilang. */}
+        {masalah && (
+          <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-900">
+            <AlertTriangle className="h-4 w-4 flex-none text-orange-600" aria-hidden />
+            <span>
+              Hanya menampilkan: <span className="font-semibold">{ORDER_ISSUE_META[masalah].label}</span>
+              <span className="text-orange-800/80"> — {ORDER_ISSUE_META[masalah].tindakan}</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => updateFilters({ masalah: null })}
+              className="ml-auto rounded-full border border-orange-300 px-2.5 py-0.5 text-xs font-semibold text-orange-800 transition hover:bg-orange-100"
+            >
+              Tampilkan semua
+            </button>
+          </div>
+        )}
 
         {/* === Tabs Status === */}
         <div className="mt-6 flex gap-6 overflow-x-auto border-b border-gray-200">

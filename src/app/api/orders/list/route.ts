@@ -16,6 +16,7 @@ import {
   type OrderFilterOptions,
 } from '@/lib/mock-db/orders'
 import { readWarehouses } from '@/lib/mock-db/warehouses'
+import { isOrderIssueKind } from '@/lib/order-issues'
 import type { OrderFulfillmentStatus, OrderPaymentStatus } from '@/types/order'
 
 // Status alur pesanan yang sah. Nilai di luar daftar ini diabaikan (bukan error) agar URL lama /
@@ -88,6 +89,11 @@ export async function GET(request: NextRequest) {
     )
   }
 
+  // Pesanan bermasalah (tautan dari kotak "Perlu tindakan" & notifikasi). Nilai tak dikenal
+  // diabaikan, aturan yang sama dengan `status`.
+  const rawMasalah = searchParams.get('masalah')
+  const masalah = isOrderIssueKind(rawMasalah) ? rawMasalah : undefined
+
   // Build filter options
   const filterOpts: OrderFilterOptions = {
     dari,
@@ -98,6 +104,7 @@ export async function GET(request: NextRequest) {
     gudang,
     sortBy,
     order,
+    masalah,
   }
 
   // Fetch pesanan dengan filter (atau tanpa filter jika semua null)
