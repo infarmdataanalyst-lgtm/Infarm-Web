@@ -43,9 +43,11 @@ export default function CartCheckoutBar({
 
   return (
     <div ref={barRef} className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-200 bg-white">
-      {/* Pemberitahuan minimum belanja — muncul hanya bila ada item tercentang tapi belum cukup */}
+      {/* Pemberitahuan minimum belanja — muncul hanya bila ada item tercentang tapi belum cukup.
+          10px, menyamai baris yang sama di CheckoutBottomBar (masukan pembeli 23 Sep 2026):
+          kalimatnya identik, jadi ukurannya pun harus identik di kedua halaman. */}
       {belowMinimum && (
-        <p className="mx-auto max-w-6xl px-4 pt-2 text-xs leading-snug text-orange-700">
+        <p className="mx-auto max-w-6xl px-4 pt-2 text-[10px] leading-snug text-orange-700">
           Minimal belanja {formatRupiah(minOrderAmount)}, tambah {formatRupiah(shortfall)} lagi untuk
           checkout.
         </p>
