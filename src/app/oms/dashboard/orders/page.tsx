@@ -93,6 +93,97 @@ function OrdersContent() {
     return () => clearTimeout(t)
   }, [toast])
 
+  // Invoice yang penghapusan penjemputannya sedang dicoba ulang (tombol di kolom No. Resi).
+  const [mengulangHapus, setMengulangHapus] = useState('')
+
+  // Mencoba menghapus lagi penjemputan pesanan ber-CANCEL_FAILED (MGT-66).
+  //
+  // Sampai 22 Sep 2026 satu-satunya jalan keluar dari keadaan ini adalah menjalankan curl DELETE
+  // dari terminal — jadi pesanan yang penjemputannya masih hidup bergantung pada seseorang yang
+  // ingat membaca kolom galat, lalu tahu perintahnya. Endpointnya sudah ada sejak lama; yang belum
+  // ada hanyalah tombolnya, dan pencatatan hasilnya ke database.
+  async function cobaHapusLagi(target: Order) {
+    if (mengulangHapus) return
+    setMengulangHapus(target.orderId)
+    try {
+      const res = await fetch('/api/oms/shipments/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoice: target.orderId }),
+      })
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string
+        hasil?: { ok?: boolean; reason?: string; detail?: string; attempts?: number }
+      }
+
+      if (res.ok && data.hasil?.ok) {
+        // Baris diperbarui di tempat, tanpa memuat ulang seluruh tabel: filter, halaman, dan posisi
+        // gulir admin tetap seperti semula.
+        setOrders((prev) =>
+          prev.map((o) =>
+            o.orderId === target.orderId
+              ? { ...o, shipmentStatus: 'CANCELLED', shipmentError: undefined }
+              : o,
+          ),
+        )
+        setToast(`Penjemputan ${target.orderId} berhasil dihapus di Mengantar.`)
+        return
+      }
+
+      const alasan = data.hasil?.reason ?? data.error ?? 'tidak diketahui'
+      setToast(
+        `Penghapusan ${target.orderId} masih gagal (${alasan}). Hapus manual di dashboard Mengantar, lalu tekan "Sudah dihapus manual".`,
+      )
+    } catch {
+      setToast('Gagal menghubungi server. Coba lagi.')
+    } finally {
+      setMengulangHapus('')
+    }
+  }
+
+  // Menandai bahwa admin sudah menghapus pengirimannya sendiri di dashboard Mengantar.
+  //
+  // KENAPA ini tak bisa disimpulkan sistem: Mengantar menjawab "Orders already deleted" untuk
+  // pengiriman yang sudah terhapus MAUPUN untuk `_id` yang tak pernah ada (terukur 9 Sep 2026), jadi
+  // jawabannya tak membuktikan apa pun. Tanpa tombol ini, penghapusan manual — jalan terakhir yang
+  // disarankan sistem sendiri — tak punya cara membersihkan tandanya, dan baris yang sudah beres
+  // terus menampilkan alarm. Alarm palsu yang dibiarkan membuat alarm berikutnya ikut diabaikan.
+  async function tandaiSudahDihapus(target: Order) {
+    if (mengulangHapus) return
+    const yakin = window.confirm(
+      `Tandai penjemputan ${target.orderId} sudah dihapus?\n\n` +
+        'Tekan OK hanya kalau Anda SUDAH memastikan pengirimannya hilang di dashboard Mengantar. ' +
+        'Sistem tidak memeriksanya — yang dicatat adalah pernyataan Anda.',
+    )
+    if (!yakin) return
+
+    setMengulangHapus(target.orderId)
+    try {
+      const res = await fetch('/api/oms/shipments/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoice: target.orderId, tandaiManual: true }),
+      })
+      const data = (await res.json().catch(() => ({}))) as { error?: string }
+
+      if (!res.ok) {
+        setToast(data.error ?? 'Gagal menandai penjemputan.')
+        return
+      }
+
+      setOrders((prev) =>
+        prev.map((o) =>
+          o.orderId === target.orderId ? { ...o, shipmentStatus: 'CANCELLED' } : o,
+        ),
+      )
+      setToast(`Penjemputan ${target.orderId} ditandai sudah dihapus manual.`)
+    } catch {
+      setToast('Gagal menghubungi server. Coba lagi.')
+    } finally {
+      setMengulangHapus('')
+    }
+  }
+
   // Ganti data order di tabel (in-place) setelah update sukses, lalu tutup modal + toast
   function handleUpdated(updated: Order) {
     setOrders((prev) => prev.map((o) => (o.orderId === updated.orderId ? updated : o)))
@@ -575,6 +666,45 @@ function OrdersContent() {
                           </span>
                         ) : (
                           '—'
+                        )}
+
+                        {/* Penjemputan yang GAGAL DIHAPUS saat pesanan dibatalkan (MGT-66).
+                            Ditampilkan TERPISAH dari cabang di atas, bukan sebagai gantinya:
+                            pesanan seperti ini justru PUNYA nomor resi, jadi di cabang itu ia
+                            tampil sebagai baris yang tampak normal — dan satu-satunya jejak
+                            masalahnya hanya ada di kolom database yang tak pernah dibuka.
+                            Akibatnya nyata: kurir tetap datang menjemput paket yang stoknya sudah
+                            dikembalikan, dan saldo Mengantar tetap terpotong. */}
+                        {order.shipmentStatus === 'CANCEL_FAILED' && (
+                          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                            <span
+                              title={order.shipmentError ?? 'Penghapusan penjemputan gagal'}
+                              className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-amber-50 px-2 py-1 font-sans text-[11px] font-semibold text-amber-800"
+                            >
+                              <AlertTriangle className="h-3 w-3" />
+                              Penjemputan belum dihapus
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => cobaHapusLagi(order)}
+                              disabled={Boolean(mengulangHapus)}
+                              className="whitespace-nowrap rounded-full border border-amber-300 px-2 py-1 font-sans text-[11px] font-semibold text-amber-800 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {mengulangHapus === order.orderId ? 'Menghapus…' : 'Coba hapus lagi'}
+                            </button>
+                            {/* Jalan keluar terakhir. Sengaja lebih pucat daripada tombol di
+                                sebelahnya: mencoba lewat sistem selalu lebih dulu, karena hanya
+                                jalur itu yang benar-benar menghapus di Mengantar. */}
+                            <button
+                              type="button"
+                              onClick={() => tandaiSudahDihapus(order)}
+                              disabled={Boolean(mengulangHapus)}
+                              title="Pakai hanya kalau Anda sudah menghapusnya sendiri di dashboard Mengantar"
+                              className="whitespace-nowrap rounded-full px-2 py-1 font-sans text-[11px] font-medium text-gray-500 underline decoration-dotted underline-offset-2 transition hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              Sudah dihapus manual
+                            </button>
+                          </div>
                         )}
                       </td>
                       {/* Pembayaran — status DAN metodenya.

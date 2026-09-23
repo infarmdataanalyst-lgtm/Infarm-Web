@@ -29,6 +29,9 @@ type ThirdPartyReport = {
   ok?: boolean
   reason?: string
   detail?: string
+  // Hanya diisi laporan penghapusan penjemputan (MGT-66); laporan Xendit tak punya keduanya.
+  httpStatus?: number
+  attempts?: number
 }
 
 // Modal update status untuk satu pesanan.
@@ -135,10 +138,15 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
 
       const pickup = data.shipmentCancellation
       if (pickup?.attempted && pickup.ok === false) {
+        // Jumlah percobaan ikut disebut (MGT-66): "sudah dicoba 3 kali" memberi tahu admin bahwa
+        // menekan tombol coba lagi kemungkinan besar percuma, sedangkan 1 kali berarti kegagalannya
+        // dinilai bukan gangguan sesaat — dua keadaan yang menuntut tindakan berbeda.
+        const percobaan =
+          typeof pickup.attempts === 'number' ? ` Sistem sudah mencobanya ${pickup.attempts} kali.` : ''
         gagal.push({
           judul: 'Penjemputan kurir BELUM dibatalkan',
-          penjelasan: `Buka dashboard Mengantar dan hapus pengiriman${bookedAwb ? ` beresi ${bookedAwb}` : ''} secara manual. Kalau tidak, kurir tetap datang menjemput paket ini sementara stoknya sudah dikembalikan.`,
-          detail: `${pickup.reason ?? 'unknown'}${pickup.detail ? `: ${pickup.detail}` : ''}`,
+          penjelasan: `Kalau dibiarkan, kurir tetap datang menjemput paket ini sementara stoknya sudah dikembalikan.${percobaan} Coba lagi lewat tombol "Coba hapus lagi" di kolom No. Resi pada daftar pesanan; kalau masih gagal, hapus pengiriman${bookedAwb ? ` beresi ${bookedAwb}` : ''} manual di dashboard Mengantar.`,
+          detail: `${pickup.reason ?? 'unknown'}${pickup.httpStatus !== undefined ? ` [HTTP ${pickup.httpStatus}]` : ''}${pickup.detail ? `: ${pickup.detail}` : ''}`,
         })
       }
 

@@ -24,6 +24,12 @@ import type { Order, OrderFulfillmentStatus } from '@/types/order'
 // createAdminClient (Supabase) butuh runtime Node.js, bukan Edge
 export const runtime = 'nodejs'
 
+// Pembatalan pesanan yang kurirnya sudah dibooking memanggil DELETE ke Mengantar, dan sejak MGT-66
+// panggilan itu diulang sampai tiga kali untuk gangguan sesaat. Batas bawaan platform (10 detik)
+// bisa memutus permintaan di tengah percobaan kedua — dan pemutusan itu terjadi SETELAH status,
+// stok, dan mutasi tersimpan, jadi yang hilang justru catatan hasil penghapusannya.
+export const maxDuration = 30
+
 const VALID_STATUSES: OrderFulfillmentStatus[] = [
   'Menunggu Pembayaran',
   'Diproses',
@@ -36,8 +42,18 @@ const VALID_STATUSES: OrderFulfillmentStatus[] = [
 // bukan hanya tersimpan di kolom database yang tak pernah dibuka siapa pun.
 export type ShipmentCancellationReport =
   | { attempted: false; reason: 'NO_SHIPMENT' | 'ALREADY_CANCELLED' }
-  | { attempted: true; ok: true; deletedCount: number }
-  | { attempted: true; ok: false; reason: string; detail: string; needsManual: true }
+  | { attempted: true; ok: true; deletedCount: number; attempts: number }
+  | {
+      attempted: true
+      ok: false
+      reason: string
+      detail: string
+      needsManual: true
+      // Ikut dikirim ke OMS supaya admin bisa membedakan "Mengantar menolak" (tak ada gunanya
+      // diulang) dari "jalurnya sedang bermasalah" (tombol coba lagi masuk akal).
+      httpStatus?: number
+      attempts: number
+    }
 
 // Menghapus penjemputan di Mengantar untuk pesanan yang BARU SAJA dibatalkan.
 //
@@ -76,15 +92,30 @@ async function cancelPickupFor(order: Order): Promise<ShipmentCancellationReport
 
   if (hasil.ok) {
     await setShipmentCancellation(order.orderId, { cancelled: true })
-    return { attempted: true, ok: true, deletedCount: hasil.deletedCount }
+    return { attempted: true, ok: true, deletedCount: hasil.deletedCount, attempts: hasil.attempts }
   }
 
-  const detail = `${hasil.reason}: ${hasil.detail}`
+  // Kode HTTP dan jumlah percobaan IKUT DISIMPAN, bukan hanya alasannya (MGT-66).
+  //
+  // Pada 22 Sep yang tercatat hanya potongan halaman HTML Cloudflare, tanpa satu pun angka: tak bisa
+  // dibedakan apakah Mengantar menolak permintaannya (percuma diulang) atau jalurnya yang sedang
+  // terganggu (justru harus diulang). Menjawab pertanyaan itu butuh membuka log server — yang tak
+  // ada di layar admin. Sekarang jawabannya ikut di kolom yang dibaca admin.
+  const status = hasil.httpStatus !== undefined ? ` [HTTP ${hasil.httpStatus}]` : ''
+  const detail = `${hasil.reason}${status} setelah ${hasil.attempts}x percobaan: ${hasil.detail}`
   await setShipmentCancellation(order.orderId, { cancelled: false, error: detail })
   console.error(
     `[update-status] ${order.orderId} DIBATALKAN tapi penjemputan (resi ${order.trackingNumber ?? '-'}) GAGAL DIHAPUS — ${detail}`,
   )
-  return { attempted: true, ok: false, reason: hasil.reason, detail: hasil.detail, needsManual: true }
+  return {
+    attempted: true,
+    ok: false,
+    reason: hasil.reason,
+    detail: hasil.detail,
+    needsManual: true,
+    ...(hasil.httpStatus !== undefined ? { httpStatus: hasil.httpStatus } : {}),
+    attempts: hasil.attempts,
+  }
 }
 
 // PATCH: perbarui status pesanan setelah verifikasi sesi admin + validasi transisi.
