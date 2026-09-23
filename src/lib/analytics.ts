@@ -82,3 +82,53 @@ export function trackComboAddToCart(comboPrice: number, items: AnalyticsComboIte
     })),
   })
 }
+
+// === Event yang membawa BANYAK produk sekaligus ===
+//
+// view_item & add_to_cart di atas selalu bicara tentang SATU produk, jadi kuantitasnya cukup
+// dioper sebagai argumen terpisah. Event checkout tidak begitu: tiap baris punya kuantitasnya
+// sendiri, jadi kuantitas ikut menempel di tiap item.
+export type AnalyticsLineItem = AnalyticsProduct & { quantity: number }
+
+function toItems(lines: AnalyticsLineItem[]) {
+  return lines.map((line) => toItem(line, line.quantity))
+}
+
+// begin_checkout — halaman checkout terbuka dengan isi keranjang yang sudah lengkap.
+//
+// `value` = SUBTOTAL BARANG, bukan total bayar. Saat event ini dikirim pembeli belum memilih
+// kurir, jadi ongkirnya memang belum ada. Mengirim total yang ongkirnya masih nol membuat nilai
+// begin_checkout tak sebanding dengan purchase, dan selisihnya akan terbaca sebagai "pembeli
+// menambah belanjaan di tengah jalan" — padahal cuma ongkir yang menyusul.
+export function trackBeginCheckout(subtotal: number, lines: AnalyticsLineItem[]): void {
+  sendEvent('begin_checkout', {
+    currency: 'IDR',
+    value: subtotal,
+    items: toItems(lines),
+  })
+}
+
+// add_shipping_info — kurir dan tarifnya sudah terpilih di checkout.
+//
+// `shipping_tier` parameter GA4 standar (nama layanan kurir). `shipping_cost` parameter TAMBAHAN
+// milik kita: ongkir dalam rupiah. Ia ada karena pertanyaan yang ingin dijawab toko ini bukan
+// "kurir mana yang dipilih" melainkan "pada angka berapa pembeli berhenti" — satu rute yang sama
+// bisa berongkos Rp4.080 atau Rp66.720 tergantung gudang pemenuhnya (lihat MGT-64).
+//
+// ⚠️ `shipping_cost` harus didaftarkan sebagai custom metric di GA4 (Admin → Custom definitions,
+// scope Event, unit Standard) sebelum bisa dipakai di laporan. Event-nya tetap terkirim tanpa
+// pendaftaran itu, tapi parameternya tak akan muncul di Explore.
+export function trackAddShippingInfo(
+  subtotal: number,
+  shippingTier: string,
+  shippingCost: number,
+  lines: AnalyticsLineItem[],
+): void {
+  sendEvent('add_shipping_info', {
+    currency: 'IDR',
+    value: subtotal,
+    shipping_tier: shippingTier,
+    shipping_cost: shippingCost,
+    items: toItems(lines),
+  })
+}
