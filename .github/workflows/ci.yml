@@ -9,6 +9,11 @@
 # plus kredensial Supabase, dan sebagian spec-nya menyentuh API pihak ketiga. Menaruhnya di
 # gerbang PR akan membuatnya lambat dan sering merah karena sebab di luar perubahan kodenya.
 # Jalankan lokal dengan `npm test`.
+#
+# Unit test (Vitest) JUSTRU ada di sini, dan perbedaannya itulah alasannya: ia menjalankan satu
+# fungsi terpisah tanpa browser, jaringan, maupun database — 28 test selesai di bawah 2 detik dan
+# tak punya sebab gagal di luar kodenya sendiri. Yang dijaga adalah aturan yang mahal kalau salah:
+# ongkir, promo, berat kirim, dan keputusan boleh/tidak membatalkan.
 
 name: CI
 
@@ -44,6 +49,11 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+      # Ditaruh SEBELUM audit: kegagalan test menunjuk ke perubahan di PR ini, sedangkan advisory
+      # dependency biasanya datang dari luar dan tak ada hubungannya dengan kodenya.
+      - name: Unit test
+        run: npm run test:unit
 
       # audit-level=high: Moderate ke bawah tidak memblokir. Ambangnya sengaja tidak lebih ketat —
       # advisory Low/Moderate pada dependency dev terlalu sering muncul dan akan membuat gerbang
