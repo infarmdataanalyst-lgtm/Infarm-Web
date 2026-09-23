@@ -1,19 +1,18 @@
 // src/app/api/oms/shipments/cancel/route.ts
 // Memicu DELETE /order ke Mengantar untuk SATU pengiriman. Wajib sesi admin (bukan staff).
 //
-// ⚠️ ENDPOINT INI BELUM TERSAMBUNG KE ALUR PEMBATALAN OMS. Ia hanya bisa dipanggil dengan sengaja,
-// satu pesanan sekali panggil. Penyambungannya ke `PATCH /api/orders/update-status` menunggu dua
-// hal terjawab lebih dulu (lihat catatan di lib/mengantar-cancel.ts):
-//   1. sampai kapan Mengantar masih menerima penghapusan
-//   2. apakah saldonya dikembalikan
-// Sampai itu jelas, membuat setiap pembatalan OMS otomatis memanggil DELETE berarti menyalakan
-// perilaku yang belum pernah kita lihat sekali pun, pada jalur yang menyentuh pesanan pembeli.
+// ── Peran endpoint ini: PERBAIKAN, bukan pembatalan ──
+// Pembatalan yang sah selalu dimulai dari `PATCH /api/orders/update-status`, yang sejak 2026-09-09
+// memanggil DELETE sendiri. Yang tersisa di sini adalah pesanan yang sudah dibatalkan tapi
+// penjemputannya gagal terhapus (shipment_status CANCEL_FAILED) — karena itu prasyaratnya status
+// pesanan "Dibatalkan", bukan peran pemanggilnya.
 //
-// ⚠️ ENDPOINT INI TIDAK MENULIS APA PUN KE DATABASE KITA. Ia menghapus di Mengantar lalu melaporkan
-// hasilnya, titik. `order_status`, `shipment_status`, dan stok tidak disentuh. Pemisahan itu
-// disengaja: selama perilaku DELETE belum terbukti, mencatat "penjemputan sudah dibatalkan" ke DB
-// berarti menyimpan keyakinan yang belum tentu benar — dan keyakinan salah di kolom itu jauh lebih
-// sulit ditemukan daripada kolom yang dibiarkan kosong.
+// ── Yang DIUBAH di database kita, dan yang tidak ──
+// Sejak MGT-66, hasil percobaan ulang ini DICATAT: berhasil → shipment_status CANCELLED dan
+// shipment_error dikosongkan; gagal → CANCEL_FAILED dengan pesan terbaru. Tanpa itu, penghapusan
+// yang akhirnya berhasil tak pernah membersihkan tandanya, dan pesanan yang sudah beres tetap
+// terlihat menuntut pekerjaan manual — persis yang terjadi 22 Sep 2026 pada resi JO6451515051.
+// `order_status` dan stok TETAP tidak disentuh: keduanya sudah selesai saat pesanan dibatalkan.
 //
 // ── Tiga mode ──
 //   { "probe": true }                    → DELETE dengan _id KARANGAN. Tak ada yang terhapus;
@@ -28,7 +27,7 @@ import {
   buildCancelPayload,
   cancelShipmentOrder,
 } from '@/lib/mengantar-cancel'
-import { getOrderByOrderId } from '@/lib/mock-db/orders'
+import { getOrderByOrderId, setShipmentCancellation } from '@/lib/mock-db/orders'
 import { normalizeInvoiceId } from '@/lib/invoice-id'
 
 export const runtime = 'nodejs'
@@ -142,16 +141,32 @@ export async function POST(request: Request) {
   console.log(
     `[oms/shipments/cancel] ${invoice} (resi ${order.trackingNumber ?? '-'}) → ${
       hasil.ok ? `TERHAPUS ${hasil.deletedCount}` : `GAGAL ${hasil.reason}`
-    }`,
+    } (${hasil.attempts}x percobaan)`,
+  )
+
+  // Hasilnya dicatat supaya tanda CANCEL_FAILED bisa BERSIH sendiri saat percobaan ulang berhasil.
+  // Sampai di sini `order.status` dipastikan "Dibatalkan" (lihat bolehDihapus di atas), jadi menulis
+  // shipment_status tak bisa menyentuh pesanan yang masih berjalan.
+  const status = !hasil.ok && hasil.httpStatus !== undefined ? ` [HTTP ${hasil.httpStatus}]` : ''
+  const dbDiperbarui = await setShipmentCancellation(
+    invoice,
+    hasil.ok
+      ? { cancelled: true }
+      : {
+          cancelled: false,
+          error: `${hasil.reason}${status} setelah ${hasil.attempts}x percobaan: ${hasil.detail}`,
+        },
   )
 
   return NextResponse.json({
     mode: 'hapus',
-    catatan:
-      'Database kita TIDAK diubah oleh endpoint ini — status pesanan, shipment_status, dan stok tetap seperti semula.',
+    catatan: hasil.ok
+      ? 'Penjemputan terhapus di Mengantar; shipment_status pesanan ini diperbarui menjadi CANCELLED. Status pesanan dan stok tidak disentuh.'
+      : 'Penghapusan GAGAL; shipment_status tetap CANCEL_FAILED dengan pesan terbaru. Status pesanan dan stok tidak disentuh.',
     invoice,
     resi: order.trackingNumber ?? null,
     payloadTerkirim: payload,
+    dbDiperbarui,
     hasil,
   })
 }
