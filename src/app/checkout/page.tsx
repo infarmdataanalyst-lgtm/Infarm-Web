@@ -48,7 +48,7 @@ import {
   trackAddShippingInfo,
   type AnalyticsLineItem,
 } from '@/lib/analytics'
-import { readGaClientId } from '@/lib/ga-client-id'
+import { readGaClientId, readGaSessionId } from '@/lib/ga-client-id'
 import { setGuestPhone, incrementActiveOrderCount } from '@/lib/guest-phone'
 import { setGuestEmail } from '@/lib/guest-email'
 import type { CheckoutItem } from '@/lib/data/dummy-checkout'
@@ -656,6 +656,14 @@ export default function CheckoutPage() {
           // selesai dimuat, dan pembeli yang langsung mendarat di checkout bisa saja menekan bayar
           // sebelum itu. `undefined` (GA diblokir / mode privat) otomatis hilang dari JSON.
           gaClientId: readGaClientId(),
+          // session_id GA4 dari cookie `_ga_<measurement-id>`. Tanpa ini, `purchase` yang dikirim
+          // webhook tak punya sesi untuk ditempeli, dan SELURUH pendapatan mendarat di baris
+          // "Unassigned" laporan Akuisisi traffic — kanal asal pembeli jadi tak bisa diketahui.
+          // Terukur di produksi 24 Sep 2026 sebelum perbaikan ini.
+          //
+          // Dibaca di titik yang sama dengan client_id, dan dengan alasan yang sama: cookie GA4
+          // baru ada setelah skripnya selesai dimuat.
+          gaSessionId: readGaSessionId(),
           // Alamat terstruktur dari form + hasil search Mengantar
           address: {
             shippingAddress: address.street,

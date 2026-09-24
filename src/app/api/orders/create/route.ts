@@ -8,7 +8,7 @@
 import { NextResponse } from 'next/server'
 import { RATE_LIMITS, enforceRateLimit, getClientIp } from '@/lib/rate-limit'
 import { revalidatePath, revalidateTag } from 'next/cache'
-import { saveOrder, OrderStockError, attachGaClientId } from '@/lib/mock-db/orders'
+import { saveOrder, OrderStockError, attachGaIdentifiers } from '@/lib/mock-db/orders'
 import { readProductsByIds } from '@/lib/mock-db/products'
 import { readPromotions } from '@/lib/mock-db/promotions'
 import { getComboById } from '@/lib/mock-db/combos'
@@ -332,18 +332,24 @@ export async function POST(request: Request) {
     warehouseId?: unknown
     weight?: unknown
     gaClientId?: unknown
+    gaSessionId?: unknown
   }
 
-  // client_id GA4 titipan checkout. Dipakai HANYA untuk pelaporan (lihat analytics-server.ts) —
+  // Penanda GA4 titipan checkout. Dipakai HANYA untuk pelaporan (lihat analytics-server.ts) —
   // tak pernah menyentuh harga, stok, atau status pesanan, jadi field publik ini tak menambah
   // permukaan serang yang berarti.
   //
-  // Tetap disaring bentuknya: dua angka dipisah titik, persis seperti yang ditulis GA4. Nilai lain
-  // dibuang diam-diam. Tanpa penyaringan ini kolom `ga_client_id` jadi tempat menitipkan teks
-  // sembarang dari internet, dan isinya kelak ikut terkirim ke Google atas nama toko ini.
+  // Tetap disaring bentuknya, persis seperti yang ditulis GA4: client_id = dua angka dipisah
+  // titik, session_id = satu angka (stempel waktu unix). Nilai lain dibuang diam-diam. Tanpa
+  // penyaringan ini kedua kolom jadi tempat menitipkan teks sembarang dari internet, dan isinya
+  // kelak ikut terkirim ke Google atas nama toko ini.
   const gaClientId =
     typeof extra.gaClientId === 'string' && /^\d+\.\d+$/.test(extra.gaClientId)
       ? extra.gaClientId
+      : undefined
+  const gaSessionId =
+    typeof extra.gaSessionId === 'string' && /^\d{1,20}$/.test(extra.gaSessionId)
+      ? extra.gaSessionId
       : undefined
   // Varian yang dipilih (fresh, bukan cache) — untuk harga & validasi otoritatif produk bervarian.
   const variantIds = body.items
@@ -866,11 +872,12 @@ export async function POST(request: Request) {
       appliedPromos: promoResult.appliedPromos,
     })
 
-    // client_id GA4 dititipkan ke barisnya SETELAH pesanan tersimpan (UPDATE terpisah, bukan
-    // parameter RPC — alasannya di attachGaClientId). Sengaja TIDAK di-await bersama hal lain dan
-    // hasilnya tak diperiksa: pesanannya sudah nyata, dan kegagalan mencatat atribusi tak boleh
-    // mengubah apa pun yang dilihat pembeli.
-    if (gaClientId) await attachGaClientId(saved.orderId, gaClientId)
+    // Penanda GA4 dititipkan ke barisnya SETELAH pesanan tersimpan (UPDATE terpisah, bukan
+    // parameter RPC — alasannya di attachGaIdentifiers). Hasilnya tak diperiksa: pesanannya sudah
+    // nyata, dan kegagalan mencatat atribusi tak boleh mengubah apa pun yang dilihat pembeli.
+    if (gaClientId || gaSessionId) {
+      await attachGaIdentifiers(saved.orderId, { clientId: gaClientId, sessionId: gaSessionId })
+    }
 
     // Stok produk berkurang → segarkan cache storefront agar stok tampil akurat.
     // Revalidasi halaman detail tiap produk yang dipesan + beranda + katalog.

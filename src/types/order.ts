@@ -105,6 +105,11 @@ export type Order = {
   // src/lib/analytics-server.ts. `undefined` bila pembeli memblokir GA atau pesanannya dibuat
   // sebelum kolom ini ada; keduanya normal dan tidak menghalangi apa pun selain atribusi.
   gaClientId?: string
+  // session_id GA4 pembeli, dari cookie `_ga_<measurement-id>` (migration 20260924120000).
+  // Dikirim bersama gaClientId supaya `purchase` menempel ke SESI yang benar — tanpa ini seluruh
+  // pendapatan mendarat di baris "Unassigned" laporan Akuisisi traffic, dan kanal asal pembeli
+  // tak bisa diketahui. `undefined` bila cookie tak terbaca; pesanan tetap sah.
+  gaSessionId?: string
   // Tagihan Xendit yang masih berlaku, disimpan agar tombol "Bayar Sekarang" yang ditekan
   // berulang kali memakai ulang halaman pembayaran yang SAMA alih-alih menerbitkan tagihan baru
   // (API-XND-027). Keduanya `undefined` untuk pesanan yang belum pernah ditagih, dan untuk seluruh
