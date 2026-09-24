@@ -132,6 +132,12 @@ export default async function ProductDetailPage({
       comboShowsOnProduct(c, product.id) &&
       c.items.every((it) => (stockById[it.productId] ?? 0) > 0),
   )
+  // Stok anggota paket saja — dasar batas tombol "+" jumlah paket di BundleOffer. Sengaja bukan
+  // seluruh `stockById`: peta itu memuat semua produk katalog dan ikut terkirim ke browser.
+  const comboStockById: Record<string, number> = {}
+  for (const c of productCombos) {
+    for (const it of c.items) comboStockById[it.productId] = stockById[it.productId] ?? 0
+  }
 
   return (
     // pt-14: ruang untuk AppBar fixed (h-14). pb-24: ruang agar konten tak tertutup bilah aksi
@@ -179,7 +185,7 @@ export default async function ProductDetailPage({
         {/* Bagian bawah: tetap tumpuk vertikal di semua ukuran layar */}
         <div className="flex flex-col gap-2 lg:gap-4">
           {/* 4 — Rekomendasi paket kombo hemat (real dari Supabase, clickable) */}
-          <BundleOffer combos={productCombos} imageById={imageById} />
+          <BundleOffer combos={productCombos} imageById={imageById} stockById={comboStockById} />
 
           {/* 6 — "Produk yang Pernah Anda Lihat" (dari localStorage real-time) */}
           <RecentlyViewed currentProductId={id} allProducts={allProducts} />

@@ -21,7 +21,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
-import { ShoppingBag, Trash2 } from 'lucide-react'
+import { Package, ShoppingBag, Trash2 } from 'lucide-react'
 import {
   subscribeCart,
   getCartSnapshot,
@@ -30,10 +30,12 @@ import {
   updateQuantity,
   removeFromCart,
   removeComboFromCart,
+  setComboCountInCart,
 } from '@/lib/cart-client'
-import { cartLineKey } from '@/lib/cart-lines'
+import { cartLineKey, comboMultiplier } from '@/lib/cart-lines'
 import { formatRupiah } from '@/lib/format'
 import type { StoredProduct } from '@/types/product'
+import type { ProductCombo } from '@/types/combo'
 
 // Maksimal tinggi area daftar sebelum discroll (≈3 baris item — baris kini lebih tinggi karena
 // memuat kontrol jumlah)
@@ -59,6 +61,19 @@ type MiniCartLine = {
   // memblokir pembelian yang sebenarnya sah.
   stock?: number
 }
+
+// Satu paket siap render: kepala paket + anggota-anggotanya (tanpa kontrol per anggota).
+type MiniCartCombo = {
+  comboId: string
+  name: string
+  members: MiniCartLine[]
+  // Jumlah paket; null = isi keranjang tak lagi cocok dengan definisi paket (basi/dinonaktifkan)
+  count: number | null
+  // Batas jumlah paket menurut stok; null = tak diketahui
+  max: number | null
+}
+
+type MiniCartEntry = { kind: 'line'; line: MiniCartLine } | { kind: 'combo'; combo: MiniCartCombo }
 
 // Menampilkan isi keranjang ringkas + kontrol ubah jumlah. `open` mengatur visibilitas + animasi;
 // komponen tetap ter-mount agar transisi muncul & hilang sama-sama halus.
@@ -88,6 +103,24 @@ export default function MiniCart({ open, onClose }: { open: boolean; onClose: ()
     return () => controller.abort()
   }, [open, idsKey])
 
+  // Definisi paket aktif (nama & isi per paket) — dasar judul kartu paket dan jumlah paket (N).
+  // Hanya diambil saat panel terbuka DAN keranjang memuat paket. null = belum/tidak termuat.
+  const [combos, setCombos] = useState<ProductCombo[] | null>(null)
+  const adaPaket = cart.some((c) => c.comboId)
+  useEffect(() => {
+    if (!open || !adaPaket) return
+    const controller = new AbortController()
+    fetch('/api/combos/active', { signal: controller.signal })
+      .then((res) => res.json())
+      .then((data: { combos?: ProductCombo[] }) => {
+        if (Array.isArray(data.combos)) setCombos(data.combos)
+      })
+      .catch(() => {
+        // Abort / gagal → kartu paket tetap tampil dengan nama umum, stepper paket nonaktif.
+      })
+    return () => controller.abort()
+  }, [open, adaPaket])
+
   // Gabungkan item cookie dengan detail produk. Baris = produk + varian + paket (lib/cart-lines.ts).
   const lines: MiniCartLine[] = useMemo(() => {
     return cart.map((item) => {
@@ -113,6 +146,73 @@ export default function MiniCart({ open, onClose }: { open: boolean; onClose: ()
     [cart],
   )
 
+  // === Susun daftar: baris satuan apa adanya, anggota paket dikumpulkan jadi SATU kartu paket ===
+  //
+  // Dulu tiap anggota paket tampil sebagai baris biasa dengan stepper yang dimatikan dan tombol
+  // hapus sendiri — pembeli tak tahu kenapa tombolnya mati, bahwa ketiganya satu paket, atau cara
+  // membeli dua paket. Sekarang sama dengan halaman keranjang: stepper di kepala paket saja.
+  const entries: MiniCartEntry[] = useMemo(() => {
+    const urutan: ({ kind: 'line'; line: MiniCartLine } | { kind: 'combo'; comboId: string })[] = []
+    const anggota = new Map<string, MiniCartLine[]>()
+    for (const line of lines) {
+      if (!line.comboId) {
+        urutan.push({ kind: 'line', line })
+        continue
+      }
+      const ada = anggota.get(line.comboId)
+      if (ada) ada.push(line)
+      else {
+        anggota.set(line.comboId, [line])
+        urutan.push({ kind: 'combo', comboId: line.comboId })
+      }
+    }
+
+    // Stok untuk paket = stok produk − yang dipakai baris SATUAN produk yang sama.
+    const dipakaiSatuan = new Map<string, number>()
+    for (const l of lines) {
+      if (!l.comboId) dipakaiSatuan.set(l.productId, (dipakaiSatuan.get(l.productId) ?? 0) + l.quantity)
+    }
+
+    return urutan.map((e): MiniCartEntry => {
+      if (e.kind === 'line') return e
+      const members = anggota.get(e.comboId) ?? []
+      const def = combos?.find((c) => c.id === e.comboId)
+      const units = def?.items ?? []
+      // Belum termuat → anggap 1 paket (stepper tetap nonaktif sampai definisinya tiba).
+      const count = combos === null ? 1 : def ? comboMultiplier(units, members) : null
+      let max: number | null = null
+      for (const m of members) {
+        const unit = units.find((u) => u.productId === m.productId)?.quantity
+        if (m.stock === undefined || !unit) continue
+        const cukup = Math.floor(Math.max(0, m.stock - (dipakaiSatuan.get(m.productId) ?? 0)) / unit)
+        max = max === null ? cukup : Math.min(max, cukup)
+      }
+      return {
+        kind: 'combo',
+        combo: { comboId: e.comboId, name: def?.name ?? 'Paket', members, count, max },
+      }
+    })
+  }, [lines, combos])
+
+  // Ringkasan kepala panel: "1 paket + 1 produk", bukan jumlah baris mentah (anggota paket bukan
+  // produk yang dipilih satu per satu).
+  const ringkasan = useMemo(() => {
+    const paket = entries.filter((e) => e.kind === 'combo').length
+    const satuan = entries.length - paket
+    const bagian = [
+      ...(paket > 0 ? [`${paket} paket`] : []),
+      ...(satuan > 0 ? [`${satuan} produk`] : []),
+    ]
+    return `${bagian.join(' + ')} di keranjang`
+  }, [entries])
+
+  // Ubah jumlah paket (isi per paket dari definisi DB). Turun dari 1 lewat tombol hapus, bukan "−".
+  function setComboCount(comboId: string, next: number) {
+    const def = combos?.find((c) => c.id === comboId)
+    if (!def || next < 1) return
+    setComboCountInCart(comboId, def.items, next)
+  }
+
   // === Aksi ubah jumlah ===
   //
   // TIDAK ADA proses async di sini: stok & minimum pembelian sudah ikut terbawa saat panel dibuka,
@@ -124,7 +224,6 @@ export default function MiniCart({ open, onClose }: { open: boolean; onClose: ()
   // ada di server saat checkout (RPC create_order_with_items → INSUFFICIENT_STOCK + rollback).
 
   function increment(line: MiniCartLine) {
-    if (line.comboId) return
     if (line.stock !== undefined && line.quantity >= line.stock) return
     updateQuantity(line.productId, line.quantity + 1, line.variantId)
   }
@@ -133,7 +232,6 @@ export default function MiniCart({ open, onClose }: { open: boolean; onClose: ()
   // halaman keranjang penuh: "−" berhenti di batas dan penghapusan lewat tombol tersendiri,
   // supaya aturan tombol yang sama tidak berbeda di dua tempat.
   function decrement(line: MiniCartLine) {
-    if (line.comboId) return
     const next = Math.max(line.minQty, line.quantity - 1)
     if (next !== line.quantity) updateQuantity(line.productId, next, line.variantId)
   }
@@ -158,7 +256,7 @@ export default function MiniCart({ open, onClose }: { open: boolean; onClose: ()
       <div className="border-b border-brand-light/60 bg-brand-surface px-4 py-2.5">
         <p className="text-sm font-bold text-zinc-900">Keranjang</p>
         <p className="text-xs text-zinc-500">
-          {cart.length > 0 ? `${cart.length} produk di keranjang` : 'Belum ada produk'}
+          {cart.length > 0 ? ringkasan : 'Belum ada produk'}
         </p>
       </div>
 
@@ -182,19 +280,24 @@ export default function MiniCart({ open, onClose }: { open: boolean; onClose: ()
         <>
           {/* === Daftar item (scroll bila lebih dari ±3 baris) === */}
           <ul className={`${LIST_MAX_HEIGHT} divide-y divide-zinc-100 overflow-y-auto`}>
-            {lines.map((line) => (
-              <MiniCartRow
-                key={line.key}
-                line={line}
-                onIncrement={() => increment(line)}
-                onDecrement={() => decrement(line)}
-                onRemove={() =>
-                  line.comboId
-                    ? removeComboFromCart(line.comboId)
-                    : removeFromCart(line.productId, line.variantId)
-                }
-              />
-            ))}
+            {entries.map((entry) =>
+              entry.kind === 'combo' ? (
+                <MiniCartComboCard
+                  key={`combo::${entry.combo.comboId}`}
+                  combo={entry.combo}
+                  onSetCount={(n) => setComboCount(entry.combo.comboId, n)}
+                  onRemove={() => removeComboFromCart(entry.combo.comboId)}
+                />
+              ) : (
+                <MiniCartRow
+                  key={entry.line.key}
+                  line={entry.line}
+                  onIncrement={() => increment(entry.line)}
+                  onDecrement={() => decrement(entry.line)}
+                  onRemove={() => removeFromCart(entry.line.productId, entry.line.variantId)}
+                />
+              ),
+            )}
           </ul>
 
           {/* === Subtotal & aksi === */}
@@ -250,9 +353,8 @@ function MiniCartRow({
   onDecrement: () => void
   onRemove: () => void
 }) {
-  const isCombo = Boolean(line.comboId)
-  const atMin = isCombo || line.quantity <= line.minQty
-  const atMax = !isCombo && line.stock !== undefined && line.quantity >= line.stock
+  const atMin = line.quantity <= line.minQty
+  const atMax = line.stock !== undefined && line.quantity >= line.stock
 
   return (
     <li className="flex items-center gap-2.5 px-3 py-3">
@@ -278,15 +380,9 @@ function MiniCartRow({
         <button
           type="button"
           onClick={onIncrement}
-          disabled={isCombo || atMax}
+          disabled={atMax}
           aria-label={`Tambah jumlah ${line.name}`}
-          title={
-            isCombo
-              ? 'Jumlah paket diatur di halaman keranjang'
-              : atMax
-                ? `Stok tersisa ${line.stock}`
-                : undefined
-          }
+          title={atMax ? `Stok tersisa ${line.stock}` : undefined}
           className="px-2 py-0.5 text-base leading-none text-zinc-600 transition active:scale-95 disabled:opacity-40"
         >
           +
@@ -313,7 +409,6 @@ function MiniCartRow({
         {line.variantName && (
           <span className="block truncate text-xs text-zinc-400">{line.variantName}</span>
         )}
-        {isCombo && <span className="block text-[11px] font-semibold text-brand-primary">Paket</span>}
         <span className="mt-0.5 flex items-baseline gap-1.5 text-xs">
           <span className="text-zinc-500">
             {line.quantity} × {formatRupiah(line.price)}
@@ -336,12 +431,114 @@ function MiniCartRow({
       <button
         type="button"
         onClick={onRemove}
-        aria-label={isCombo ? `Hapus paket berisi ${line.name}` : `Hapus ${line.name}`}
-        title={isCombo ? 'Menghapus seluruh paket' : undefined}
+        aria-label={`Hapus ${line.name}`}
         className="shrink-0 rounded p-1 text-zinc-400 transition hover:bg-red-50 hover:text-red-500 active:scale-95"
       >
         <Trash2 className="h-4 w-4" />
       </button>
+    </li>
+  )
+}
+
+// Satu paket di mini cart: kepala [ikon · nama · N paket · total] [− N +] [hapus], lalu anggota
+// sebagai daftar ringkas (foto, nama, ×jumlah) TANPA kontrol — jumlahnya ikut jumlah paket.
+// "−" berhenti di 1 paket; mengeluarkan paket lewat tombol hapus, sama dengan baris satuan.
+function MiniCartComboCard({
+  combo,
+  onSetCount,
+  onRemove,
+}: {
+  combo: MiniCartCombo
+  onSetCount: (next: number) => void
+  onRemove: () => void
+}) {
+  const { name, members, count, max } = combo
+  const total = members.reduce((sum, m) => sum + m.price * m.quantity, 0)
+  const rusak = count === null
+  const bisaTambah = !rusak && (max === null || count < max)
+
+  return (
+    <li className="bg-brand-surface/70 px-3 py-3">
+      {/* Kepala paket */}
+      <div className="flex items-center gap-2.5">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-brand-primary">
+          <Package className="h-4 w-4" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-bold text-zinc-800" title={name}>
+            {name}
+          </span>
+          <span className="block text-xs text-zinc-500">
+            {count !== null ? `${count} paket · ` : ''}
+            <span key={total} className="animate-value-flash px-0.5 font-bold text-brand-primary">
+              {formatRupiah(total)}
+            </span>
+          </span>
+        </span>
+
+        <div className={`flex shrink-0 items-center rounded-lg border border-zinc-300 bg-white ${rusak ? 'opacity-40' : ''}`}>
+          <button
+            type="button"
+            onClick={() => count !== null && onSetCount(count - 1)}
+            disabled={rusak || count <= 1}
+            aria-label={`Kurangi jumlah ${name}`}
+            className="px-2 py-0.5 text-base leading-none text-zinc-600 transition active:scale-95 disabled:opacity-40"
+          >
+            −
+          </button>
+          <span
+            key={count ?? 'x'}
+            aria-live="polite"
+            className="animate-value-flash min-w-[2rem] border-x border-zinc-300 py-0.5 text-center text-sm font-semibold text-zinc-800"
+          >
+            {count ?? '–'}
+          </span>
+          <button
+            type="button"
+            onClick={() => count !== null && onSetCount(count + 1)}
+            disabled={!bisaTambah}
+            aria-label={`Tambah jumlah ${name}`}
+            title={!rusak && max !== null && count !== null && count >= max ? `Stok cukup untuk ${max} paket` : undefined}
+            className="px-2 py-0.5 text-base leading-none text-zinc-600 transition active:scale-95 disabled:opacity-40"
+          >
+            +
+          </button>
+        </div>
+
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label={`Hapus ${name}`}
+          title="Keluarkan seluruh paket"
+          className="shrink-0 rounded p-1 text-zinc-400 transition hover:bg-red-50 hover:text-red-500 active:scale-95"
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+      </div>
+
+      {rusak && (
+        <p className="mt-1.5 text-[11px] text-red-600">
+          Isi paket sudah berubah. Hapus lalu tambahkan ulang dari halaman produk.
+        </p>
+      )}
+      {!rusak && max !== null && count !== null && count >= max && (
+        <p className="mt-1.5 text-[11px] text-orange-600">Stok cukup untuk {max} paket</p>
+      )}
+
+      {/* Anggota paket — ringkas, tanpa kontrol */}
+      <ul className="mt-2 space-y-1.5 rounded-lg bg-white p-2">
+        {members.map((m) => (
+          <li key={m.key} className="flex items-center gap-2">
+            <span className="relative h-8 w-8 shrink-0 overflow-hidden rounded bg-brand-surface">
+              <Image src={m.imageUrl} alt={m.name} fill unoptimized sizes="32px" className="object-cover" />
+            </span>
+            <span className="min-w-0 flex-1 truncate text-xs text-zinc-700" title={m.name}>
+              {m.name}
+            </span>
+            <span className="shrink-0 text-xs font-semibold text-zinc-500">×{m.quantity}</span>
+          </li>
+        ))}
+      </ul>
     </li>
   )
 }
