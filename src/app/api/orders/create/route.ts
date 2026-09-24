@@ -8,7 +8,12 @@
 import { NextResponse } from 'next/server'
 import { RATE_LIMITS, enforceRateLimit, getClientIp } from '@/lib/rate-limit'
 import { revalidatePath, revalidateTag } from 'next/cache'
-import { saveOrder, OrderStockError, attachGaIdentifiers } from '@/lib/mock-db/orders'
+import {
+  saveOrder,
+  OrderStockError,
+  attachGaIdentifiers,
+  attachDeliveryEstimate,
+} from '@/lib/mock-db/orders'
 import { readProductsByIds } from '@/lib/mock-db/products'
 import { readPromotions } from '@/lib/mock-db/promotions'
 import { getComboById } from '@/lib/mock-db/combos'
@@ -877,6 +882,17 @@ export async function POST(request: Request) {
     // nyata, dan kegagalan mencatat atribusi tak boleh mengubah apa pun yang dilihat pembeli.
     if (gaClientId || gaSessionId) {
       await attachGaIdentifiers(saved.orderId, { clientId: gaClientId, sessionId: gaSessionId })
+    }
+
+    // Estimasi lama pengiriman untuk halaman sukses — diambil dari daftar tarif yang SERVER
+    // sendiri terima dari Mengantar (`quoted`), untuk gudang yang BENAR-BENAR memenuhi pesanan
+    // dan tarif yang BENAR-BENAR dibayar. Bukan dari kiriman browser, dan bukan dari pilihan awal
+    // pembeli: kalau gudangnya berganti (MGT-67), estimasinya harus ikut rute yang baru.
+    const tarifTerpakai = quoted?.options.find(
+      (o) => o.warehouseId === warehouse?.id && Math.round(o.price) === shippingCost,
+    )
+    if (tarifTerpakai?.estimatedDate) {
+      await attachDeliveryEstimate(saved.orderId, tarifTerpakai.estimatedDate)
     }
 
     // Stok produk berkurang → segarkan cache storefront agar stok tampil akurat.

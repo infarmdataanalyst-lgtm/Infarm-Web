@@ -16,6 +16,7 @@ import { X, Leaf, Clock, MapPin, Star, Ban, ShoppingBag } from 'lucide-react'
 import { getOrderByOrderId } from '@/lib/mock-db/orders'
 import { generateCancelToken } from '@/lib/order-token'
 import { formatRupiah } from '@/lib/format'
+import { formatArrivalRange, parseEstimateDays } from '@/lib/delivery-estimate'
 import type { Order } from '@/types/order'
 import PayNowButton from '@/components/payment/PayNowButton'
 
@@ -44,14 +45,20 @@ function formatShortDate(iso: string): string {
   }).format(d)
 }
 
-// Rentang estimasi tiba: tanggal order +2 s/d +4 hari → "24 Okt – 26 Okt"
-function estimasiTiba(iso: string): string {
-  const base = new Date(iso)
-  if (Number.isNaN(base.getTime())) return '2–4 hari kerja'
-  const fmt = new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short' })
-  const from = new Date(base.getTime() + 2 * 86_400_000)
-  const to = new Date(base.getTime() + 4 * 86_400_000)
-  return `${fmt.format(from)} – ${fmt.format(to)}`
+// Rentang estimasi tiba, mis. "26 Sep – 28 Sep".
+//
+// Sampai 24 Sep 2026 ini dikarang: tanggal pesanan +2 s/d +4 hari untuk SEMUA tujuan. Sekarang
+// lamanya diambil dari estimasi Mengantar yang tersimpan di pesanan (orders.estimasi_kirim) —
+// janji yang sama dengan yang pembeli lihat di baris kurir saat checkout.
+//
+// Dihitung sejak resi terbit bila ada (kurir baru bergerak setelah pembayaran masuk & booking),
+// jatuh ke tanggal pesanan untuk pesanan tanpa waktu booking. Pesanan lama tanpa estimasi →
+// perkiraan 2–4 hari seperti sebelumnya.
+function estimasiTiba(order: Pick<Order, 'date' | 'shipmentBookedAt' | 'deliveryEstimate'>): string {
+  return formatArrivalRange(
+    order.shipmentBookedAt ?? order.date,
+    parseEstimateDays(order.deliveryEstimate),
+  )
 }
 
 export default async function CheckoutSuccessPage({
@@ -168,7 +175,7 @@ export default async function CheckoutSuccessPage({
               <div className="mt-6 rounded-2xl bg-brand-primary p-5 text-white">
                 <div className="flex items-center gap-2">
                   <Clock className="h-4 w-4" />
-                  <p className="text-sm font-semibold">Estimasi Tiba: {estimasiTiba(data.date)}</p>
+                  <p className="text-sm font-semibold">Estimasi Tiba: {estimasiTiba(data)}</p>
                 </div>
                 <p className="mt-1 text-sm text-white/80">
                   Pesananmu akan segera dikirimkan oleh kurir kami.
