@@ -371,7 +371,7 @@ function stockKey(target: StockTarget): string {
 
 // Menjumlahkan kuantitas item yang menunjuk produk/varian sama (mis. produk muncul dua kali
 // karena satu baris biasa + satu baris hadiah promo) agar pengecekan stok tidak kelewat longgar.
-function mergeRequirements(items: StockRequirement[]): StockRequirement[] {
+export function mergeRequirements(items: StockRequirement[]): StockRequirement[] {
   const merged = new Map<string, StockRequirement>()
   for (const item of items) {
     if (!item.productId || !item.quantity || item.quantity <= 0) continue

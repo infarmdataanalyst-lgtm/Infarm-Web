@@ -11,12 +11,14 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import type { CartLineItem } from '@/types/cart'
 import type { Product, StoredProduct } from '@/types/product'
 import type { Promotion } from '@/types/promotion'
+import type { ProductCombo } from '@/types/combo'
 import { dummyProducts } from '@/lib/data/dummy-products'
 import { getRecentlyViewedIds, getAddedToCartIds } from '@/lib/recently-viewed'
 import {
   updateQuantity,
   removeFromCart,
   removeComboFromCart,
+  setComboCountInCart,
   subscribeCart,
   getCartSnapshot,
   getServerCartSnapshot,
@@ -24,6 +26,7 @@ import {
   setCheckoutPromo,
 } from '@/lib/cart-client'
 import { computeOrderPromos, computePromoProgress, computePromoRewards } from '@/lib/promo-cart'
+import { cartLineKey, comboMultiplier } from '@/lib/cart-lines'
 import CartItemsSkeleton from '@/components/cart/CartItemsSkeleton'
 
 // Store kosong untuk useSyncExternalStore — dipakai hanya sebagai penanda hidrasi (lihat
@@ -32,15 +35,27 @@ const subscribeNothing = () => () => {}
 import CartHeader from '@/components/cart/CartHeader'
 import CartPromoList from '@/components/cart/CartPromoList'
 import CartItemRow from '@/components/cart/CartItemRow'
+import CartComboGroup, { type CartComboGroupView } from '@/components/cart/CartComboGroup'
 import ProtectionInfo from '@/components/cart/ProtectionInfo'
 import CartRecentlyViewed from '@/components/cart/CartRecentlyViewed'
 import CartFreeItems, { type FreeItemView } from '@/components/cart/CartFreeItems'
 import CartCheckoutBar from '@/components/cart/CartCheckoutBar'
 
-// Kunci unik satu baris keranjang (produk + varian). Tanpa varian → productId saja.
-function lineKey(productId: string, variantId?: string): string {
-  return variantId ? `${productId}::${variantId}` : productId
+// Kunci unik satu baris keranjang: produk + varian + PAKET. Produk A di dalam paket dan A yang
+// dibeli satuan adalah dua baris berbeda (lihat lib/cart-lines.ts).
+function lineKey(item: { productId: string; variantId?: string; comboId?: string }): string {
+  return cartLineKey(item)
 }
+
+// Kunci stok: produk + varian, TANPA paket — A paket dan A satuan mengambil dari stok yang sama.
+function stockKey(item: { productId: string; variantId?: string }): string {
+  return `${item.productId}::${item.variantId ?? ''}`
+}
+
+// Satu entri daftar keranjang: baris satuan, atau satu paket utuh beserta anggotanya.
+type CartEntry =
+  | { kind: 'line'; item: CartLineItem }
+  | { kind: 'combo'; group: CartComboGroupView }
 
 export default function CartPage() {
   const router = useRouter()
@@ -183,9 +198,31 @@ export default function CartPage() {
     }
   }, [])
 
+  // === Definisi paket aktif (nama & isi per paket) ===
+  //
+  // Dipakai untuk judul paket, menghitung jumlah paket (N), dan MENANDAI paket yang isinya sudah
+  // tak cocok dengan database sebelum pembeli menekan bayar — dulu itu baru ketahuan saat server
+  // menolak di checkout. `null` = belum/tidak termuat: keranjang lalu tak menilai sah-tidaknya
+  // paket (server tetap menegakkannya) supaya gangguan jaringan tak mengunci checkout.
+  const [combos, setCombos] = useState<ProductCombo[] | null>(null)
+  const adaPaket = cookieCart.some((c) => c.comboId)
+  useEffect(() => {
+    if (!adaPaket) return
+    let active = true
+    fetch('/api/combos/active')
+      .then((res) => res.json())
+      .then((data: { combos?: ProductCombo[] }) => {
+        if (active && Array.isArray(data.combos)) setCombos(data.combos)
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [adaPaket])
+
   // === Gabungkan item cookie dengan detail produk (nama, foto, harga coret, badge) ===
-  // Identitas baris = productId + variantId (produk sama beda varian = baris terpisah).
-  const items: CartLineItem[] = useMemo(() => {
+  // Identitas baris = productId + variantId + comboId (lihat lineKey).
+  const lineItems: CartLineItem[] = useMemo(() => {
     return cookieCart.flatMap((ci) => {
       const product =
         omsProducts.find((p) => p.id === ci.productId) ??
@@ -200,7 +237,7 @@ export default function CartPage() {
           // Produk bervarian: harga = harga varian (ci.price), tanpa coret. Non-varian: pakai harga produk.
           originalPrice: ci.variantId ? ci.price : product.originalPrice,
           quantity: ci.quantity,
-          selected: !excluded.has(lineKey(ci.productId, ci.variantId)),
+          selected: !excluded.has(lineKey(ci)),
           badge: product.badge,
           variantId: ci.variantId,
           variantName: ci.variantName,
@@ -214,18 +251,91 @@ export default function CartPage() {
           ...('stock' in product && typeof product.stock === 'number'
             ? { stock: product.stock }
             : {}),
-          // Penanda paket: mengunci kuantitas & membuat penghapusan berlaku untuk seluruh paket.
+          // Penanda paket: baris ini tampil di dalam grup paketnya, tanpa kontrol sendiri.
           ...(ci.comboId ? { comboId: ci.comboId } : {}),
         },
       ]
     })
   }, [cookieCart, excluded, omsProducts])
 
+  // Stok yang tersisa UNTUK SATU BARIS = stok produk − jumlah di baris lain (yang tercentang) dari
+  // produk/varian yang sama. Produk A kini bisa muncul dua kali (di paket & satuan); tanpa ini
+  // masing-masing baris membandingkan dirinya dengan stok penuh dan keduanya tampak cukup.
+  const items: CartLineItem[] = useMemo(() => {
+    const dipakai = new Map<string, number>()
+    for (const i of lineItems) {
+      if (i.selected) dipakai.set(stockKey(i), (dipakai.get(stockKey(i)) ?? 0) + i.quantity)
+    }
+    return lineItems.map((i) => {
+      if (typeof i.stock !== 'number') return i
+      const lain = (dipakai.get(stockKey(i)) ?? 0) - (i.selected ? i.quantity : 0)
+      return { ...i, stock: Math.max(0, i.stock - lain) }
+    })
+  }, [lineItems])
+
+  // === Susun daftar: baris satuan apa adanya, anggota paket dikumpulkan jadi satu entri paket ===
+  // Paket muncul di posisi anggota pertamanya, jadi urutan keranjang tetap seperti yang dimasukkan.
+  const entries: CartEntry[] = useMemo(() => {
+    const urutan: ({ kind: 'line'; item: CartLineItem } | { kind: 'combo'; comboId: string })[] = []
+    const anggotaPaket = new Map<string, CartLineItem[]>()
+    for (const item of items) {
+      if (!item.comboId) {
+        urutan.push({ kind: 'line', item })
+        continue
+      }
+      const members = anggotaPaket.get(item.comboId)
+      if (members) {
+        members.push(item)
+      } else {
+        anggotaPaket.set(item.comboId, [item])
+        urutan.push({ kind: 'combo', comboId: item.comboId })
+      }
+    }
+
+    return urutan.map((entry): CartEntry => {
+      if (entry.kind === 'line') return entry
+      const { comboId } = entry
+      const members = anggotaPaket.get(comboId) ?? []
+      const def = combos?.find((c) => c.id === comboId)
+      const units = def?.items ?? []
+      // Belum termuat → jumlah paket tak bisa dinilai; tampilkan jumlah anggota pertama apa adanya
+      // (paket lama selalu 1). Termuat tapi tak ketemu = paket dinonaktifkan/dihapus → rusak.
+      const count =
+        combos === null ? 1 : def ? comboMultiplier(units, members) : null
+      // Batas atas N dari stok: per anggota, stok yang tersisa untuk barisnya ÷ isi per paket.
+      let maxCount: number | null = null
+      for (const m of members) {
+        const unit = units.find((u) => u.productId === m.productId)?.quantity
+        if (typeof m.stock !== 'number' || !unit) continue
+        const cukup = Math.floor(m.stock / unit)
+        maxCount = maxCount === null ? cukup : Math.min(maxCount, cukup)
+      }
+      return {
+        kind: 'combo',
+        group: {
+          comboId,
+          name: def?.name ?? 'Paket',
+          members,
+          selected: members.every((m) => m.selected),
+          count,
+          maxCount,
+        },
+      }
+    })
+  }, [items, combos])
+
   // Ada baris yang stoknya tak mencukupi → checkout dikunci sampai pembeli membetulkannya.
   // Sebelumnya kekurangan stok hanya ketahuan di server, SESUDAH pembeli menekan bayar.
   const adaStokKurang = useMemo(
     () => items.some((i) => i.selected && typeof i.stock === 'number' && i.stock < i.quantity),
     [items],
+  )
+
+  // Paket tercentang yang isinya tak lagi cocok dengan database → checkout dikunci; server pasti
+  // menolaknya, dan pesan di kepala paket memberi tahu cara membetulkannya.
+  const adaPaketRusak = useMemo(
+    () => entries.some((e) => e.kind === 'combo' && e.group.selected && e.group.count === null),
+    [entries],
   )
 
   // === Keadaan daftar keranjang: loading / empty / ready ===
@@ -317,7 +427,7 @@ export default function CartPage() {
   // === Aksi === (identitas baris = productId + variantId)
 
   function toggleSelect(productId: string, variantId?: string) {
-    const key = lineKey(productId, variantId)
+    const key = lineKey({ productId, variantId })
     setExcluded((prev) => {
       const next = new Set(prev)
       if (next.has(key)) next.delete(key)
@@ -327,22 +437,61 @@ export default function CartPage() {
   }
 
   function toggleSelectAll() {
-    setExcluded(allSelected ? new Set(items.map((i) => lineKey(i.productId, i.variantId))) : new Set())
+    setExcluded(allSelected ? new Set(items.map((i) => lineKey(i))) : new Set())
+  }
+
+  // Centang paket = centang SEMUA anggotanya sekaligus; paket separuh tercentang tak bisa dibayar.
+  function toggleSelectCombo(comboId: string) {
+    const keys = items.filter((i) => i.comboId === comboId).map((i) => lineKey(i))
+    setExcluded((prev) => {
+      const next = new Set(prev)
+      const semuaTercentang = keys.every((k) => !next.has(k))
+      for (const k of keys) {
+        if (semuaTercentang) next.add(k)
+        else next.delete(k)
+      }
+      return next
+    })
+  }
+
+  // Ubah jumlah paket. Isi per paket diambil dari definisi paket di database; tanpa itu (belum
+  // termuat) jumlahnya tak diubah — menebak isi paket bisa menghasilkan paket yang ditolak server.
+  function setComboCount(comboId: string, count: number) {
+    const def = combos?.find((c) => c.id === comboId)
+    if (!def || count < 1) return
+    setComboCountInCart(comboId, def.items, count)
+  }
+
+  // Keluarkan seluruh paket (anggotanya tak bisa dihapus satu per satu).
+  function removeCombo(comboId: string) {
+    const anggota = cookieCart.filter((i) => i.comboId === comboId).length
+    const setuju =
+      anggota <= 1 || window.confirm(`Keluarkan paket ini (${anggota} produk) dari keranjang?`)
+    if (setuju) removeComboFromCart(comboId)
+  }
+
+  // Aksi baris di bawah ini hanya untuk baris SATUAN — anggota paket diatur lewat aksi paket di atas.
+  function looseLine(productId: string, variantId?: string) {
+    return cookieCart.find(
+      (i) => !i.comboId && i.productId === productId && (i.variantId || undefined) === variantId,
+    )
   }
 
   function increment(productId: string, variantId?: string) {
-    const item = cookieCart.find((i) => i.productId === productId && i.variantId === variantId)
+    const item = looseLine(productId, variantId)
     if (item) updateQuantity(productId, item.quantity + 1, variantId)
   }
 
   // Minimum pembelian baris tertentu (dari data produk hasil resolve). Default 1 = bebas.
   function minQtyOf(productId: string, variantId?: string): number {
-    const line = items.find((i) => i.productId === productId && i.variantId === variantId)
+    const line = items.find(
+      (i) => !i.comboId && i.productId === productId && (i.variantId || undefined) === variantId,
+    )
     return line && line.minOrderQty > 1 ? line.minOrderQty : 1
   }
 
   function decrement(productId: string, variantId?: string) {
-    const item = cookieCart.find((i) => i.productId === productId && i.variantId === variantId)
+    const item = looseLine(productId, variantId)
     if (!item) return
     // Jangan turun di bawah minimum pembelian produk (tombol '−' juga sudah disabled di UI;
     // guard ini menutup jalur lain seperti klik cepat sebelum render ulang).
@@ -355,27 +504,10 @@ export default function CartPage() {
     updateQuantity(productId, Math.max(minQtyOf(productId, variantId), quantity), variantId)
   }
 
-  // Menghapus satu baris. Baris yang merupakan bagian PAKET mengeluarkan SELURUH paket.
-  //
-  // Kenapa seluruhnya, bukan barisnya saja: sisa anggota paket akan tetap membawa comboId dan tetap
-  // menampilkan harga alokasi paket (mis. Rp11.392), padahal isi keranjang tak lagi cocok dengan
-  // paket di database. Server menolak pencocokan itu, dan sebelum perbaikan ini ia diam-diam
-  // menagih harga satuan yang lebih mahal (Rp15.000) — pembeli membayar lebih tanpa diberi tahu.
-  // Paket memang satu kesatuan; memperlakukannya begitu di keranjang membuat keadaan yang tampil
-  // selalu sama dengan keadaan yang bisa diverifikasi server.
+  // Menghapus satu baris SATUAN. Paket dikeluarkan utuh lewat removeCombo: sisa anggota paket
+  // yang tertinggal akan tetap menampilkan harga paket padahal isinya tak lagi cocok dengan
+  // database, dan server menolaknya.
   function remove(productId: string, variantId?: string) {
-    const line = cookieCart.find((i) => i.productId === productId && i.variantId === variantId)
-    if (line?.comboId) {
-      const anggota = cookieCart.filter((i) => i.comboId === line.comboId).length
-      const setuju =
-        anggota <= 1 ||
-        window.confirm(
-          `Produk ini bagian dari sebuah paket. Menghapusnya akan mengeluarkan seluruh ${anggota} produk paket tersebut dari keranjang. Lanjutkan?`,
-        )
-      if (!setuju) return
-      removeComboFromCart(line.comboId)
-      return
-    }
     removeFromCart(productId, variantId)
   }
 
@@ -388,27 +520,22 @@ export default function CartPage() {
     // akhirnya /api/orders/create tak pernah tahu sebuah item bagian dari paket — server lalu
     // menagih harga satuan padahal layar menampilkan harga paket. Nilainya bukan harga dan tidak
     // dipercaya sebagai harga; server memakainya hanya untuk mencari paketnya di DB.
-    const comboIdByProduct = new Map(
-      cookieCart.filter((c) => c.comboId).map((c) => [c.productId, c.comboId as string]),
-    )
+    //
+    // Diambil PER BARIS, bukan lewat peta productId → comboId seperti dulu: dengan peta itu A
+    // satuan yang berdampingan dengan A di dalam paket ikut terkirim sebagai anggota paket.
     const chosen = selectedItems.map((i) => ({
       productId: i.productId,
       quantity: i.quantity,
       price: i.price,
       variantId: i.variantId,
       variantName: i.variantName,
-      comboId: comboIdByProduct.get(i.productId),
+      comboId: i.comboId,
     }))
     setCheckoutItems(chosen)
 
     // Snapshot promo/combo agar bisa diteruskan ke order nanti
-    const selectedIdSet = new Set(selectedItems.map((i) => i.productId))
     const comboIds = Array.from(
-      new Set(
-        cookieCart
-          .filter((c) => selectedIdSet.has(c.productId) && c.comboId)
-          .map((c) => c.comboId as string),
-      ),
+      new Set(selectedItems.flatMap((i) => (i.comboId ? [i.comboId] : []))),
     )
     setCheckoutPromo({
       promoIds: promoRewards.reachedPromoIds,
@@ -462,17 +589,27 @@ export default function CartPage() {
               <CartItemsSkeleton rows={cookieCart.length || 1} />
             ) : cartView === 'ready' ? (
               <div className="mt-3 divide-y divide-zinc-100 lg:mt-0 lg:overflow-hidden lg:rounded-2xl lg:border lg:border-zinc-100">
-                {items.map((item) => (
-                  <CartItemRow
-                    key={lineKey(item.productId, item.variantId)}
-                    item={item}
-                    onToggleSelect={toggleSelect}
-                    onIncrement={increment}
-                    onDecrement={decrement}
-                    onSetQuantity={setQuantity}
-                    onRemove={remove}
-                  />
-                ))}
+                {entries.map((entry) =>
+                  entry.kind === 'combo' ? (
+                    <CartComboGroup
+                      key={`combo::${entry.group.comboId}`}
+                      group={entry.group}
+                      onToggleSelect={toggleSelectCombo}
+                      onSetCount={setComboCount}
+                      onRemove={removeCombo}
+                    />
+                  ) : (
+                    <CartItemRow
+                      key={lineKey(entry.item)}
+                      item={entry.item}
+                      onToggleSelect={toggleSelect}
+                      onIncrement={increment}
+                      onDecrement={decrement}
+                      onSetQuantity={setQuantity}
+                      onRemove={remove}
+                    />
+                  ),
+                )}
               </div>
             ) : (
               <p className="px-4 py-16 text-center text-sm text-zinc-400">Keranjang kamu masih kosong.</p>
@@ -501,7 +638,7 @@ export default function CartPage() {
         discount={orderPromos.discount}
         freeShipping={orderPromos.appliedPromos.some((p) => p.type === 'free_shipping')}
         minOrderAmount={minOrderAmount}
-        stockBlocked={adaStokKurang}
+        stockBlocked={adaStokKurang || adaPaketRusak}
         onToggleSelectAll={toggleSelectAll}
         onCheckout={handleCheckout}
       />

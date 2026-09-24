@@ -18,12 +18,14 @@ import { readProductsByIds } from '@/lib/mock-db/products'
 import { readPromotions } from '@/lib/mock-db/promotions'
 import { getComboById } from '@/lib/mock-db/combos'
 import { allocateComboPrices, computeOrderPromos } from '@/lib/promo-cart'
+import { comboMultiplier } from '@/lib/cart-lines'
 import { XENDIT_MIN_AMOUNT } from '@/lib/payment-limits'
 import { getVariantsByIds } from '@/lib/mock-db/variants'
 import { getMinOrderAmount, getMaxDiscountPercent } from '@/lib/mock-db/settings'
 import {
   getEffectiveStock,
   getQuoteOriginId,
+  mergeRequirements,
   resolveWarehouseForOrder,
   type StockRequirement,
 } from '@/lib/warehouse'
@@ -142,6 +144,12 @@ async function pickVerifiedWarehouse(
   const warehouse = await getWarehouseById(warehouseId)
   if (!warehouse || !warehouse.isActive) return null
 
+  // Kebutuhan produk/varian yang sama DIJUMLAHKAN dulu. Satu produk kini sah muncul di beberapa
+  // baris (A di dalam paket + A satuan); diperiksa per baris, stok 2 tampak cukup untuk dua baris
+  // yang masing-masing butuh 2 padahal totalnya 4. Perbandingan ongkir (warehouse-shipping) sudah
+  // lama menjumlahkan — pemeriksaan ulang di sini ikut aturan yang sama.
+  const needs = mergeRequirements(requirements)
+
   // Stok tiap kebutuhan diperiksa BERSAMAAN, bukan bergiliran. Dulu satu putaran `for await`:
   // keranjang 5 item = 5 perjalanan berurutan ke database, dan fungsi ini sendiri bisa dipanggil
   // beberapa kali (gudang yang diminta, lalu kandidat lain). Semuanya pembacaan murni tanpa efek
@@ -151,11 +159,11 @@ async function pickVerifiedWarehouse(
   // Menjalankan sisa pembacaan yang hasilnya tak terpakai jauh lebih murah daripada menunggu
   // giliran satu per satu.
   const stocks = await Promise.all(
-    requirements.map((need) =>
+    needs.map((need) =>
       getEffectiveStock(need.productId, { variantId: need.variantId, warehouseId }),
     ),
   )
-  for (const [index, need] of requirements.entries()) {
+  for (const [index, need] of needs.entries()) {
     // null = produk belum punya baris stok per gudang (mis. data belum di-backfill). Jangan tolak
     // gudangnya karena itu — RPC checkout masih punya jalur fallback ke kolom stok lama.
     const stock = stocks[index]
@@ -435,20 +443,19 @@ export async function POST(request: Request) {
 
     const lines = body.items.filter((it) => comboIdOf(it) === comboId)
 
-    // Combo tak mengenal varian; item yang mengaku bagian paket TAPI membawa varian tak bisa
-    // diverifikasi bentuknya sama sekali.
-    if (lines.some((l) => l.variantId)) return comboRejected(combo.name)
-
-    // Kumpulan item harus cocok PERSIS dengan anggota paket: produk yang sama, kuantitas yang sama.
-    const wanted = new Map(combo.items.map((ci) => [ci.productId, ci.quantity]))
-    if (lines.length !== wanted.size) return comboRejected(combo.name)
-    if (!lines.every((l) => wanted.get(l.productId) === l.quantity)) {
-      return comboRejected(combo.name)
-    }
+    // Isi paket harus berupa KELIPATAN SERAGAM dari definisinya di DB: paket 1-1-1 boleh 3-3-3
+    // (tiga paket) tapi tidak 3-3-2; setiap anggota tepat satu baris, tanpa varian, tanpa produk
+    // asing. Aturannya satu fungsi yang juga dipakai keranjang (lib/cart-lines.ts) — keranjang
+    // tak bisa lagi menyatakan sah sesuatu yang ditolak di sini.
+    //
+    // Sebelumnya hanya N = 1 yang diterima, dan pemeriksaannya bolong: paket A-B yang dikirim
+    // sebagai [A, A] lolos karena jumlah barisnya kebetulan sama dan setiap A cocok.
+    if (comboMultiplier(combo.items, lines) === null) return comboRejected(combo.name)
 
     // Harga dialokasikan ulang di server dengan fungsi yang SAMA PERSIS dengan yang dipakai klien
     // saat menyusun keranjang (allocateComboPrices), memakai comboPrice dari DB. Fungsi yang sama
-    // = pembulatan yang sama = total server identik dengan yang dilihat pembeli.
+    // = pembulatan yang sama = total server identik dengan yang dilihat pembeli. Harga di sini
+    // harga SATUAN per produk, jadi N paket otomatis bernilai N × harga paket di loop bawah.
     for (const alloc of allocateComboPrices(combo.items, combo.comboPrice)) {
       comboUnitPrice.set(`${comboId}::${alloc.productId}`, alloc.price)
     }

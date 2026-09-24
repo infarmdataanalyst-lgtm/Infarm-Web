@@ -29,7 +29,9 @@ import {
   setCheckoutItems,
   updateQuantity,
   removeFromCart,
+  removeComboFromCart,
 } from '@/lib/cart-client'
+import { cartLineKey } from '@/lib/cart-lines'
 import { formatRupiah } from '@/lib/format'
 import type { StoredProduct } from '@/types/product'
 
@@ -42,6 +44,9 @@ type MiniCartLine = {
   key: string
   productId: string
   variantId?: string
+  // Anggota paket: jumlahnya dikunci (diatur per paket di halaman keranjang) dan menghapusnya
+  // mengeluarkan seluruh paket — paket hanya sah bila utuh.
+  comboId?: string
   name: string
   imageUrl: string
   variantName?: string
@@ -83,14 +88,15 @@ export default function MiniCart({ open, onClose }: { open: boolean; onClose: ()
     return () => controller.abort()
   }, [open, idsKey])
 
-  // Gabungkan item cookie dengan detail produk. Baris = productId + variantId (varian = baris sendiri).
+  // Gabungkan item cookie dengan detail produk. Baris = produk + varian + paket (lib/cart-lines.ts).
   const lines: MiniCartLine[] = useMemo(() => {
     return cart.map((item) => {
       const product = products.find((p) => p.id === item.productId)
       return {
-        key: `${item.productId}::${item.variantId ?? ''}`,
+        key: cartLineKey(item),
         productId: item.productId,
         variantId: item.variantId,
+        ...(item.comboId ? { comboId: item.comboId } : {}),
         name: product?.name ?? 'Memuat…',
         imageUrl: product?.imageUrl ?? '/images/product-placeholder.png',
         variantName: item.variantName,
@@ -118,6 +124,7 @@ export default function MiniCart({ open, onClose }: { open: boolean; onClose: ()
   // ada di server saat checkout (RPC create_order_with_items → INSUFFICIENT_STOCK + rollback).
 
   function increment(line: MiniCartLine) {
+    if (line.comboId) return
     if (line.stock !== undefined && line.quantity >= line.stock) return
     updateQuantity(line.productId, line.quantity + 1, line.variantId)
   }
@@ -126,6 +133,7 @@ export default function MiniCart({ open, onClose }: { open: boolean; onClose: ()
   // halaman keranjang penuh: "−" berhenti di batas dan penghapusan lewat tombol tersendiri,
   // supaya aturan tombol yang sama tidak berbeda di dua tempat.
   function decrement(line: MiniCartLine) {
+    if (line.comboId) return
     const next = Math.max(line.minQty, line.quantity - 1)
     if (next !== line.quantity) updateQuantity(line.productId, next, line.variantId)
   }
@@ -180,7 +188,11 @@ export default function MiniCart({ open, onClose }: { open: boolean; onClose: ()
                 line={line}
                 onIncrement={() => increment(line)}
                 onDecrement={() => decrement(line)}
-                onRemove={() => removeFromCart(line.productId, line.variantId)}
+                onRemove={() =>
+                  line.comboId
+                    ? removeComboFromCart(line.comboId)
+                    : removeFromCart(line.productId, line.variantId)
+                }
               />
             ))}
           </ul>
@@ -238,8 +250,9 @@ function MiniCartRow({
   onDecrement: () => void
   onRemove: () => void
 }) {
-  const atMin = line.quantity <= line.minQty
-  const atMax = line.stock !== undefined && line.quantity >= line.stock
+  const isCombo = Boolean(line.comboId)
+  const atMin = isCombo || line.quantity <= line.minQty
+  const atMax = !isCombo && line.stock !== undefined && line.quantity >= line.stock
 
   return (
     <li className="flex items-center gap-2.5 px-3 py-3">
@@ -265,9 +278,15 @@ function MiniCartRow({
         <button
           type="button"
           onClick={onIncrement}
-          disabled={atMax}
+          disabled={isCombo || atMax}
           aria-label={`Tambah jumlah ${line.name}`}
-          title={atMax ? `Stok tersisa ${line.stock}` : undefined}
+          title={
+            isCombo
+              ? 'Jumlah paket diatur di halaman keranjang'
+              : atMax
+                ? `Stok tersisa ${line.stock}`
+                : undefined
+          }
           className="px-2 py-0.5 text-base leading-none text-zinc-600 transition active:scale-95 disabled:opacity-40"
         >
           +
@@ -294,6 +313,7 @@ function MiniCartRow({
         {line.variantName && (
           <span className="block truncate text-xs text-zinc-400">{line.variantName}</span>
         )}
+        {isCombo && <span className="block text-[11px] font-semibold text-brand-primary">Paket</span>}
         <span className="mt-0.5 flex items-baseline gap-1.5 text-xs">
           <span className="text-zinc-500">
             {line.quantity} × {formatRupiah(line.price)}
@@ -316,7 +336,8 @@ function MiniCartRow({
       <button
         type="button"
         onClick={onRemove}
-        aria-label={`Hapus ${line.name}`}
+        aria-label={isCombo ? `Hapus paket berisi ${line.name}` : `Hapus ${line.name}`}
+        title={isCombo ? 'Menghapus seluruh paket' : undefined}
         className="shrink-0 rounded p-1 text-zinc-400 transition hover:bg-red-50 hover:text-red-500 active:scale-95"
       >
         <Trash2 className="h-4 w-4" />

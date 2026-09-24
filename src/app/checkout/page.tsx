@@ -274,21 +274,14 @@ export default function CheckoutPage() {
           imageUrl: product.imageUrl,
           variantId: ci.variantId,
           variantName: ci.variantName,
+          // Penanda paket PER BARIS (SEC-033). Dulu disimpan sebagai peta productId → comboId,
+          // sehingga produk A satuan yang berdampingan dengan A di dalam paket ikut dikirim
+          // sebagai anggota paket dan server menolak seluruh pesanan.
+          ...(ci.comboId ? { comboId: ci.comboId } : {}),
         },
       ]
     })
   }, [checkoutCookieItems, productById])
-
-  // Peta productId → comboId dari cookie checkout (SEC-033). Sengaja TIDAK dititipkan ke
-  // CheckoutItem: comboId tak dipakai untuk menampilkan apa pun di halaman ini, ia hanya perlu
-  // ikut terkirim ke server agar harga paket bisa diverifikasi ulang dari DB.
-  const comboIdByProduct = useMemo(
-    () =>
-      new Map(
-        checkoutCookieItems.filter((ci) => ci.comboId).map((ci) => [ci.productId, ci.comboId!]),
-      ),
-    [checkoutCookieItems],
-  )
 
   // Baris item untuk event GA4 checkout (begin_checkout, add_shipping_info).
   //
@@ -632,7 +625,7 @@ export default function CheckoutPage() {
             variantId: item.variantId, // server pakai untuk harga & stok varian (Tahap 4)
             // Penanda paket. Server memakainya untuk MENCARI harga combo di DB lalu mengalokasikan
             // ulang sendiri — bukan untuk mempercayai harga di `price` (SEC-033).
-            comboId: comboIdByProduct.get(item.id),
+            comboId: item.comboId,
           })),
           // Server menghitung ulang total dari harga DB + ongkir + diskon (totalAmount client diabaikan)
           totalAmount: total, // dikirim untuk kompatibilitas; server tetap hitung ulang

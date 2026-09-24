@@ -13,7 +13,11 @@ export default function CheckoutProductSummary({ items }: { items: CheckoutItem[
 
       <ul className="space-y-3">
         {items.map((item) => (
-          <li key={`${item.id}-${item.isPromoItem ? 'promo' : 'buy'}`} className="flex gap-3">
+          // Produk yang sama bisa muncul lebih dari sekali: satuan, di dalam paket, dan sebagai hadiah.
+          <li
+            key={`${item.id}-${item.variantId ?? ''}-${item.comboId ?? ''}-${item.isPromoItem ? 'promo' : 'buy'}`}
+            className="flex gap-3"
+          >
             {/* Thumbnail persegi */}
             <div
               className={`relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border bg-zinc-50 ${
@@ -30,6 +34,14 @@ export default function CheckoutProductSummary({ items }: { items: CheckoutItem[
               {item.isPromoItem && (
                 <span className="mb-0.5 inline-flex w-fit items-center gap-1 rounded-full bg-brand-light/40 px-2 py-0.5 text-[11px] font-semibold text-brand-primary">
                   🎁 Bonus Promo
+                </span>
+              )}
+              {/* Anggota paket diberi penanda: harganya harga paket, bukan harga satuan, dan tanpa
+                  penanda ini pembeli yang juga membeli produk yang sama secara satuan melihat dua
+                  baris bernama sama dengan harga berbeda tanpa penjelasan. */}
+              {item.comboId && !item.isPromoItem && (
+                <span className="mb-0.5 inline-flex w-fit items-center rounded-full bg-brand-surface px-2 py-0.5 text-[11px] font-semibold text-brand-primary">
+                  Paket
                 </span>
               )}
               <h3 className="line-clamp-2 text-sm font-medium leading-snug text-zinc-800">
