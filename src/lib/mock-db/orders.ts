@@ -123,6 +123,8 @@ type OrderRow = {
   // Penanda GA4 pembeli (migration 20260923120000 & 20260924120000) — optional, alasan sama.
   ga_client_id?: string | null
   ga_session_id?: string | null
+  // Estimasi lama pengiriman dari Mengantar (migration 20260924130000) — optional, alasan sama.
+  estimasi_kirim?: string | null
   // Kolom baru (migration 20260827120000). Optional di tipe ini supaya kode tetap jalan bila
   // migration belum di-apply — PostgREST tak mengembalikan kolom yang belum ada.
   ongkos_kirim?: number | null
@@ -322,6 +324,7 @@ function rowToOrder(row: OrderRow, items: OrderItem[], warehouseNames?: Map<stri
   if (row.id_transaksi) order.transactionId = row.id_transaksi
   if (row.ga_client_id) order.gaClientId = row.ga_client_id
   if (row.ga_session_id) order.gaSessionId = row.ga_session_id
+  if (row.estimasi_kirim) order.deliveryEstimate = row.estimasi_kirim
   if (row.invoice_url) order.invoiceUrl = row.invoice_url
   if (row.invoice_expires_at) order.invoiceExpiresAt = row.invoice_expires_at
   if (row.invoice_expired_at) order.invoiceExpiredAt = row.invoice_expired_at
@@ -1094,6 +1097,31 @@ export async function attachGaIdentifiers(
   if (error) {
     // Termasuk kasus "kolomnya belum ada" (migration belum di-apply). Dicatat, tidak dilempar.
     console.error(`[orders] gagal menyimpan penanda GA4 untuk ${invoice}:`, error.message)
+    return false
+  }
+  return true
+}
+
+// Menyimpan estimasi lama pengiriman dari Mengantar ("2-4 hari") ke pesanan yang BARU tersimpan.
+//
+// UPDATE terpisah, bukan parameter RPC — alasan sama dengan attachGaIdentifiers di atas: ini bukan
+// uang, tak perlu atomik, dan menambah parameter berarti overload RPC baru. Kegagalan di sini
+// paling buruk membuat halaman sukses jatuh ke perkiraan lama 2–4 hari.
+//
+// Mengembalikan boolean, TIDAK melempar: pemanggilnya berada tepat setelah pesanan berhasil dibuat.
+export async function attachDeliveryEstimate(invoice: string, estimate: string): Promise<boolean> {
+  const value = estimate.trim().slice(0, 40)
+  if (!value) return true
+
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('orders')
+    .update({ estimasi_kirim: value })
+    .eq('nomor_invoice', invoice)
+
+  if (error) {
+    // Termasuk kasus "kolomnya belum ada" (migration 20260924130000 belum dijalankan).
+    console.error(`[orders] gagal menyimpan estimasi kirim untuk ${invoice}:`, error.message)
     return false
   }
   return true

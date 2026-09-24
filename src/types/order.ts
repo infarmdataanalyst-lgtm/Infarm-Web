@@ -110,6 +110,9 @@ export type Order = {
   // pendapatan mendarat di baris "Unassigned" laporan Akuisisi traffic, dan kanal asal pembeli
   // tak bisa diketahui. `undefined` bila cookie tak terbaca; pesanan tetap sah.
   gaSessionId?: string
+  // Estimasi lama pengiriman dari Mengantar saat pesanan dibuat, teks mentah ("2-4 hari").
+  // Diurai oleh src/lib/delivery-estimate.ts. Kosong = pesanan lama → perkiraan 2–4 hari.
+  deliveryEstimate?: string
   // Tagihan Xendit yang masih berlaku, disimpan agar tombol "Bayar Sekarang" yang ditekan
   // berulang kali memakai ulang halaman pembayaran yang SAMA alih-alih menerbitkan tagihan baru
   // (API-XND-027). Keduanya `undefined` untuk pesanan yang belum pernah ditagih, dan untuk seluruh
