@@ -16,13 +16,17 @@
 // callback kedua berhenti lebih dulu di cabang ALREADY_PAID. `transaction_id` (nomor invoice)
 // dikirim sebagai lapis kedua — GA4 memakainya untuk membuang purchase kembar.
 //
-// ── Batas yang diketahui ──
-// Hanya `client_id` yang dititipkan, bukan `session_id`. Akibatnya event ini tidak bergabung ke
-// sesi browsing pembeli, dan "Session source" untuk sesi server-nya akan terbaca (direct).
-// Atribusi tingkat PENGGUNA tetap berjalan — GA4 menghubungkan purchase ini dengan sesi-sesi
-// sebelumnya milik client_id yang sama, jadi laporan akuisisi & konversi tetap mengkredit kanal
-// yang benar. Menitipkan session_id butuh membaca cookie `_ga_<measurement-id>` yang bentuknya
-// tidak didokumentasikan sama sekali; sengaja tidak dikerjakan bersamaan dengan pipa ini.
+// ── Kenapa `session_id` ikut dikirim ──
+// `client_id` saja menjawab "siapa yang membeli", bukan "dari kunjungan mana". Informasi sumber
+// trafik (Direct, Referral, Organic Search, kampanye) melekat pada SESI. Tanpa session_id, GA4
+// menerima penjualannya tapi tak punya sesi untuk menempelkannya.
+//
+// Akibatnya terukur di produksi 24 Sep 2026: laporan Akuisisi traffic menaruh SELURUH Rp83.888
+// dari INV-20260923-R60NTSBP di baris "Unassigned", sementara semua kanal nyata berisi Rp0. Bukan
+// "(direct)" seperti dugaan awal — benar-benar tak teratribusi.
+//
+// Penempelan ini bisa diandalkan di sini karena tagihan Xendit hanya berlaku 24 jam
+// (INVOICE_DURATION_SECONDS), jadi jarak terjauh antara sesi dan pembayaran adalah satu hari.
 
 import 'server-only'
 
@@ -55,6 +59,10 @@ export type PurchasePayload = {
         value: number
         shipping: number
         items: GaItem[]
+        // Keduanya HILANG bila cookie sesi tak terbaca — payload tetap sah, hanya atribusi
+        // kanalnya yang tak ada. Lihat catatan session_id di kepala berkas.
+        session_id?: string
+        engagement_time_msec?: string
       }
     },
   ]
@@ -86,6 +94,11 @@ export function buildPurchasePayload(
     }
   })
 
+  // Diambil dari pesanan, bukan dioper terpisah seperti clientId: session_id tak menentukan apakah
+  // event boleh dikirim (purchase tanpa sesi tetap layak dicatat — pendapatannya nyata, hanya
+  // kanalnya yang tak diketahui), jadi ia cukup jadi bagian data pesanan.
+  const sessionId = order.gaSessionId?.trim()
+
   return {
     client_id: clientId,
     events: [
@@ -101,6 +114,20 @@ export function buildPurchasePayload(
           value: order.totalAmount,
           shipping: order.shippingCost ?? 0,
           items,
+          // Disisipkan hanya bila ada — mengirim `session_id: undefined` membuat JSON.stringify
+          // membuangnya, tapi bentuk objeknya jadi berbeda antara ada dan tidak, dan itu yang
+          // diuji. Lebih jelas begini.
+          ...(sessionId
+            ? {
+                session_id: sessionId,
+                // Wajib menyertainya bersama session_id: tanpa ini GA4 menerima event-nya tapi
+                // tak menghitungnya sebagai bagian sesi, dan atribusinya gagal diam-diam.
+                // Nilainya sengaja 1 milidetik — event ini lahir di server, tak ada waktu layar
+                // sungguhan untuk dilaporkan, dan angka besar akan menggelembungkan metrik
+                // engagement yang dibaca dari laporan lain.
+                engagement_time_msec: '1',
+              }
+            : {}),
         },
       },
     ],
@@ -158,7 +185,13 @@ export async function sendPurchaseEvent(
       return { ok: false, reason: 'http-error' }
     }
 
-    console.log(`${log} GA4 purchase terkirim: ${order.orderId} value=${order.totalAmount}`)
+    // Keadaan sesi ikut dicatat: inilah pembeda antara penjualan yang teratribusi ke kanal dan
+    // yang mendarat di "Unassigned". Tanpa penanda ini, satu-satunya cara mengetahuinya adalah
+    // menunggu 24-48 jam sampai laporan Akuisisi traffic terisi.
+    const sesi = order.gaSessionId?.trim() ? 'dengan sesi' : 'TANPA sesi (akan Unassigned)'
+    console.log(
+      `${log} GA4 purchase terkirim: ${order.orderId} value=${order.totalAmount} ${sesi}`,
+    )
     return { ok: true }
   } catch (e) {
     console.error(

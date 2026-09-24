@@ -8,7 +8,7 @@
 //      funnel view_item → purchase putus tepat di langkah terakhir.
 
 import { describe, expect, it } from 'vitest'
-import { parseGaCookie } from '@/lib/ga-client-id'
+import { gaSessionCookieName, parseGaCookie, parseGaSessionCookie } from '@/lib/ga-client-id'
 import { buildPurchasePayload, type ProductMeta } from '@/lib/analytics-server'
 import type { Order } from '@/types/order'
 
@@ -92,5 +92,57 @@ describe('buildPurchasePayload', () => {
     // menyesatkan — dan alasannya perlu tertulis supaya tak dibaca sebagai bug.
     const tanpaOngkir: Order = { ...pesanan, shippingCost: undefined }
     expect(buildPurchasePayload(tanpaOngkir, '1.1', meta).events[0].params.shipping).toBe(0)
+  })
+})
+
+describe('parseGaSessionCookie', () => {
+  it('membaca bentuk GS1 — bagian ketiga angka polos', () => {
+    expect(parseGaSessionCookie('GS1.1.1758600000.3.1.1758600120.0.0.0')).toBe('1758600000')
+  })
+
+  it('membaca bentuk GS2 — bagian ketiga ber-awalan s dan dipisah $', () => {
+    // Google mengganti bentuk cookie ini tanpa pengumuman. Kedua bentuk harus tetap terbaca,
+    // karena browser yang berbeda bisa memegang versi yang berbeda pada saat yang sama.
+    expect(parseGaSessionCookie('GS2.1.s1758600000$o3$g1$t1758600120$j60$l0$h0')).toBe(
+      '1758600000',
+    )
+  })
+
+  it('menolak bentuk yang tak dikenali alih-alih menebak', () => {
+    // Bentuk ketiga yang belum pernah kita lihat harus jatuh ke undefined. Menebaknya berbahaya:
+    // Measurement Protocol menerima session_id apa pun tanpa mengeluh, lalu menempelkan penjualan
+    // ke sesi yang tidak ada — lebih buruk daripada tidak teratribusi sama sekali.
+    expect(parseGaSessionCookie('GS3.1.xyz$o1')).toBeUndefined()
+    expect(parseGaSessionCookie('GS1.1')).toBeUndefined()
+    expect(parseGaSessionCookie('')).toBeUndefined()
+  })
+})
+
+describe('gaSessionCookieName', () => {
+  it('membuang awalan G- dari Measurement ID', () => {
+    expect(gaSessionCookieName('G-ABC123XYZ')).toBe('_ga_ABC123XYZ')
+  })
+})
+
+describe('buildPurchasePayload — session_id', () => {
+  it('menyertakan session_id dan engagement_time_msec bila pesanan punya sesi', () => {
+    const denganSesi: Order = { ...pesanan, gaSessionId: '1758600000' }
+    const params = buildPurchasePayload(denganSesi, '1.1', meta).events[0].params
+
+    expect(params.session_id).toBe('1758600000')
+    // Wajib berpasangan: session_id tanpa engagement_time_msec membuat GA4 menerima event-nya
+    // tapi tidak menghitungnya sebagai bagian sesi, dan atribusinya gagal tanpa pesan galat.
+    expect(params.engagement_time_msec).toBe('1')
+  })
+
+  it('tetap mengirim purchase utuh walau sesi tak terbaca', () => {
+    // Pendapatannya nyata walau kanalnya tak diketahui. Yang tak boleh terjadi adalah event batal
+    // terkirim hanya karena cookie sesi diblokir.
+    const params = buildPurchasePayload(pesanan, '1.1', meta).events[0].params
+
+    expect(params.session_id).toBeUndefined()
+    expect(params.engagement_time_msec).toBeUndefined()
+    expect(params.value).toBe(112720)
+    expect(params.transaction_id).toBe('INV-20260923-ABCD1234')
   })
 })

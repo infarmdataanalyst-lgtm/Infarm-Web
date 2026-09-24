@@ -169,7 +169,10 @@ punya pemilik yang bisa dibuktikan lewat jalur email, jadi tak akan pernah muncu
   Event GA4 sisi klien (`view_item`, `add_to_cart`, `begin_checkout`, `add_shipping_info`) via
   `src/lib/analytics.ts`. Event `purchase` TIDAK dikirim dari browser: pembayaran Xendit asinkron,
   jadi ia dikirim dari webhook lewat Measurement Protocol (`src/lib/analytics-server.ts`, butuh
-  `GA_API_SECRET` + kolom `orders.ga_client_id`). Strategi load = `afterInteractive`
+  `GA_API_SECRET` + kolom `orders.ga_client_id` & `orders.ga_session_id`). Keduanya dititipkan
+  checkout dari cookie `_ga` dan `_ga_<measurement-id>`: `client_id` menjawab SIAPA yang membeli,
+  `session_id` menjawab dari KUNJUNGAN MANA — tanpa yang kedua seluruh pendapatan mendarat di baris
+  "Unassigned" laporan Akuisisi traffic (terukur 24 Sep 2026). Strategi load = `afterInteractive`
   (default @next/third-parties) — disengaja demi akurasi analytics (tak di-defer ke `lazyOnload`).
 
 ### Roadmap integrasi (belum terpasang)
