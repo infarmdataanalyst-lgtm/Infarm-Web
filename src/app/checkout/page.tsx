@@ -486,17 +486,28 @@ export default function CheckoutPage() {
     return shippingWeightKg(weighable)
   }, [orderItems, freeCheckoutItems, productById])
 
-  // Kebutuhan stok yang dikirim ke perbandingan ongkir: hanya produk yang dibeli (produk hadiah
-  // promo TIDAK diikutkan — ketersediaannya dievaluasi server saat membuat order, dan menyertakannya
-  // di sini bisa mengecualikan gudang yang sebenarnya sanggup mengirim pesanan utama).
+  // Kebutuhan stok yang dikirim ke perbandingan ongkir: produk yang dibeli DAN produk hadiah promo.
+  //
+  // Hadiah dulu SENGAJA dikecualikan ("bisa mengecualikan gudang yang sanggup mengirim pesanan
+  // utama"). Tapi /api/orders/create memverifikasi ongkir DENGAN hadiah — daftar barangnya berbeda,
+  // sehingga (1) kutipan yang tersimpan di server tak pernah cocok dan server selalu bertanya ulang
+  // ke Mengantar, dan (2) bila hadiah hanya ada di satu gudang, pembeli ditawari tarif gudang lain
+  // yang lalu ditolak saat bayar (uji 25 Sep 2026: hadiah hanya di Gudang Utama, pembeli memilih
+  // tarif Gudang Jakarta). Keputusan pemilik: hadiah ikut menentukan gudang — pembeli melihat tarif
+  // yang benar sejak awal, walau bisa lebih mahal, daripada ditolak di akhir.
+  //
+  // Bentuknya harus SAMA PERSIS dengan `requirements` di server (hadiah: quantity 1, tanpa varian),
+  // karena keduanya membentuk kunci cache perbandingan ongkir (shippingOptionsKey).
   const shippingItems = useMemo(
-    () =>
-      orderItems.map((item) => ({
+    () => [
+      ...orderItems.map((item) => ({
         productId: item.id,
         quantity: item.quantity,
         variantId: item.variantId ?? undefined,
       })),
-    [orderItems],
+      ...freeCheckoutItems.map((item) => ({ productId: item.id, quantity: item.quantity })),
+    ],
+    [orderItems, freeCheckoutItems],
   )
 
   // === Minimum total belanja (pengaturan toko) ===
