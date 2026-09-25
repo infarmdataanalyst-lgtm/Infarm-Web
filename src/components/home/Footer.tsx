@@ -32,10 +32,10 @@ const LEGAL_LINKS = [
 
 // Tautan sitemap "Jelajahi Pilihan".
 //
-// `href: null` = halamannya BELUM ADA. Ditampilkan sebagai teks redup berlabel "Segera hadir",
-// bukan tautan: sebelumnya ketiganya menunjuk /affiliate, /reseller, /career yang tak pernah
-// dibuat, jadi pembeli yang mengkliknya mendarat di 404. Begitu halamannya dibuat, cukup isi
-// `href`-nya di sini.
+// `href: null` = halamannya BELUM ADA. Tampil sama persis dengan tautan lain, hanya tidak bisa
+// diklik: sebelumnya ketiganya menunjuk /affiliate, /reseller, /career yang tak pernah dibuat,
+// jadi pembeli yang mengkliknya mendarat di 404. Begitu halamannya dibuat, cukup isi `href`-nya
+// di sini.
 //
 // Products menunjuk /products (katalog). Dulu /produk — rute itu hanya punya halaman detail
 // /produk/[id], sehingga /produk sendiri 404.
@@ -177,13 +177,8 @@ export default function Footer() {
                       {link.label}
                     </Link>
                   ) : (
-                    // Halaman belum ada → teks statis redup, tidak bisa diklik
-                    <span className="flex items-center gap-2 font-medium text-white/50" aria-disabled="true">
-                      {link.label}
-                      <span className="rounded-full bg-white/15 px-2 py-0.5 text-[11px] font-semibold text-white/80">
-                        Segera hadir
-                      </span>
-                    </span>
+                    // Halaman belum ada → teks statis bergaya sama, tidak bisa diklik
+                    <span className="font-medium">{link.label}</span>
                   )}
                 </li>
               ))}
