@@ -353,8 +353,10 @@ src/
 
 # Root: next.config.ts, tailwind.config.ts, eslint.config.mjs, postcss.config.mjs,
 #       tsconfig.json, AGENTS.md, CLAUDE.md, .env.local (tidak di-commit)
-# scripts/migrate-data.mjs: salin DATA (bukan skema) antar project Supabase (SOURCE .env.local →
-#   TARGET .env.migration.local); urut FK, preserve id, idempotent. Jalankan: node scripts/migrate-data.mjs [--run]
+# scripts/migrate-data.mjs: salin DATA KATALOG (produk, varian, paket, promo, gudang, stok, store_settings)
+#   dari SOURCE .env.local ke TARGET .env.migration.local — untuk mengisi project Supabase preview.
+#   Pesanan, ulasan, admin_users SENGAJA tidak disalin (data pembeli & hash password). Urut FK,
+#   preserve id. Jalankan: node scripts/migrate-data.mjs [--run [--replace --target=<ref target>]]
 # public/images/email/: aset gambar email (mis. logo-infarm.png) — lihat README di folder tsb
 # public/images/categories/<slug>.(webp|jpg): foto latar tombol kategori beranda (CategoryGrid resolve fs)
 # public/images/icons/{cart,user}.png: ikon UI header (512px, PUTIH, transparan — latar header hijau)
