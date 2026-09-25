@@ -900,15 +900,33 @@ export default function CheckoutPage() {
         {/* 1 — Ringkasan produk yang dibeli (dari pilihan keranjang) — KANAN di desktop */}
         <CheckoutCard className="lg:col-start-2">
           <CheckoutProductSummary items={summaryItems} />
+          {/* Hadiah yang tak bisa ikut dikirim — dikatakan TERUS TERANG sebelum pembeli membayar.
+              Keputusan pemilik (25 Sep 2026): pesanan tetap boleh dilanjutkan, tapi pembeli tak boleh
+              baru tahu setelah paketnya datang tanpa hadiah yang dijanjikan di keranjang. */}
           {hadiahTakTerkirim.length > 0 && (
-            <p className="bg-white px-4 pb-4 text-xs leading-relaxed text-orange-700 lg:rounded-b-2xl">
-              Hadiah promo{' '}
-              <span className="font-semibold">
-                {hadiahTakTerkirim.map((id) => productById.get(id)?.name ?? 'produk hadiah').join(', ')}
-              </span>{' '}
-              tidak bisa dikirim bersama pesanan ini karena stoknya tidak tersedia di gudang yang
-              sama dengan barang pesananmu.
-            </p>
+            <div className="bg-white px-4 pb-4 lg:rounded-b-2xl">
+              <div
+                role="alert"
+                className="flex gap-2.5 rounded-xl border border-orange-200 bg-orange-50 p-3 text-sm text-orange-800"
+              >
+                <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" aria-hidden />
+                <div className="space-y-1">
+                  <p className="font-semibold">Stok hadiah di gudang terdekat sedang habis</p>
+                  <p className="leading-relaxed">
+                    Hadiah promo{' '}
+                    <span className="font-semibold">
+                      {hadiahTakTerkirim
+                        .map((id) => productById.get(id)?.name ?? 'produk hadiah')
+                        .join(', ')}
+                    </span>{' '}
+                    sedang habis di gudang terdekat yang mengirim pesananmu, jadi pesanan ini akan
+                    dikirim <span className="font-semibold">tanpa hadiah tersebut</span>. Kalau kamu
+                    tetap ingin mendapat hadiahnya, kamu bisa menunda pesanan sampai stoknya tersedia
+                    lagi.
+                  </p>
+                </div>
+              </div>
+            </div>
           )}
         </CheckoutCard>
 
