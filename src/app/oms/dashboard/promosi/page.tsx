@@ -15,17 +15,19 @@ import { formatRupiah } from '@/lib/format'
 import {
   PROMOTION_TYPE_LABELS,
   isPromotionExpired,
+  isPromotionScheduled,
   type Promotion,
   type PromotionType,
 } from '@/types/promotion'
 import type { StoredProduct } from '@/types/product'
 
-type StatusFilter = 'all' | 'active' | 'inactive' | 'expired'
-type EffectiveStatus = 'active' | 'inactive' | 'expired'
+type StatusFilter = 'all' | 'active' | 'scheduled' | 'inactive' | 'expired'
+type EffectiveStatus = 'active' | 'scheduled' | 'inactive' | 'expired'
 
 const FILTERS: { key: StatusFilter; label: string }[] = [
   { key: 'all', label: 'Semua' },
   { key: 'active', label: 'Aktif' },
+  { key: 'scheduled', label: 'Terjadwal' },
   { key: 'inactive', label: 'Nonaktif' },
   { key: 'expired', label: 'Kedaluwarsa' },
 ]
@@ -56,7 +58,14 @@ function rewardText(promo: Promotion): string {
 function formatDate(iso: string): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return iso
-  return new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }).format(d)
+  // Dalam WIB: batas promo disimpan sebagai 00.00 / 23.59.59 WIB (17.00 / 16.59 UTC), jadi
+  // memformat dengan zona waktu lain bisa menggeser tanggalnya satu hari.
+  return new Intl.DateTimeFormat('id-ID', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'Asia/Jakarta',
+  }).format(d)
 }
 
 // Teks periode: rentang tanggal, atau "Tidak Terbatas" bila kosong
@@ -126,10 +135,12 @@ export default function PromosiPage() {
     return (stockById[promo.freeProductId] ?? 0) <= 0
   }
 
-  // Status efektif (dihitung frontend): kedaluwarsa > nonaktif (manual/stok habis) > aktif
+  // Status efektif (dihitung frontend): kedaluwarsa > nonaktif (manual/stok habis) > terjadwal
+  // (tanggal mulai belum tiba — belum ditawarkan ke pembeli) > aktif
   function getStatus(promo: Promotion): EffectiveStatus {
     if (nowMs !== null && isPromotionExpired(promo.endAt, nowMs)) return 'expired'
     if (!promo.isActive || isOutOfStock(promo)) return 'inactive'
+    if (nowMs !== null && isPromotionScheduled(promo.startAt, nowMs)) return 'scheduled'
     return 'active'
   }
 
@@ -350,6 +361,10 @@ export default function PromosiPage() {
 function StatusBadge({ status }: { status: EffectiveStatus }) {
   if (status === 'active') {
     return <span className="inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">Aktif</span>
+  }
+  if (status === 'scheduled') {
+    // Belum berjalan: tak tampil di keranjang sampai tanggal mulainya (00.00 WIB)
+    return <span className="inline-flex rounded-full bg-orange-50 px-2.5 py-1 text-xs font-semibold text-orange-700">Terjadwal</span>
   }
   if (status === 'expired') {
     return <span className="inline-flex rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">Kedaluwarsa</span>

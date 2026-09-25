@@ -6,7 +6,7 @@
 // STRUKTURAL, bukan lewat kelas responsif: di mobile komponen ini tidak pernah di-mount, jadi
 // kontrol jumlah di bawah tak perlu penjagaan breakpoint tambahan.
 //
-// Isi: satu baris promo terdekat (progress bar), daftar item (kontrol jumlah, thumbnail, nama,
+// Isi: promo (semua yang tercapai + satu terdekat dengan progress bar), daftar item (kontrol jumlah, thumbnail, nama,
 // harga, hapus), subtotal, tombol "Lihat Keranjang" & "Checkout".
 //
 // Sumber data = cookie keranjang (reaktif via useSyncExternalStore), sama seperti halaman
@@ -176,18 +176,20 @@ export default function MiniCart({ open, onClose }: { open: boolean; onClose: ()
     [cart],
   )
 
-  // Hanya SATU promo yang ditampilkan (panel sempit): promo belum tercapai dengan sisa terkecil —
-  // target paling realistis untuk mendorong tambah belanja. Semua sudah tercapai → tampilkan yang
-  // ambang minimalnya tertinggi (hadiah terbesar). Rincian semua promo tetap di /keranjang.
+  // Promo yang ditampilkan di panel (sempit), dari SELURUH isi keranjang — beda dengan /keranjang
+  // yang hanya menghitung item tercentang: mini cart tak punya checkbox, dan tombol Checkout di sini
+  // memang membawa seluruh isi keranjang.
   //
-  // Dasar hitung = SELURUH isi keranjang, beda dengan /keranjang yang hanya item tercentang:
-  // mini cart tak punya checkbox, dan tombol Checkout di sini memang membawa seluruh isi keranjang.
-  const featuredPromo: PromoProgress | null = useMemo(() => {
+  //   tercapai → SEMUA ditampilkan sebagai baris "Selamat!" ringkas: pembeli perlu tahu setiap
+  //              hadiah yang ia dapat. Dulu hanya satu promo yang tampil, sehingga saat dua promo
+  //              berjalan bersamaan yang lain tak terlihat sama sekali.
+  //   belum    → hanya SATU dengan progress bar: yang sisanya terkecil (target paling realistis).
+  //              Sisanya diringkas jadi tautan "+N promo lainnya" ke /keranjang, yang memuat semua.
+  const promoSummary = useMemo(() => {
     const progress = computePromoProgress(promos, subtotal)
-    if (progress.length === 0) return null
+    const tercapai = progress.filter((p) => p.reached)
     const belum = progress.filter((p) => !p.reached).sort((a, b) => a.remaining - b.remaining)
-    if (belum.length > 0) return belum[0]
-    return progress.reduce((best, p) => (p.promo.minPurchase > best.promo.minPurchase ? p : best))
+    return { tercapai, berikutnya: belum[0] ?? null, lainnya: Math.max(0, belum.length - 1) }
   }, [promos, subtotal])
 
   // === Produk hadiah promo yang sudah tercapai ===
@@ -335,7 +337,14 @@ export default function MiniCart({ open, onClose }: { open: boolean; onClose: ()
         </div>
       ) : (
         <>
-          {featuredPromo && <MiniCartPromo progress={featuredPromo} />}
+          {(promoSummary.tercapai.length > 0 || promoSummary.berikutnya) && (
+            <MiniCartPromos
+              tercapai={promoSummary.tercapai}
+              berikutnya={promoSummary.berikutnya}
+              lainnya={promoSummary.lainnya}
+              onNavigate={onClose}
+            />
+          )}
 
           {/* === Daftar item (scroll bila lebih dari ±3 baris) === */}
           <ul className={`${LIST_MAX_HEIGHT} divide-y divide-zinc-100 overflow-y-auto`}>
@@ -401,35 +410,57 @@ export default function MiniCart({ open, onClose }: { open: boolean; onClose: ()
 
 // Strip promo ringkas di atas daftar item: ikon + pesan, lalu progress bar tipis bila belum
 // tercapai. Bahasa visual sama dengan CartPromoList di halaman keranjang, hanya dirampingkan.
-function MiniCartPromo({ progress }: { progress: PromoProgress }) {
-  const { reached, percent, message } = progress
+function MiniCartPromos({
+  tercapai,
+  berikutnya,
+  lainnya,
+  onNavigate,
+}: {
+  tercapai: PromoProgress[]
+  berikutnya: PromoProgress | null
+  lainnya: number
+  onNavigate: () => void
+}) {
   return (
-    <div className="border-b border-zinc-100 px-4 py-2.5" aria-live="polite">
-      <div className="flex items-start gap-2 text-xs">
-        {reached ? (
+    <div className="space-y-1.5 border-b border-zinc-100 px-4 py-2.5" aria-live="polite">
+      {/* Semua promo yang sudah tercapai */}
+      {tercapai.map(({ promo, message }) => (
+        <div key={promo.id} className="flex items-start gap-2 text-xs">
           <CheckCircle2 className="mt-px h-3.5 w-3.5 flex-none text-brand-primary" />
-        ) : (
-          <Gift className="mt-px h-3.5 w-3.5 flex-none text-brand-primary" />
-        )}
-        <p className={reached ? 'font-semibold text-brand-primary' : 'text-zinc-700'}>{message}</p>
-      </div>
-      {!reached && (
-        <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-brand-light/40">
-          <div
-            className="h-full rounded-full bg-brand-primary transition-all"
-            style={{ width: `${percent}%` }}
-          />
+          <p className="font-semibold text-brand-primary">{message}</p>
         </div>
+      ))}
+
+      {/* Satu promo terdekat yang belum tercapai, dengan progress bar */}
+      {berikutnya && (
+        <div>
+          <div className="flex items-start gap-2 text-xs">
+            <Gift className="mt-px h-3.5 w-3.5 flex-none text-brand-primary" />
+            <p className="text-zinc-700">{berikutnya.message}</p>
+          </div>
+          <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-brand-light/40">
+            <div
+              className="h-full rounded-full bg-brand-primary transition-all"
+              style={{ width: `${berikutnya.percent}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Promo belum tercapai lainnya → rinciannya di halaman keranjang */}
+      {lainnya > 0 && (
+        <Link
+          href="/keranjang"
+          onClick={onNavigate}
+          className="block text-[11px] font-semibold text-brand-primary underline-offset-2 hover:underline"
+        >
+          +{lainnya} promo lainnya · Lihat Keranjang
+        </Link>
       )}
     </div>
   )
 }
 
-// Satu baris mini cart: [− n +] [foto] [nama + harga + hapus].
-// Kontrol jumlah memakai bahasa desain yang sama dengan CartItemRow di halaman keranjang penuh
-// (kotak ber-border zinc-300, radius, tombol "−"/"+" polos), hanya diperkecil agar muat di panel.
-// Bedanya: TANPA input ketik manual — di lebar 384px kolom angka yang bisa difokus hanya menambah
-// jalur kesalahan, sedangkan pengetikan bebas sudah tersedia di halaman keranjang penuh.
 // Satu baris produk hadiah promo: tanpa kontrol (jumlah & harga ditentukan promo, bukan pembeli).
 // Bentuknya mengikuti MiniCartRow supaya sejajar, dengan penanda "Bonus Promo" dan "Gratis".
 function MiniCartFreeRow({ name, imageUrl }: { name: string; imageUrl: string }) {
@@ -454,6 +485,11 @@ function MiniCartFreeRow({ name, imageUrl }: { name: string; imageUrl: string })
   )
 }
 
+// Satu baris mini cart: [− n +] [foto] [nama + harga + hapus].
+// Kontrol jumlah memakai bahasa desain yang sama dengan CartItemRow di halaman keranjang penuh
+// (kotak ber-border zinc-300, radius, tombol "−"/"+" polos), hanya diperkecil agar muat di panel.
+// Bedanya: TANPA input ketik manual — di lebar 384px kolom angka yang bisa difokus hanya menambah
+// jalur kesalahan, sedangkan pengetikan bebas sudah tersedia di halaman keranjang penuh.
 function MiniCartRow({
   line,
   onIncrement,
