@@ -84,7 +84,7 @@ export default function Footer() {
               overflow-x-clip memotongnya agar tak memicu scroll horizontal di layar sempit. */}
           <ul className="mt-6 flex flex-wrap justify-center gap-x-2 gap-y-4 overflow-x-clip md:gap-x-10">
             {ACHIEVEMENTS.map((badge) => (
-              <li key={badge.src} className="w-[calc(50%-0.25rem)] max-w-[190px] md:w-44">
+              <li key={badge.src} className="w-[calc(50%-0.25rem)] max-w-[150px] md:w-44 md:max-w-none">
                 <Image
                   src={badge.src}
                   alt={badge.alt}
