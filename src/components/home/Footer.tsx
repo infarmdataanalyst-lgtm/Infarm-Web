@@ -2,15 +2,26 @@
 // Section 5 homepage: footer berisi achievement, sertifikasi, sitemap, sosial media, copyright.
 // Server Component, responsive (stack di mobile → multi-kolom di desktop).
 
+import Image from 'next/image'
 import Link from 'next/link'
 import { LEGAL_PAGES_ENABLED, PRIVACY_POLICY_PATH, TERMS_PATH } from '@/lib/data/legal'
 import { WHATSAPP_CS_LINK } from '@/lib/data/contact'
 
-// Daftar pencapaian (placeholder teks; TODO: ganti dengan gambar badge asli)
-const ACHIEVEMENTS = ['Brand Choice Awards', 'TikTok Most Wanted Brand', '#1 Pupuk Organik Cair Shopee']
+// Badge pencapaian (PNG transparan di public/images/achievements/). width/height = ukuran asli
+// berkas, dipakai next/image untuk rasio aspek — tampilan akhirnya diatur lewat className.
+const ACHIEVEMENTS = [
+  { src: '/images/achievements/brand-choice-awards.png', alt: 'Brand Choice Awards 2025', width: 2175, height: 1377 },
+  { src: '/images/achievements/tiktok-most-wanted-brand.png', alt: 'TikTok Most Wanted Brand', width: 2176, height: 1377 },
+  { src: '/images/achievements/no-1-poc-shopee.png', alt: '#1 Pupuk Organik Cair di Shopee', width: 2154, height: 1364 },
+]
 
-// Tag sertifikasi yang bisa diklik menuju katalog dengan kata kunci terkait
-const CERTIFICATION_TAGS = ['POC Buah', 'Miracle Powder', 'Benih', 'Pupuk', 'Media Tanam']
+// Panel nomor pendaftaran produk (satu gambar berisi seluruh produk bersertifikat)
+const CERTIFICATION_IMAGE = {
+  src: '/images/achievements/bersertifikat.png',
+  alt: 'Produk infarm bersertifikat: POC Sayur, POC Cabai, POC Bunga, POC Buah, Miracle Powder, Pupuk Padat, Nutripod, dan Benih Premium — terdaftar atas nama PT. Kayuan Infarm Indonesia',
+  width: 2000,
+  height: 736,
+}
 
 // Tautan dokumen legal (rute dari @/lib/data/legal agar tak salah tulis di beberapa tempat)
 const LEGAL_LINKS = [
@@ -57,35 +68,42 @@ export default function Footer() {
           <h2 className="inline-block rounded-md bg-black/15 px-5 py-2 text-base font-bold uppercase tracking-wide">
             Our Achievements
           </h2>
-          <ul className="mt-5 flex flex-wrap justify-center gap-3">
-            {ACHIEVEMENTS.map((item) => (
-              <li
-                key={item}
-                className="rounded-lg border border-white/50 px-4 py-2 text-sm font-medium"
-              >
-                {item}
+          {/* Mobile: 2 kolom (badge ketiga di tengah baris kedua). Desktop: satu baris.
+              Tiap PNG punya ruang transparan ±17% di kiri-kanan dan ±13% di bawah laurel. Gambar
+              dilebarkan 134% dengan margin negatif agar laurelnya mengisi lebar kolom — tanpa itu
+              badge tampak kecil dengan celah lebar. Aman karena bagian yang meluber transparan;
+              overflow-x-clip memotongnya agar tak memicu scroll horizontal di layar sempit. */}
+          <ul className="mt-6 flex flex-wrap justify-center gap-x-2 gap-y-4 overflow-x-clip md:gap-x-10">
+            {ACHIEVEMENTS.map((badge) => (
+              <li key={badge.src} className="w-[calc(50%-0.25rem)] max-w-[190px] md:w-44">
+                <Image
+                  src={badge.src}
+                  alt={badge.alt}
+                  width={badge.width}
+                  height={badge.height}
+                  sizes="(min-width: 768px) 236px, 67vw"
+                  className="-mx-[17%] -mb-[11%] h-auto w-[134%] max-w-none object-contain"
+                />
               </li>
             ))}
           </ul>
         </section>
 
         {/* === Bersertifikasi === */}
-        <section className="mt-8 text-center">
+        <section className="mt-10 text-center">
           <h2 className="inline-block rounded-md bg-black/15 px-5 py-2 text-base font-bold uppercase tracking-wide">
             Bersertifikat
           </h2>
-          <ul className="mt-5 flex flex-wrap justify-center gap-2">
-            {CERTIFICATION_TAGS.map((tag) => (
-              <li key={tag}>
-                <Link
-                  href={`/produk?search=${encodeURIComponent(tag)}`}
-                  className="inline-block rounded-full bg-white/15 px-4 py-1.5 text-sm font-medium transition hover:bg-white/25"
-                >
-                  {tag}
-                </Link>
-              </li>
-            ))}
-          </ul>
+          {/* Satu panel lebar berisi nomor pendaftaran — dibatasi di desktop agar tak mendominasi
+              footer, selebar layar di mobile supaya teksnya tetap terbaca. */}
+          <Image
+            src={CERTIFICATION_IMAGE.src}
+            alt={CERTIFICATION_IMAGE.alt}
+            width={CERTIFICATION_IMAGE.width}
+            height={CERTIFICATION_IMAGE.height}
+            sizes="(min-width: 768px) 672px, 100vw"
+            className="mx-auto mt-6 h-auto w-full object-contain md:max-w-2xl"
+          />
         </section>
 
         {/* === Brand, sitemap & sosmed === */}
