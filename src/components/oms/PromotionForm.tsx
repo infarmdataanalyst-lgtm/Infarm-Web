@@ -14,7 +14,15 @@ import { useRouter } from 'next/navigation'
 import { ChevronRight, Search, Truck } from 'lucide-react'
 import OmsHeader from '@/components/oms/OmsHeader'
 import { formatRupiah } from '@/lib/format'
-import { PROMOTION_TYPE_LABELS, type Promotion, type PromotionType } from '@/types/promotion'
+import {
+  PROMOTION_TYPE_LABELS,
+  promoEndIso,
+  promoStartIso,
+  todayWib,
+  toWibDateInput,
+  type Promotion,
+  type PromotionType,
+} from '@/types/promotion'
 import type { StoredProduct } from '@/types/product'
 
 type Mode = 'create' | 'edit'
@@ -23,9 +31,6 @@ type Mode = 'create' | 'edit'
 const PROGRESS_TOKEN = '{sisa}'
 
 // Ambil bagian tanggal (YYYY-MM-DD) dari ISO untuk mengisi input date saat edit
-function toDateInput(iso: string | null): string {
-  return iso ? iso.slice(0, 10) : ''
-}
 
 export default function PromotionForm({
   mode,
@@ -55,8 +60,8 @@ export default function PromotionForm({
   )
 
   // Periode
-  const [startDate, setStartDate] = useState(toDateInput(initialPromotion?.startAt ?? null))
-  const [endDate, setEndDate] = useState(toDateInput(initialPromotion?.endAt ?? null))
+  const [startDate, setStartDate] = useState(toWibDateInput(initialPromotion?.startAt ?? null))
+  const [endDate, setEndDate] = useState(toWibDateInput(initialPromotion?.endAt ?? null))
 
   // Pesan progres
   const [progressMessage, setProgressMessage] = useState(
@@ -79,7 +84,8 @@ export default function PromotionForm({
   const [submitError, setSubmitError] = useState<string | null>(null)
 
   // Tanggal hari ini (lokal, YYYY-MM-DD) untuk validasi "tanggal mulai tidak di masa lalu"
-  const todayStr = new Date().toLocaleDateString('en-CA')
+  // Hari ini menurut WIB, bukan zona waktu komputer admin
+  const todayStr = todayWib()
 
   // Ambil produk (hanya stok > 0 & tidak diarsipkan yang boleh jadi hadiah)
   useEffect(() => {
@@ -247,8 +253,9 @@ export default function PromotionForm({
       discountValue:
         type === 'discount_nominal' || type === 'discount_percent' ? discountNum : null,
       // Tanggal: simpan mulai pukul 00:00 & berakhir 23:59 (berakhir inklusif sepanjang hari)
-      startAt: startDate ? `${startDate}T00:00:00` : null,
-      endAt: endDate ? `${endDate}T23:59:59` : null,
+      // Batas hari dalam WIB (00.00 & 23.59.59 WIB) — lihat promoStartIso di types/promotion
+      startAt: startDate ? promoStartIso(startDate) : null,
+      endAt: endDate ? promoEndIso(endDate) : null,
       ...(isEdit && initialPromotion ? { id: initialPromotion.id } : {}),
     }
 
