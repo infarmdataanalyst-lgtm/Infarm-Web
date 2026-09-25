@@ -30,7 +30,7 @@ import {
 } from '@/lib/checkout-draft'
 import { validateAddress } from '@/lib/checkout-validation'
 import { formatRupiah } from '@/lib/format'
-import { computeOrderPromos } from '@/lib/promo-cart'
+import { computeOrderPromos, eligibleFreeProductIds } from '@/lib/promo-cart'
 import { XENDIT_MIN_AMOUNT } from '@/lib/payment-limits'
 import type { Promotion } from '@/types/promotion'
 import { shippingWeightKg, type WeighableItem } from '@/lib/shipping-weight'
@@ -40,7 +40,6 @@ import {
   subscribeCheckout,
   getCheckoutSnapshot,
   getServerCheckoutSnapshot,
-  getCheckoutPromo,
   clearCart,
 } from '@/lib/cart-client'
 import {
@@ -60,7 +59,9 @@ import type { CheckoutItem } from '@/lib/data/dummy-checkout'
 // item_id GA4 harus SAMA dengan yang dikirim halaman detail produk (`sku || id`), kalau tidak
 // GA4 menganggap produk yang sama sebagai dua item berbeda dan funnel view_item → purchase
 // terputus tepat di tengah.
-type CheckoutProduct = Product & { berat?: number; sku?: string }
+// `stock` & `archived` ikut terbawa dari /api/products/by-ids (StoredProduct); opsional karena produk
+// dummy tak memilikinya. Dipakai untuk tak menjanjikan hadiah promo yang tak akan dikirim server.
+type CheckoutProduct = Product & { berat?: number; sku?: string; stock?: number; archived?: boolean }
 
 // Penanda "kode sudah berjalan di browser".
 //
@@ -196,14 +197,46 @@ export default function CheckoutPage() {
     getServerCheckoutSnapshot,
   )
 
+  // === Promo aktif + plafon diskon ===
+  // Checkout WAJIB menariknya sendiri, tidak boleh mengandalkan cookie snapshot dari keranjang:
+  // promo bisa kedaluwarsa di antara pembeli menutup keranjang dan menekan bayar, dan yang
+  // menentukan tagihan adalah keadaan promo saat itu — sama seperti yang dievaluasi server.
+  const [promos, setPromos] = useState<Promotion[]>([])
+  const [maxDiscountPercent, setMaxDiscountPercent] = useState(50)
+  // Jam acuan evaluasi promo, diambil SEKALI saat daftar promo tiba.
+  // Date.now() tak boleh dipanggil saat render (aturan kemurnian React): nilainya berubah tiap
+  // render sehingga hasil useMemo tak stabil. Diambil bersamaan dengan promonya justru lebih benar
+  // secara semantik — keduanya potret keadaan pada saat yang sama.
+  const [promoNowMs, setPromoNowMs] = useState(0)
+  useEffect(() => {
+    let active = true
+    fetch('/api/promotions/active')
+      .then((res) => res.json())
+      .then((data: { promotions?: Promotion[]; maxDiscountPercent?: number }) => {
+        if (!active) return
+        setPromos(data.promotions ?? [])
+        setPromoNowMs(Date.now())
+        if (typeof data.maxDiscountPercent === 'number') {
+          setMaxDiscountPercent(data.maxDiscountPercent)
+        }
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [])
+
   // Daftar id produk yang perlu di-resolve, sebagai satu string stabil.
   //
   // Dipakai sebagai dependency efek DAN sebagai penanda "jawaban ini untuk permintaan yang mana".
   // Di-dedup & diurutkan supaya urutan item di keranjang tak memicu tarikan ulang yang percuma.
-  const productIdsKey = useMemo(
-    () => [...new Set(checkoutCookieItems.map((ci) => ci.productId))].sort().join(','),
-    [checkoutCookieItems],
-  )
+  // Produk hadiah promo ikut di-resolve: nama, foto, stok, dan BERATNYA dibutuhkan (hadiah ikut
+  // ditimbang untuk ongkir, sama seperti di server).
+  const productIdsKey = useMemo(() => {
+    const ids = new Set(checkoutCookieItems.map((ci) => ci.productId))
+    for (const p of promos) if (p.type === 'free_product' && p.freeProductId) ids.add(p.freeProductId)
+    return [...ids].sort().join(',')
+  }, [checkoutCookieItems, promos])
 
   // === Produk OMS diambil via API agar item dari cookie ikut ter-resolve (nama, foto, berat) ===
   //
@@ -397,17 +430,14 @@ export default function CheckoutPage() {
   // Id produk gratis promo (dari snapshot keranjang). Server tetap otoritatif saat create order;
   // ini hanya untuk TAMPILAN ringkasan & perhitungan berat kirim.
   //
-  // Dibaca saat RENDER (setelah hidrasi), bukan lewat `useEffect` + `setState`. Pola lama melanggar
-  // aturan lint proyek ini (`react-hooks/set-state-in-effect`) dan sudah membuat `npm run lint`
-  // merah di berkas ini sebelum perubahan ini — cocok dibereskan sekarang karena penyebab & obatnya
-  // sama persis dengan race yang sedang diperbaiki: keadaan turunan dari cookie tak perlu melewati
-  // state sama sekali.
-  //
-  // `hydrated` jadi dependency-nya: cookie hanya terbaca di klien, jadi nilainya kosong di render
-  // server lalu terisi sekali begitu berjalan di browser.
+  // Produk hadiah promo — DIHITUNG di sini dari promo aktif, dengan aturan yang sama dengan server
+  // (eligibleFreeProductIds). Dulu dibaca dari cookie snapshot yang hanya ditulis halaman
+  // /keranjang: checkout lewat mini cart atau "Beli Langsung" kehilangan hadiahnya di tampilan,
+  // dan — lebih penting — beratnya tak ikut ditimbang, padahal server memasukkan hadiah ke pesanan
+  // dan menimbangnya. Berat berbeda = ongkir yang dicocokkan server berbeda dengan yang dipilih.
   const freeProductIds = useMemo(
-    () => (hydrated ? (getCheckoutPromo()?.freeProductIds ?? []) : []),
-    [hydrated],
+    () => eligibleFreeProductIds(promos, subtotal, promoNowMs),
+    [promos, subtotal, promoNowMs],
   )
 
   // Item hadiah promo untuk DITAMPILKAN di ringkasan (harga 0, isPromoItem). Detail dari produk resolved.
@@ -415,7 +445,9 @@ export default function CheckoutPage() {
   const freeCheckoutItems: CheckoutItem[] = useMemo(() => {
     return freeProductIds.flatMap((id) => {
       const product = productById.get(id)
-      if (!product) return []
+      // Diarsipkan / stok habis → server tak memasukkannya ke pesanan (FREE_PRODUCT_UNAVAILABLE),
+      // jadi jangan dijanjikan atau ditimbang di sini.
+      if (!product || product.archived || (typeof product.stock === 'number' && product.stock <= 0)) return []
       return [
         {
           id,
@@ -477,35 +509,6 @@ export default function CheckoutPage() {
       .then((res) => res.json())
       .then((data: { minOrderAmount?: number }) => {
         if (active && typeof data.minOrderAmount === 'number') setMinOrderAmount(data.minOrderAmount)
-      })
-      .catch(() => {})
-    return () => {
-      active = false
-    }
-  }, [])
-
-  // === Promo aktif + plafon diskon ===
-  // Checkout WAJIB menariknya sendiri, tidak boleh mengandalkan cookie snapshot dari keranjang:
-  // promo bisa kedaluwarsa di antara pembeli menutup keranjang dan menekan bayar, dan yang
-  // menentukan tagihan adalah keadaan promo saat itu — sama seperti yang dievaluasi server.
-  const [promos, setPromos] = useState<Promotion[]>([])
-  const [maxDiscountPercent, setMaxDiscountPercent] = useState(50)
-  // Jam acuan evaluasi promo, diambil SEKALI saat daftar promo tiba.
-  // Date.now() tak boleh dipanggil saat render (aturan kemurnian React): nilainya berubah tiap
-  // render sehingga hasil useMemo tak stabil. Diambil bersamaan dengan promonya justru lebih benar
-  // secara semantik — keduanya potret keadaan pada saat yang sama.
-  const [promoNowMs, setPromoNowMs] = useState(0)
-  useEffect(() => {
-    let active = true
-    fetch('/api/promotions/active')
-      .then((res) => res.json())
-      .then((data: { promotions?: Promotion[]; maxDiscountPercent?: number }) => {
-        if (!active) return
-        setPromos(data.promotions ?? [])
-        setPromoNowMs(Date.now())
-        if (typeof data.maxDiscountPercent === 'number') {
-          setMaxDiscountPercent(data.maxDiscountPercent)
-        }
       })
       .catch(() => {})
     return () => {
