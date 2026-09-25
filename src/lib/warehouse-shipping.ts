@@ -31,9 +31,17 @@ import type { Warehouse } from '@/types/warehouse'
 // dikutip ke pembeli berasal dari LINGKUNGAN YANG SAMA dengan booking kurir. Dulu hardcode ke
 // produksi sementara booking di sandbox — dua tabel tarif berbeda, angkanya tak pernah cocok.
 
-// Timeout per gudang. Satu gudang yang lambat TIDAK boleh menahan seluruh cek ongkir; hasilnya
-// cukup dibuang (gudang itu dianggap tak menawarkan opsi) selama masih ada gudang lain yang balas.
-const ESTIMATE_TIMEOUT_MS = 4500
+// Timeout per percobaan & jumlah percobaan per origin. Satu gudang yang lambat TIDAK boleh menahan
+// seluruh cek ongkir; hasilnya cukup dibuang (gudang itu dianggap tak menawarkan opsi) selama masih
+// ada gudang lain yang balas.
+//
+// Dulu 4,5 detik tanpa coba ulang. Ukuran 25 Sep 2026 (sandbox, Gudang Utama → Medan): 3 dari 15
+// panggilan butuh ±5,2 detik → kehabisan waktu → saat membuat pesanan tak ada tarif untuk
+// dicocokkan → pesanan ditolak "ongkos kirim sedang tidak bisa dipastikan". Kasus terburuk kini
+// 2 × 8 detik; route pemanggil (orders/create, shipping/options) memasang maxDuration 30 detik
+// agar fungsi Vercel tak dimatikan di tengah jalan (batas bawaan paket Hobby 10 detik).
+const ESTIMATE_TIMEOUT_MS = 8000
+const ESTIMATE_ATTEMPTS = 2
 
 // Umur simpan hasil perbandingan. Dipakai saat pembuatan order untuk fallback gudang tanpa
 // memanggil ulang Mengantar. Cukup pendek agar tarif tak jadi basi, cukup panjang untuk
@@ -138,6 +146,20 @@ export async function getEligibleWarehouses(
 // begitu ketika MENGANTAR_PICKUP_ORIGIN_ID di-set), sedangkan tarif Mengantar hanya bergantung pada
 // origin+tujuan+berat. Satu panggilan per origin, bukan per gudang.
 async function fetchCouriersForOrigin(
+  originId: string,
+  destinationId: string,
+  weight: number,
+): Promise<ShippingCourier[] | null> {
+  // Cek ongkir adalah panggilan BACA yang gratis & tanpa efek samping, jadi aman diulang.
+  for (let attempt = 1; attempt <= ESTIMATE_ATTEMPTS; attempt++) {
+    const couriers = await fetchCouriersOnce(originId, destinationId, weight)
+    if (couriers !== null) return couriers
+  }
+  return null
+}
+
+// Satu percobaan cek ongkir untuk satu origin. null = gagal (timeout / jaringan / HTTP / JSON rusak).
+async function fetchCouriersOnce(
   originId: string,
   destinationId: string,
   weight: number,

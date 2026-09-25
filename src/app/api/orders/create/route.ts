@@ -52,6 +52,9 @@ import type {
 
 // createAdminClient (Supabase) butuh runtime Node.js, bukan Edge
 export const runtime = 'nodejs'
+// Cek ongkir ke Mengantar bisa makan 2 × 8 detik (timeout + satu coba ulang, lib/warehouse-shipping).
+// Tanpa ini fungsi Vercel dimatikan di batas bawaan 10 detik sebelum sempat menjawab.
+export const maxDuration = 30
 
 const LOG = '[orders-create]'
 
@@ -563,6 +566,10 @@ export async function POST(request: Request) {
   // Peringatan yang ikut dikirim ke pembeli bersama respons sukses (bukan error — pesanannya tetap
   // dibuat). Lihat blok hadiah tak tersedia di bawah.
   const freeProductWarnings: { code: string; promotionId: string; productName: string }[] = []
+  // Promo hadiah yang benar-benar diberikan, untuk orders.promo_terpakai. `value` = harga jual
+  // hadiah SAAT pesanan dibuat — biaya promo bagi toko. Dulu hadiah tak tercatat di sana sama sekali
+  // (hanya order_items.promotion_id, harga 0), sehingga laporan biaya promo hadiah selalu kosong.
+  const freeProductPromos: { id: string; name: string; type: string; value: number }[] = []
   for (const promo of promotions) {
     if (promo.type !== 'free_product' || !promo.isActive || !promo.freeProductId) continue
     if (isPromotionExpired(promo.endAt, nowMs)) continue // sudah kedaluwarsa
@@ -585,6 +592,7 @@ export async function POST(request: Request) {
       continue
     }
     addedFreeIds.add(promo.freeProductId)
+    freeProductPromos.push({ id: promo.id, name: promo.name, type: promo.type, value: prod.promoPrice })
     pricedItems.push({
       productId: promo.freeProductId,
       name: prod.name,
@@ -881,7 +889,9 @@ export async function POST(request: Request) {
       // subsidinya dicatat terpisah supaya tagihan kurir tetap bisa direkonsiliasi.
       discount,
       shippingSubsidy,
-      appliedPromos: promoResult.appliedPromos,
+      // Promo diskon & gratis ongkir (mengurangi tagihan) + promo hadiah (tak mengurangi tagihan,
+      // dicatat untuk laporan biaya). promo_terpakai hanya disimpan, tak dipakai menghitung total.
+      appliedPromos: [...promoResult.appliedPromos, ...freeProductPromos],
     })
 
     // Penanda GA4 dititipkan ke barisnya SETELAH pesanan tersimpan (UPDATE terpisah, bukan

@@ -16,6 +16,9 @@ import { resolveShippingOptions } from '@/lib/warehouse-shipping'
 import type { StockRequirement } from '@/lib/warehouse'
 
 export const runtime = 'nodejs'
+// Cek ongkir ke Mengantar bisa makan 2 × 8 detik (timeout + satu coba ulang, lib/warehouse-shipping).
+// Tanpa ini fungsi Vercel dimatikan di batas bawaan 10 detik sebelum sempat menjawab.
+export const maxDuration = 30
 
 // Batas jumlah item yang diterima — jaring pengaman payload sampah.
 const MAX_ITEMS = 100
