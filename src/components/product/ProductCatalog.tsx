@@ -113,8 +113,19 @@ export default function ProductCatalog() {
   function applyFilters() {
     setFilterOpen(false) // tutup sheet dulu agar animasi turun mulus
     setCategories(draftCategories)
-    setMinPrice(draftMin)
-    setMaxPrice(draftMax)
+
+    // Rentang harga yang terbalik (mis. 30000 – 20000) DITUKAR, bukan diterapkan apa adanya.
+    // Dulu filternya mencari produk ≥ 30.000 sekaligus ≤ 20.000 — mustahil — sehingga katalog
+    // menampilkan "Tidak ada produk" padahal rentang 20.000–30.000 jelas berisi produk. Kolom
+    // input ikut diperbarui supaya pembeli melihat rentang yang benar-benar dipakai.
+    let min = draftMin
+    let max = draftMax
+    if (min && max && Number(min) > Number(max)) [min, max] = [max, min]
+    setDraftMin(min)
+    setDraftMax(max)
+    setMinPrice(min)
+    setMaxPrice(max)
+
     syncUrl(draftCategories)
   }
 
