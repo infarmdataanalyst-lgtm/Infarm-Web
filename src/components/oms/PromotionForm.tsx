@@ -181,6 +181,22 @@ export default function PromotionForm({
   )
   const isValid = !hasError && type !== ''
 
+  // Alasan PERTAMA tombol Simpan belum bisa dipakai, ditulis di footer di samping tombolnya.
+  //
+  // Tombol Simpan dinonaktifkan selama ada isian yang salah, padahal sebagian pesan error baru
+  // tampil SETELAH tombol itu ditekan (`attempted`). Akibatnya admin hanya melihat tombol pucat
+  // tanpa penjelasan — contoh nyata: tanggal mulai yang sudah lewat membuat promo tak bisa disimpan
+  // tanpa satu pun pesan. Urutannya sama dengan urutan seksi di formulir.
+  const saveBlockedReason =
+    nameError ||
+    typeError ||
+    minPurchaseError ||
+    freeProductError ||
+    discountNominalError ||
+    discountPercentError ||
+    periodError ||
+    progressError
+
   // Preview pesan: ganti {sisa} dengan kekurangan contoh (keranjang kosong → sebesar minimal pembelian)
   const previewMessage = progressMessage
     ? progressMessage.split(PROGRESS_TOKEN).join(formatRupiah(minPurchaseNum))
@@ -535,7 +551,9 @@ export default function PromotionForm({
                   className={inputClass}
                 />
               </Field>
-              <Field label="Tanggal Berakhir" error={attempted ? periodError : null}>
+              {/* Error periode langsung tampil begitu salah satu tanggal diisi — tak menunggu
+                  tombol Simpan ditekan (tombolnya justru nonaktif selama tanggalnya salah). */}
+              <Field label="Tanggal Berakhir" error={attempted || startDate || endDate ? periodError : null}>
                 <input
                   type="date"
                   value={endDate}
@@ -588,6 +606,8 @@ export default function PromotionForm({
         <div className="mx-auto flex max-w-3xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           {submitError ? (
             <p className="text-xs font-medium text-red-600">{submitError}</p>
+          ) : !isValid && saveBlockedReason ? (
+            <p className="text-xs font-medium text-red-600">Belum bisa disimpan: {saveBlockedReason}</p>
           ) : (
             <p className="flex items-center gap-2 text-xs text-gray-400">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
