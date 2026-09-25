@@ -16,6 +16,7 @@ import {
   AlertTriangle,
   ChevronLeft,
   ChevronRight,
+  Gift,
   MessageSquare,
   PackageX,
   ShoppingCart,
@@ -23,7 +24,7 @@ import {
 import OmsHeader from '@/components/oms/OmsHeader'
 
 // Hanya PERINGATAN — pesanan baru yang normal tidak lagi masuk notifikasi (pemilik, 23 Sep 2026).
-type NotificationType = 'stok_habis' | 'ulasan_baru' | 'pesanan_bermasalah'
+type NotificationType = 'stok_habis' | 'ulasan_baru' | 'pesanan_bermasalah' | 'stok_hadiah'
 
 type NotificationItem = {
   id: string
@@ -144,7 +145,7 @@ export default function NotifikasiPage() {
                   className={`flex h-9 w-9 flex-none items-center justify-center rounded-full ${
                     n.type === 'pesanan_bermasalah'
                       ? 'bg-orange-50 text-orange-600'
-                      : n.type === 'stok_habis'
+                      : n.type === 'stok_habis' || n.type === 'stok_hadiah'
                         ? 'bg-red-50 text-red-600'
                         : n.type === 'ulasan_baru'
                           ? 'bg-amber-50 text-amber-600'
@@ -153,6 +154,8 @@ export default function NotifikasiPage() {
                 >
                   {n.type === 'pesanan_bermasalah' ? (
                     <AlertTriangle className="h-4 w-4" aria-hidden />
+                  ) : n.type === 'stok_hadiah' ? (
+                    <Gift className="h-4 w-4" aria-hidden />
                   ) : n.type === 'stok_habis' ? (
                     <PackageX className="h-4 w-4" aria-hidden />
                   ) : n.type === 'ulasan_baru' ? (

@@ -100,6 +100,53 @@ function cacheShippingOptions(key: string, result: ShippingOptionsResult): void 
   optionsCache.set(key, { at: Date.now(), result })
 }
 
+// === Hadiah promo yang tak bisa ikut dikirim ===
+//
+// Pesanan dikirim dari SATU gudang, dan hadiah promo ikut menentukan gudangnya (keputusan pemilik,
+// 25 Sep 2026): gudang yang dipilih harus punya barang pesanan DAN hadiahnya. Celahnya: bila tak
+// ada satu gudang pun yang punya semuanya (mis. Hidroton hanya di Jakarta, hadiah hanya di Utama),
+// perbandingan ongkir jatuh ke gudang default dan pesanan gagal "stok tidak mencukupi" — pembeli
+// kehilangan PESANANNYA gara-gara bonus.
+//
+// Aturannya: selama barang pesanan sendiri ada di satu gudang, hadiah yang tak bisa ikut dikirim
+// DILEWATI (satu per satu, yang lain tetap diusahakan). Dipakai DUA pihak dengan fungsi yang sama —
+// /api/mengantar/shipping/options (checkout diberi tahu lalu menjelaskannya ke pembeli) dan
+// /api/orders/create — supaya keduanya selalu sepakat soal gudang, berat, dan tarif.
+export type GiftAwareRequirement = StockRequirement & { isGift?: boolean }
+
+function withoutGiftFlag(item: GiftAwareRequirement): StockRequirement {
+  return item.variantId
+    ? { productId: item.productId, quantity: item.quantity, variantId: item.variantId }
+    : { productId: item.productId, quantity: item.quantity }
+}
+
+export async function dropUnshippableGifts(
+  items: GiftAwareRequirement[],
+): Promise<{ items: StockRequirement[]; droppedGiftIds: string[] }> {
+  const all = items.map(withoutGiftFlag)
+  const gifts = items.filter((i) => i.isGift)
+  if (gifts.length === 0) return { items: all, droppedGiftIds: [] }
+
+  // Mode satu gudang: stok per gudang tak dinilai di sini (perilaku lama tetap).
+  if (!(await isMultiWarehouse())) return { items: all, droppedGiftIds: [] }
+
+  // Kasus normal: ada gudang yang sanggup mengirim semuanya.
+  if ((await getEligibleWarehouses(all)).length > 0) return { items: all, droppedGiftIds: [] }
+
+  // Barang pesanan sendiri pun tak ada di satu gudang → bukan urusan hadiah; biarkan alur lama
+  // (gudang default + penolakan stok oleh RPC) yang menanganinya.
+  let kept = items.filter((i) => !i.isGift).map(withoutGiftFlag)
+  if ((await getEligibleWarehouses(kept)).length === 0) return { items: all, droppedGiftIds: [] }
+
+  const droppedGiftIds: string[] = []
+  for (const gift of gifts) {
+    const trial = [...kept, withoutGiftFlag(gift)]
+    if ((await getEligibleWarehouses(trial)).length > 0) kept = trial
+    else droppedGiftIds.push(gift.productId)
+  }
+  return { items: kept, droppedGiftIds }
+}
+
 // === Kelayakan stok ===
 
 // Gudang aktif yang stoknya cukup untuk SELURUH item.

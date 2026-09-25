@@ -4,7 +4,7 @@
 // Halaman Checkout. Di luar route group (store) karena punya header hijau sendiri (CheckoutHeader).
 // Orchestrator: menyimpan semua state (modal, kurir, asuransi, pembayaran) & menghitung total reaktif.
 
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ShoppingBag, PackageX, Wallet, AlertTriangle } from 'lucide-react'
@@ -435,6 +435,15 @@ export default function CheckoutPage() {
   // /keranjang: checkout lewat mini cart atau "Beli Langsung" kehilangan hadiahnya di tampilan,
   // dan — lebih penting — beratnya tak ikut ditimbang, padahal server memasukkan hadiah ke pesanan
   // dan menimbangnya. Berat berbeda = ongkir yang dicocokkan server berbeda dengan yang dipilih.
+  // Hadiah promo yang TAK BISA ikut dikirim: tak ada satu gudang pun yang punya barang pesanan
+  // sekaligus hadiah itu. Diisi dari jawaban cek ongkir (droppedGiftIds) — server memakai aturan
+  // yang sama saat membuat pesanan (dropUnshippableGifts), jadi yang dibuang di sini juga tak
+  // dimasukkan server. Dibuang dari tampilan & berat, lalu pembeli diberi tahu alasannya.
+  const [hadiahTakTerkirim, setHadiahTakTerkirim] = useState<string[]>([])
+  const tandaiHadiahTakTerkirim = useCallback((ids: string[]) => {
+    setHadiahTakTerkirim((prev) => [...new Set([...prev, ...ids])])
+  }, [])
+
   const freeProductIds = useMemo(
     () => eligibleFreeProductIds(promos, subtotal, promoNowMs),
     [promos, subtotal, promoNowMs],
@@ -444,6 +453,8 @@ export default function CheckoutPage() {
   // TIDAK dikirim ke API create (server evaluasi & inject sendiri) → cegah duplikasi/manipulasi.
   const freeCheckoutItems: CheckoutItem[] = useMemo(() => {
     return freeProductIds.flatMap((id) => {
+      // Tak bisa ikut dikirim dari gudang yang punya barang pesanan (lihat hadiahTakTerkirim)
+      if (hadiahTakTerkirim.includes(id)) return []
       const product = productById.get(id)
       // Diarsipkan / stok habis → server tak memasukkannya ke pesanan (FREE_PRODUCT_UNAVAILABLE),
       // jadi jangan dijanjikan atau ditimbang di sini.
@@ -459,7 +470,7 @@ export default function CheckoutPage() {
         },
       ]
     })
-  }, [freeProductIds, productById])
+  }, [freeProductIds, productById, hadiahTakTerkirim])
 
   // Daftar untuk ditampilkan di ringkasan = item beli + item hadiah promo.
   const summaryItems = useMemo(
@@ -505,7 +516,11 @@ export default function CheckoutPage() {
         quantity: item.quantity,
         variantId: item.variantId ?? undefined,
       })),
-      ...freeCheckoutItems.map((item) => ({ productId: item.id, quantity: item.quantity })),
+      ...freeCheckoutItems.map((item) => ({
+        productId: item.id,
+        quantity: item.quantity,
+        isGift: true,
+      })),
     ],
     [orderItems, freeCheckoutItems],
   )
@@ -885,6 +900,34 @@ export default function CheckoutPage() {
         {/* 1 — Ringkasan produk yang dibeli (dari pilihan keranjang) — KANAN di desktop */}
         <CheckoutCard className="lg:col-start-2">
           <CheckoutProductSummary items={summaryItems} />
+          {/* Hadiah yang tak bisa ikut dikirim — dikatakan TERUS TERANG sebelum pembeli membayar.
+              Keputusan pemilik (25 Sep 2026): pesanan tetap boleh dilanjutkan, tapi pembeli tak boleh
+              baru tahu setelah paketnya datang tanpa hadiah yang dijanjikan di keranjang. */}
+          {hadiahTakTerkirim.length > 0 && (
+            <div className="bg-white px-4 pb-4 lg:rounded-b-2xl">
+              <div
+                role="alert"
+                className="flex gap-2.5 rounded-xl border border-orange-200 bg-orange-50 p-3 text-sm text-orange-800"
+              >
+                <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" aria-hidden />
+                <div className="space-y-1">
+                  <p className="font-semibold">Stok hadiah di gudang terdekat sedang habis</p>
+                  <p className="leading-relaxed">
+                    Hadiah promo{' '}
+                    <span className="font-semibold">
+                      {hadiahTakTerkirim
+                        .map((id) => productById.get(id)?.name ?? 'produk hadiah')
+                        .join(', ')}
+                    </span>{' '}
+                    sedang habis di gudang terdekat yang mengirim pesananmu, jadi pesanan ini akan
+                    dikirim <span className="font-semibold">tanpa hadiah tersebut</span>. Kalau kamu
+                    tetap ingin mendapat hadiahnya, kamu bisa menunda pesanan sampai stoknya tersedia
+                    lagi.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
         </CheckoutCard>
 
         {/* 2 — Form alamat pengiriman — KIRI di desktop, satu-satunya isi kolom itu.
@@ -912,6 +955,7 @@ export default function CheckoutPage() {
             selected={selectedCourier}
             onSelect={setSelectedCourier}
             refreshKey={shippingRefreshKey}
+            onGiftsUnavailable={tandaiHadiahTakTerkirim}
           />
           {/* Latar putih sendiri: di mobile CheckoutCard tak berlatar, jadi tanpa ini pesannya
               melayang di atas warna halaman, terpisah dari baris kurir yang ia jelaskan. */}
