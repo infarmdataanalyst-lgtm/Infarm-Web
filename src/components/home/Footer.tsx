@@ -6,6 +6,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { LEGAL_PAGES_ENABLED, PRIVACY_POLICY_PATH, TERMS_PATH } from '@/lib/data/legal'
 import { WHATSAPP_CS_LINK } from '@/lib/data/contact'
+import FooterHomeLink from '@/components/home/FooterHomeLink'
 
 // Badge pencapaian (PNG transparan di public/images/achievements/). width/height = ukuran asli
 // berkas, dipakai next/image untuk rasio aspek — tampilan akhirnya diatur lewat className.
@@ -29,13 +30,21 @@ const LEGAL_LINKS = [
   { label: 'Syarat & Ketentuan', href: TERMS_PATH },
 ]
 
-// Tautan sitemap utama
-const SITEMAP = [
+// Tautan sitemap "Jelajahi Pilihan".
+//
+// `href: null` = halamannya BELUM ADA. Ditampilkan sebagai teks redup berlabel "Segera hadir",
+// bukan tautan: sebelumnya ketiganya menunjuk /affiliate, /reseller, /career yang tak pernah
+// dibuat, jadi pembeli yang mengkliknya mendarat di 404. Begitu halamannya dibuat, cukup isi
+// `href`-nya di sini.
+//
+// Products menunjuk /products (katalog). Dulu /produk — rute itu hanya punya halaman detail
+// /produk/[id], sehingga /produk sendiri 404.
+const SITEMAP: { label: string; href: string | null }[] = [
   { label: 'Home', href: '/' },
-  { label: 'Products', href: '/produk' },
-  { label: 'Affiliate', href: '/affiliate' },
-  { label: 'Reseller', href: '/reseller' },
-  { label: 'Career', href: '/career' },
+  { label: 'Products', href: '/products' },
+  { label: 'Affiliate', href: null },
+  { label: 'Reseller', href: null },
+  { label: 'Career', href: null },
 ]
 
 // Ikon sosial media (inline SVG brand — tanpa aset/library, mengikuti warna teks via currentColor)
@@ -157,10 +166,25 @@ export default function Footer() {
             </h3>
             <ul className="mt-4 space-y-3">
               {SITEMAP.map((link) => (
-                <li key={link.href}>
-                  <Link href={link.href} className="font-medium transition hover:text-white/80">
-                    {link.label}
-                  </Link>
+                <li key={link.label}>
+                  {link.href === '/' ? (
+                    // Home: di beranda menggulir ke paling atas (lihat FooterHomeLink)
+                    <FooterHomeLink className="font-medium transition hover:text-white/80">
+                      {link.label}
+                    </FooterHomeLink>
+                  ) : link.href ? (
+                    <Link href={link.href} className="font-medium transition hover:text-white/80">
+                      {link.label}
+                    </Link>
+                  ) : (
+                    // Halaman belum ada → teks statis redup, tidak bisa diklik
+                    <span className="flex items-center gap-2 font-medium text-white/50" aria-disabled="true">
+                      {link.label}
+                      <span className="rounded-full bg-white/15 px-2 py-0.5 text-[11px] font-semibold text-white/80">
+                        Segera hadir
+                      </span>
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>
