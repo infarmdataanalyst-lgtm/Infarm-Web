@@ -130,6 +130,28 @@ export function isPromoEligible(promo: Promotion, subtotal: number, nowMs: numbe
   return subtotal >= promo.minPurchase
 }
 
+// Produk hadiah (promo free_product) yang BERHAK didapat untuk subtotal & waktu tertentu, tanpa
+// duplikat. Aturannya sama dengan yang dipakai /api/orders/create saat menyisipkan hadiah ke
+// pesanan: promo aktif, dalam masa berlaku, dan subtotal ≥ minimal belanja.
+//
+// Dipakai checkout & mini cart supaya hadiah yang tampil DIHITUNG di tempat, bukan dibaca dari
+// cookie snapshot keranjang. Cookie itu hanya ditulis halaman /keranjang — checkout lewat mini cart
+// atau "Beli Langsung" tak pernah menulisnya, sehingga hadiahnya hilang dari tampilan padahal
+// server tetap memasukkannya ke pesanan (dan menimbangnya untuk ongkir).
+export function eligibleFreeProductIds(
+  promos: Promotion[],
+  subtotal: number,
+  nowMs: number,
+): string[] {
+  const ids: string[] = []
+  for (const promo of promos) {
+    if (promo.type !== 'free_product' || !promo.freeProductId) continue
+    if (!isPromoEligible(promo, subtotal, nowMs)) continue
+    if (!ids.includes(promo.freeProductId)) ids.push(promo.freeProductId)
+  }
+  return ids
+}
+
 // Menghitung potongan harga & subsidi ongkir dari seluruh promo yang berlaku.
 //
 // ── Aturan penumpukan (keputusan pemilik proyek, 2026-09-07) ──

@@ -34,7 +34,7 @@ import {
 } from '@/lib/cart-client'
 import { cartLineKey, comboMultiplier } from '@/lib/cart-lines'
 import { formatRupiah } from '@/lib/format'
-import { computePromoProgress, type PromoProgress } from '@/lib/promo-cart'
+import { computePromoProgress, eligibleFreeProductIds, type PromoProgress } from '@/lib/promo-cart'
 import type { StoredProduct } from '@/types/product'
 import type { ProductCombo } from '@/types/combo'
 import type { Promotion } from '@/types/promotion'
@@ -86,11 +86,39 @@ export default function MiniCart({ open, onClose }: { open: boolean; onClose: ()
   // Detail produk hasil resolve dari server (nama, foto, stok, minimum pembelian)
   const [products, setProducts] = useState<StoredProduct[]>([])
 
-  // Key stabil (diurut) supaya fetch hanya berulang saat kumpulan id benar-benar berubah
-  const idsKey = useMemo(
-    () => Array.from(new Set(cart.map((c) => c.productId))).sort().join(','),
-    [cart],
-  )
+  // === Promo aktif ===
+  //
+  // Diambil ulang tiap panel dibuka (endpoint cached di server) agar promo yang baru kedaluwarsa /
+  // dinonaktifkan tak tertinggal selama header tetap ter-mount lintas navigasi. Gagal → strip
+  // promo tidak tampil, panel lain tetap jalan.
+  const [promos, setPromos] = useState<Promotion[]>([])
+  // Jam acuan evaluasi masa berlaku promo — diambil saat promo tiba (Date.now() tak boleh
+  // dipanggil saat render).
+  const [promoNowMs, setPromoNowMs] = useState(0)
+  const adaIsi = cart.length > 0
+  useEffect(() => {
+    if (!open || !adaIsi) return
+    const controller = new AbortController()
+    fetch('/api/promotions/active', { signal: controller.signal })
+      .then((res) => res.json())
+      .then((data: { promotions?: Promotion[] }) => {
+        if (Array.isArray(data.promotions)) {
+          setPromos(data.promotions)
+          setPromoNowMs(Date.now())
+        }
+      })
+      .catch(() => {})
+    return () => controller.abort()
+  }, [open, adaIsi])
+
+  // Key stabil (diurut) supaya fetch hanya berulang saat kumpulan id benar-benar berubah.
+  // Produk hadiah promo ikut di-resolve agar baris hadiah punya nama & foto (dan stoknya bisa
+  // diperiksa) begitu syarat belanjanya tercapai.
+  const idsKey = useMemo(() => {
+    const ids = new Set(cart.map((c) => c.productId))
+    for (const p of promos) if (p.type === 'free_product' && p.freeProductId) ids.add(p.freeProductId)
+    return Array.from(ids).sort().join(',')
+  }, [cart, promos])
 
   // Fetch hanya saat panel terbuka & ada isi keranjang
   useEffect(() => {
@@ -148,25 +176,6 @@ export default function MiniCart({ open, onClose }: { open: boolean; onClose: ()
     [cart],
   )
 
-  // === Promo aktif ===
-  //
-  // Diambil ulang tiap panel dibuka (endpoint cached di server) agar promo yang baru kedaluwarsa /
-  // dinonaktifkan tak tertinggal selama header tetap ter-mount lintas navigasi. Gagal → strip
-  // promo tidak tampil, panel lain tetap jalan.
-  const [promos, setPromos] = useState<Promotion[]>([])
-  const adaIsi = cart.length > 0
-  useEffect(() => {
-    if (!open || !adaIsi) return
-    const controller = new AbortController()
-    fetch('/api/promotions/active', { signal: controller.signal })
-      .then((res) => res.json())
-      .then((data: { promotions?: Promotion[] }) => {
-        if (Array.isArray(data.promotions)) setPromos(data.promotions)
-      })
-      .catch(() => {})
-    return () => controller.abort()
-  }, [open, adaIsi])
-
   // Hanya SATU promo yang ditampilkan (panel sempit): promo belum tercapai dengan sisa terkecil —
   // target paling realistis untuk mendorong tambah belanja. Semua sudah tercapai → tampilkan yang
   // ambang minimalnya tertinggi (hadiah terbesar). Rincian semua promo tetap di /keranjang.
@@ -180,6 +189,19 @@ export default function MiniCart({ open, onClose }: { open: boolean; onClose: ()
     if (belum.length > 0) return belum[0]
     return progress.reduce((best, p) => (p.promo.minPurchase > best.promo.minPurchase ? p : best))
   }, [promos, subtotal])
+
+  // === Produk hadiah promo yang sudah tercapai ===
+  //
+  // Dulu mini cart hanya menulis "Selamat! Kamu mendapatkan …" tanpa baris hadiahnya, sementara
+  // halaman keranjang menampilkannya. Aturannya sama dengan server (eligibleFreeProductIds); hadiah
+  // yang diarsipkan / stoknya habis tak ditampilkan — server pun tak akan memasukkannya.
+  const freeItems = useMemo(() => {
+    return eligibleFreeProductIds(promos, subtotal, promoNowMs).flatMap((id) => {
+      const product = products.find((p) => p.id === id)
+      if (!product || product.archived || product.stock <= 0) return []
+      return [{ id, name: product.name, imageUrl: product.imageUrl }]
+    })
+  }, [promos, subtotal, promoNowMs, products])
 
   // === Susun daftar: baris satuan apa adanya, anggota paket dikumpulkan jadi SATU kartu paket ===
   //
@@ -335,6 +357,9 @@ export default function MiniCart({ open, onClose }: { open: boolean; onClose: ()
                 />
               ),
             )}
+            {freeItems.map((item) => (
+              <MiniCartFreeRow key={`hadiah::${item.id}`} name={item.name} imageUrl={item.imageUrl} />
+            ))}
           </ul>
 
           {/* === Subtotal & aksi === */}
@@ -405,6 +430,30 @@ function MiniCartPromo({ progress }: { progress: PromoProgress }) {
 // (kotak ber-border zinc-300, radius, tombol "−"/"+" polos), hanya diperkecil agar muat di panel.
 // Bedanya: TANPA input ketik manual — di lebar 384px kolom angka yang bisa difokus hanya menambah
 // jalur kesalahan, sedangkan pengetikan bebas sudah tersedia di halaman keranjang penuh.
+// Satu baris produk hadiah promo: tanpa kontrol (jumlah & harga ditentukan promo, bukan pembeli).
+// Bentuknya mengikuti MiniCartRow supaya sejajar, dengan penanda "Bonus Promo" dan "Gratis".
+function MiniCartFreeRow({ name, imageUrl }: { name: string; imageUrl: string }) {
+  return (
+    <li className="flex items-center gap-2.5 px-3 py-3">
+      <span className="flex shrink-0 items-center justify-center rounded-lg border border-brand-light px-2 py-0.5 text-xs font-semibold text-brand-primary">
+        1× hadiah
+      </span>
+      <span className="relative h-11 w-11 shrink-0 overflow-hidden rounded-lg bg-brand-surface">
+        <Image src={imageUrl} alt={name} fill unoptimized sizes="44px" className="object-cover" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="inline-flex items-center gap-1 rounded-full bg-brand-light/40 px-2 py-0.5 text-[11px] font-semibold text-brand-primary">
+          <Gift className="h-3 w-3" /> Bonus Promo
+        </span>
+        <span className="line-clamp-2 text-sm leading-snug text-zinc-800" title={name}>
+          {name}
+        </span>
+        <span className="text-xs font-bold text-brand-primary">Gratis</span>
+      </span>
+    </li>
+  )
+}
+
 function MiniCartRow({
   line,
   onIncrement,
