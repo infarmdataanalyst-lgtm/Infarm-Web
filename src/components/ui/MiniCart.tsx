@@ -6,8 +6,8 @@
 // STRUKTURAL, bukan lewat kelas responsif: di mobile komponen ini tidak pernah di-mount, jadi
 // kontrol jumlah di bawah tak perlu penjagaan breakpoint tambahan.
 //
-// Isi: daftar item (kontrol jumlah, thumbnail, nama, harga, hapus), subtotal, tombol
-// "Lihat Keranjang" & "Checkout".
+// Isi: satu baris promo terdekat (progress bar), daftar item (kontrol jumlah, thumbnail, nama,
+// harga, hapus), subtotal, tombol "Lihat Keranjang" & "Checkout".
 //
 // Sumber data = cookie keranjang (reaktif via useSyncExternalStore), sama seperti halaman
 // keranjang. Karena keduanya membaca store yang sama, perubahan jumlah di sini LANGSUNG terlihat
@@ -21,7 +21,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
-import { Package, ShoppingBag, Trash2 } from 'lucide-react'
+import { CheckCircle2, Gift, Package, ShoppingBag, Trash2 } from 'lucide-react'
 import {
   subscribeCart,
   getCartSnapshot,
@@ -34,8 +34,10 @@ import {
 } from '@/lib/cart-client'
 import { cartLineKey, comboMultiplier } from '@/lib/cart-lines'
 import { formatRupiah } from '@/lib/format'
+import { computePromoProgress, type PromoProgress } from '@/lib/promo-cart'
 import type { StoredProduct } from '@/types/product'
 import type { ProductCombo } from '@/types/combo'
+import type { Promotion } from '@/types/promotion'
 
 // Maksimal tinggi area daftar sebelum discroll (≈3 baris item — baris kini lebih tinggi karena
 // memuat kontrol jumlah)
@@ -145,6 +147,39 @@ export default function MiniCart({ open, onClose }: { open: boolean; onClose: ()
     () => cart.reduce((sum, item) => sum + item.price * item.quantity, 0),
     [cart],
   )
+
+  // === Promo aktif ===
+  //
+  // Diambil ulang tiap panel dibuka (endpoint cached di server) agar promo yang baru kedaluwarsa /
+  // dinonaktifkan tak tertinggal selama header tetap ter-mount lintas navigasi. Gagal → strip
+  // promo tidak tampil, panel lain tetap jalan.
+  const [promos, setPromos] = useState<Promotion[]>([])
+  const adaIsi = cart.length > 0
+  useEffect(() => {
+    if (!open || !adaIsi) return
+    const controller = new AbortController()
+    fetch('/api/promotions/active', { signal: controller.signal })
+      .then((res) => res.json())
+      .then((data: { promotions?: Promotion[] }) => {
+        if (Array.isArray(data.promotions)) setPromos(data.promotions)
+      })
+      .catch(() => {})
+    return () => controller.abort()
+  }, [open, adaIsi])
+
+  // Hanya SATU promo yang ditampilkan (panel sempit): promo belum tercapai dengan sisa terkecil —
+  // target paling realistis untuk mendorong tambah belanja. Semua sudah tercapai → tampilkan yang
+  // ambang minimalnya tertinggi (hadiah terbesar). Rincian semua promo tetap di /keranjang.
+  //
+  // Dasar hitung = SELURUH isi keranjang, beda dengan /keranjang yang hanya item tercentang:
+  // mini cart tak punya checkbox, dan tombol Checkout di sini memang membawa seluruh isi keranjang.
+  const featuredPromo: PromoProgress | null = useMemo(() => {
+    const progress = computePromoProgress(promos, subtotal)
+    if (progress.length === 0) return null
+    const belum = progress.filter((p) => !p.reached).sort((a, b) => a.remaining - b.remaining)
+    if (belum.length > 0) return belum[0]
+    return progress.reduce((best, p) => (p.promo.minPurchase > best.promo.minPurchase ? p : best))
+  }, [promos, subtotal])
 
   // === Susun daftar: baris satuan apa adanya, anggota paket dikumpulkan jadi SATU kartu paket ===
   //
@@ -278,6 +313,8 @@ export default function MiniCart({ open, onClose }: { open: boolean; onClose: ()
         </div>
       ) : (
         <>
+          {featuredPromo && <MiniCartPromo progress={featuredPromo} />}
+
           {/* === Daftar item (scroll bila lebih dari ±3 baris) === */}
           <ul className={`${LIST_MAX_HEIGHT} divide-y divide-zinc-100 overflow-y-auto`}>
             {entries.map((entry) =>
@@ -332,6 +369,32 @@ export default function MiniCart({ open, onClose }: { open: boolean; onClose: ()
             </div>
           </div>
         </>
+      )}
+    </div>
+  )
+}
+
+// Strip promo ringkas di atas daftar item: ikon + pesan, lalu progress bar tipis bila belum
+// tercapai. Bahasa visual sama dengan CartPromoList di halaman keranjang, hanya dirampingkan.
+function MiniCartPromo({ progress }: { progress: PromoProgress }) {
+  const { reached, percent, message } = progress
+  return (
+    <div className="border-b border-zinc-100 px-4 py-2.5" aria-live="polite">
+      <div className="flex items-start gap-2 text-xs">
+        {reached ? (
+          <CheckCircle2 className="mt-px h-3.5 w-3.5 flex-none text-brand-primary" />
+        ) : (
+          <Gift className="mt-px h-3.5 w-3.5 flex-none text-brand-primary" />
+        )}
+        <p className={reached ? 'font-semibold text-brand-primary' : 'text-zinc-700'}>{message}</p>
+      </div>
+      {!reached && (
+        <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-brand-light/40">
+          <div
+            className="h-full rounded-full bg-brand-primary transition-all"
+            style={{ width: `${percent}%` }}
+          />
+        </div>
       )}
     </div>
   )
