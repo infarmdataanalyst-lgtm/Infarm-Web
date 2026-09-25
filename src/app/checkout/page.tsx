@@ -472,6 +472,18 @@ export default function CheckoutPage() {
     })
   }, [freeProductIds, productById, hadiahTakTerkirim])
 
+  // Semua hadiah yang TIDAK akan dikirim meski syaratnya tercapai: yang tak bisa ikut dikirim dari
+  // gudang pengirim (hadiahTakTerkirim) DAN yang stoknya habis di semua gudang / diarsipkan. Dulu
+  // kasus kedua hilang diam-diam dari ringkasan — padahal keranjang sudah menjanjikannya.
+  // Keduanya dijelaskan dengan kotak peringatan yang sama sebelum pembeli membayar.
+  const hadiahTidakDikirim = useMemo(() => {
+    const habis = freeProductIds.filter((id) => {
+      const product = productById.get(id)
+      return !!product && (!!product.archived || (typeof product.stock === 'number' && product.stock <= 0))
+    })
+    return [...new Set([...hadiahTakTerkirim, ...habis])]
+  }, [freeProductIds, productById, hadiahTakTerkirim])
+
   // Daftar untuk ditampilkan di ringkasan = item beli + item hadiah promo.
   const summaryItems = useMemo(
     () => [...orderItems, ...freeCheckoutItems],
@@ -903,7 +915,7 @@ export default function CheckoutPage() {
           {/* Hadiah yang tak bisa ikut dikirim — dikatakan TERUS TERANG sebelum pembeli membayar.
               Keputusan pemilik (25 Sep 2026): pesanan tetap boleh dilanjutkan, tapi pembeli tak boleh
               baru tahu setelah paketnya datang tanpa hadiah yang dijanjikan di keranjang. */}
-          {hadiahTakTerkirim.length > 0 && (
+          {hadiahTidakDikirim.length > 0 && (
             <div className="bg-white px-4 pb-4 lg:rounded-b-2xl">
               <div
                 role="alert"
@@ -915,7 +927,7 @@ export default function CheckoutPage() {
                   <p className="leading-relaxed">
                     Hadiah promo{' '}
                     <span className="font-semibold">
-                      {hadiahTakTerkirim
+                      {hadiahTidakDikirim
                         .map((id) => productById.get(id)?.name ?? 'produk hadiah')
                         .join(', ')}
                     </span>{' '}

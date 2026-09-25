@@ -21,7 +21,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
-import { CheckCircle2, Gift, Package, ShoppingBag, Trash2 } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Gift, Package, ShoppingBag, Trash2 } from 'lucide-react'
 import {
   subscribeCart,
   getCartSnapshot,
@@ -34,7 +34,12 @@ import {
 } from '@/lib/cart-client'
 import { cartLineKey, comboMultiplier } from '@/lib/cart-lines'
 import { formatRupiah } from '@/lib/format'
-import { computePromoProgress, eligibleFreeProductIds, type PromoProgress } from '@/lib/promo-cart'
+import {
+  computePromoProgress,
+  eligibleFreeProductIds,
+  unavailableGiftIds,
+  type PromoProgress,
+} from '@/lib/promo-cart'
 import type { StoredProduct } from '@/types/product'
 import type { ProductCombo } from '@/types/combo'
 import type { Promotion } from '@/types/promotion'
@@ -186,11 +191,12 @@ export default function MiniCart({ open, onClose }: { open: boolean; onClose: ()
   //   belum    → hanya SATU dengan progress bar: yang sisanya terkecil (target paling realistis).
   //              Sisanya diringkas jadi tautan "+N promo lainnya" ke /keranjang, yang memuat semua.
   const promoSummary = useMemo(() => {
-    const progress = computePromoProgress(promos, subtotal)
+    // Hadiah yang stoknya habis di semua gudang → pesan jujur, bukan "Selamat!"
+    const progress = computePromoProgress(promos, subtotal, unavailableGiftIds(promos, products))
     const tercapai = progress.filter((p) => p.reached)
     const belum = progress.filter((p) => !p.reached).sort((a, b) => a.remaining - b.remaining)
     return { tercapai, berikutnya: belum[0] ?? null, lainnya: Math.max(0, belum.length - 1) }
-  }, [promos, subtotal])
+  }, [promos, subtotal, products])
 
   // === Produk hadiah promo yang sudah tercapai ===
   //
@@ -424,12 +430,20 @@ function MiniCartPromos({
   return (
     <div className="space-y-1.5 border-b border-zinc-100 px-4 py-2.5" aria-live="polite">
       {/* Semua promo yang sudah tercapai */}
-      {tercapai.map(({ promo, message }) => (
-        <div key={promo.id} className="flex items-start gap-2 text-xs">
-          <CheckCircle2 className="mt-px h-3.5 w-3.5 flex-none text-brand-primary" />
-          <p className="font-semibold text-brand-primary">{message}</p>
-        </div>
-      ))}
+      {tercapai.map(({ promo, message, giftOutOfStock }) =>
+        giftOutOfStock ? (
+          // Syarat tercapai tapi stok hadiahnya habis — jangan dirayakan
+          <div key={promo.id} className="flex items-start gap-2 text-xs">
+            <AlertTriangle className="mt-px h-3.5 w-3.5 flex-none text-orange-600" />
+            <p className="font-semibold text-orange-700">{message}</p>
+          </div>
+        ) : (
+          <div key={promo.id} className="flex items-start gap-2 text-xs">
+            <CheckCircle2 className="mt-px h-3.5 w-3.5 flex-none text-brand-primary" />
+            <p className="font-semibold text-brand-primary">{message}</p>
+          </div>
+        ),
+      )}
 
       {/* Satu promo terdekat yang belum tercapai, dengan progress bar */}
       {berikutnya && (

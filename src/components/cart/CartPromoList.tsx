@@ -3,7 +3,7 @@
 // tercapai). Presentational — progres & pesan dihitung di parent (lib/promo-cart). Section
 // disembunyikan bila tidak ada promo. Saat loading menampilkan skeleton ringan.
 
-import { Gift, CheckCircle2 } from 'lucide-react'
+import { AlertTriangle, Gift, CheckCircle2 } from 'lucide-react'
 import type { PromoProgress } from '@/lib/promo-cart'
 
 export default function CartPromoList({
@@ -20,15 +20,28 @@ export default function CartPromoList({
 
   return (
     <div className="mx-3 mt-3 space-y-2">
-      {promos.map(({ promo, reached, percent, message }) => (
+      {promos.map(({ promo, reached, percent, message, giftOutOfStock }) => (
         <div key={promo.id} className="rounded-lg bg-white p-3 shadow-sm">
           <div className="flex items-start gap-2 text-sm">
-            {reached ? (
+            {giftOutOfStock ? (
+              // Syarat tercapai tapi hadiahnya habis — jangan dirayakan
+              <AlertTriangle className="mt-0.5 h-4 w-4 flex-none text-orange-600" />
+            ) : reached ? (
               <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none text-brand-primary" />
             ) : (
               <Gift className="mt-0.5 h-4 w-4 flex-none text-brand-primary" />
             )}
-            <p className={reached ? 'font-semibold text-brand-primary' : 'text-zinc-700'}>{message}</p>
+            <p
+              className={
+                giftOutOfStock
+                  ? 'font-semibold text-orange-700'
+                  : reached
+                    ? 'font-semibold text-brand-primary'
+                    : 'text-zinc-700'
+              }
+            >
+              {message}
+            </p>
           </div>
 
           {/* Progress bar hanya saat belum tercapai */}
