@@ -25,7 +25,12 @@ import {
   setCheckoutItems,
   setCheckoutPromo,
 } from '@/lib/cart-client'
-import { computeOrderPromos, computePromoProgress, computePromoRewards } from '@/lib/promo-cart'
+import {
+  computeOrderPromos,
+  computePromoProgress,
+  computePromoRewards,
+  unavailableGiftIds,
+} from '@/lib/promo-cart'
 import { cartLineKey, comboMultiplier } from '@/lib/cart-lines'
 import CartItemsSkeleton from '@/components/cart/CartItemsSkeleton'
 
@@ -383,7 +388,12 @@ export default function CartPage() {
   const allSelected = items.length > 0 && items.every((i) => i.selected)
 
   // === Promo: progres tiap promo + agregasi hadiah yang tercapai (berdasar item tercentang) ===
-  const promoProgress = useMemo(() => computePromoProgress(promos, selectedTotal), [promos, selectedTotal])
+  // Hadiah yang stoknya habis di semua gudang → pesan promo jujur, bukan "Selamat!"
+  const hadiahHabis = useMemo(() => unavailableGiftIds(promos, omsProducts), [promos, omsProducts])
+  const promoProgress = useMemo(
+    () => computePromoProgress(promos, selectedTotal, hadiahHabis),
+    [promos, selectedTotal, hadiahHabis],
+  )
   const promoRewards = useMemo(() => computePromoRewards(promos, selectedTotal), [promos, selectedTotal])
 
   // ANGKA UANG diambil dari computeOrderPromos — fungsi yang SAMA PERSIS dengan yang dipakai

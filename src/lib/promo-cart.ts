@@ -17,6 +17,10 @@ export type PromoProgress = {
   remaining: number // sisa belanja menuju target (>= 0)
   percent: number // 0–100 untuk progress bar
   message: string // pesan progres ({sisa} diganti) ATAU pesan sukses bila tercapai
+  // Promo hadiah yang syaratnya TERCAPAI tapi stok hadiahnya habis di semua gudang. Pesannya jujur
+  // ("…tapi stok hadiahnya sedang habis"), bukan "Selamat! Kamu mendapatkan …" — hadiah itu tak akan
+  // dikirim, dan menjanjikannya di keranjang adalah harapan palsu.
+  giftOutOfStock: boolean
 }
 
 export type PromoRewards = {
@@ -43,17 +47,49 @@ function rewardLabel(promo: Promotion): string {
 }
 
 // Hitung progres tiap promo terhadap subtotal keranjang.
-export function computePromoProgress(promos: Promotion[], subtotal: number): PromoProgress[] {
+// `unavailableGiftIds` = produk hadiah yang tak bisa diberikan (stok habis di semua gudang /
+// diarsipkan). Pemanggil yang belum tahu stoknya boleh mengosongkannya.
+export function computePromoProgress(
+  promos: Promotion[],
+  subtotal: number,
+  unavailableGiftIds: readonly string[] = [],
+): PromoProgress[] {
   return promos.map((promo) => {
     const reached = subtotal >= promo.minPurchase
     const remaining = Math.max(0, promo.minPurchase - subtotal)
     const percent =
       promo.minPurchase > 0 ? Math.min(100, Math.round((subtotal / promo.minPurchase) * 100)) : 100
-    const message = reached
-      ? `🎉 Selamat! Kamu mendapatkan ${rewardLabel(promo)}`
-      : promo.progressMessage.split('{sisa}').join(formatRupiah(remaining))
-    return { promo, reached, remaining, percent, message }
+    const giftOutOfStock =
+      reached &&
+      promo.type === 'free_product' &&
+      !!promo.freeProductId &&
+      unavailableGiftIds.includes(promo.freeProductId)
+    const message = giftOutOfStock
+      ? `Belanjaanmu memenuhi syarat ${promo.name}, tapi stok hadiah ${rewardLabel(promo)} sedang habis`
+      : reached
+        ? `🎉 Selamat! Kamu mendapatkan ${rewardLabel(promo)}`
+        : promo.progressMessage.split('{sisa}').join(formatRupiah(remaining))
+    return { promo, reached, remaining, percent, message, giftOutOfStock }
   })
+}
+
+// Produk hadiah promo yang tak bisa diberikan menurut data produk yang sudah dimuat: diarsipkan
+// atau stoknya 0 di semua gudang. Aturannya sama dengan server (/api/orders/create melewati hadiah
+// seperti ini dengan FREE_PRODUCT_UNAVAILABLE). Produk yang belum dimuat TIDAK dianggap habis.
+export function unavailableGiftIds(
+  promos: Promotion[],
+  products: { id: string; stock?: number; archived?: boolean }[],
+): string[] {
+  const ids: string[] = []
+  for (const promo of promos) {
+    if (promo.type !== 'free_product' || !promo.freeProductId) continue
+    const p = products.find((x) => x.id === promo.freeProductId)
+    if (!p) continue
+    if (p.archived || (typeof p.stock === 'number' && p.stock <= 0)) {
+      if (!ids.includes(p.id)) ids.push(p.id)
+    }
+  }
+  return ids
 }
 
 // Agregasi hadiah dari promo yang TERCAPAI (subtotal ≥ minimal pembelian).
