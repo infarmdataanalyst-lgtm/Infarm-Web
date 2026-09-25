@@ -74,9 +74,9 @@ const OPTIONS_URL = '/api/mengantar/shipping/options'
 export async function fetchShippingOptions(
   destinationId: string,
   weight: number,
-  items: { productId: string; quantity: number; variantId?: string }[],
+  items: { productId: string; quantity: number; variantId?: string; isGift?: boolean }[],
   signal?: AbortSignal,
-): Promise<{ options: WarehouseShippingOption[]; reason?: string }> {
+): Promise<{ options: WarehouseShippingOption[]; reason?: string; droppedGiftIds?: string[] }> {
   const res = await fetch(OPTIONS_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -86,10 +86,11 @@ export async function fetchShippingOptions(
   const json = (await res.json().catch(() => ({}))) as {
     options?: WarehouseShippingOption[]
     reason?: string
+    droppedGiftIds?: string[]
     error?: string
   }
   if (!res.ok) throw new Error(json.error ?? 'Gagal memuat ongkos kirim.')
-  return { options: json.options ?? [], reason: json.reason }
+  return { options: json.options ?? [], reason: json.reason, droppedGiftIds: json.droppedGiftIds }
 }
 
 // Cek ongkir SATU gudang (gudang default) — jalur lama, TANPA pemanggil saat ini.

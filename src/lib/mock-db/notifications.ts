@@ -26,8 +26,12 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { readProducts } from '@/lib/mock-db/products'
 import { readOrderIssues } from '@/lib/mock-db/order-issues'
 import { ORDER_ISSUE_META } from '@/lib/order-issues'
+import { readPromotions } from '@/lib/mock-db/promotions'
+import { readStockRows, readWarehouses } from '@/lib/mock-db/warehouses'
+import { isMultiWarehouse } from '@/lib/warehouse'
+import { isPromotionExpired, isPromotionScheduled } from '@/types/promotion'
 
-export type NotificationType = 'stok_habis' | 'ulasan_baru' | 'pesanan_bermasalah'
+export type NotificationType = 'stok_habis' | 'ulasan_baru' | 'pesanan_bermasalah' | 'stok_hadiah'
 
 export type OmsNotification = {
   // id stabil lintas request (`issue:<jenis>:<invoice>` / `stock:<productId>` / `review:<id>`)
@@ -194,6 +198,86 @@ async function buildIssueNotifications(): Promise<OmsNotification[]> {
   })
 }
 
+// === Sumber 5: stok hadiah promo habis di salah satu gudang ===
+//
+// Pesanan dikirim dari SATU gudang, dan hadiah promo ikut menentukan gudangnya (keputusan pemilik
+// 25 Sep 2026). Gudang yang tak punya stok hadiah tak bisa dipilih untuk pesanan yang mendapat
+// hadiah: ongkir pembeli bisa naik (dikirim dari gudang lain), atau — bila tak ada gudang yang
+// punya barang pesanan sekaligus hadiahnya — hadiahnya dilewati. Peringatan ini supaya admin
+// mengisi stok hadiah di SETIAP gudang aktif selama promo berjalan.
+//
+// Hanya mode multi-gudang, hanya promo hadiah yang aktif & belum kedaluwarsa (termasuk yang
+// terjadwal — lebih baik diisi sebelum promonya mulai). Ikut aturan berkas ini: KEADAAN, bukan
+// peristiwa — lenyap sendiri begitu stoknya diisi atau promonya berakhir.
+async function buildGiftStockNotifications(): Promise<OmsNotification[]> {
+  if (!(await isMultiWarehouse())) return []
+
+  const nowMs = Date.now()
+  const [promotions, warehouses] = await Promise.all([readPromotions(), readWarehouses(true)])
+  const running = promotions.filter(
+    (p) =>
+      p.type === 'free_product' &&
+      p.isActive &&
+      p.freeProductId &&
+      !isPromotionExpired(p.endAt, nowMs),
+  )
+  if (running.length === 0 || warehouses.length === 0) return []
+
+  const giftIds = [...new Set(running.map((p) => p.freeProductId as string))]
+  const rows = await readStockRows({ productIds: giftIds })
+  // Tak ada satu baris stok pun → tabel belum ada / gangguan baca / hadiah belum pernah distok di
+  // gudang mana pun. Kasus terakhir sudah ditangkap notifikasi "stok habis" (stok 0 seluruh
+  // gudang); membunyikan N peringatan per gudang di atas itu hanya menambah bising.
+  if (rows.length === 0) return []
+
+  const stockAt = new Map<string, number>()
+  for (const row of rows) {
+    if (row.variantId) continue // hadiah promo tak mengenal varian
+    stockAt.set(`${row.productId}::${row.warehouseId}`, row.stok)
+  }
+
+  // Kapan stok hadiah di gudang itu terakhir menyentuh 0 — waktu notifikasi (lihat
+  // readStockOutTimestamps untuk alasan yang sama).
+  const supabase = createAdminClient()
+  const { data: mutations } = await supabase
+    .from('stock_mutations')
+    .select('product_id, warehouse_id, created_at')
+    .in('product_id', giftIds)
+    .eq('stok_after', 0)
+    .order('created_at', { ascending: false })
+    .limit(SOURCE_LIMIT)
+  const habisSejak = new Map<string, string>()
+  for (const m of (mutations ?? []) as {
+    product_id: string | null
+    warehouse_id: string | null
+    created_at: string
+  }[]) {
+    const key = `${m.product_id}::${m.warehouse_id}`
+    if (!habisSejak.has(key)) habisSejak.set(key, m.created_at)
+  }
+
+  const out: OmsNotification[] = []
+  for (const promo of running) {
+    const giftId = promo.freeProductId as string
+    const giftName = promo.freeProductName ?? 'Produk hadiah'
+    const terjadwal = isPromotionScheduled(promo.startAt, nowMs)
+    for (const w of warehouses) {
+      const key = `${giftId}::${w.id}`
+      if ((stockAt.get(key) ?? 0) > 0) continue
+      out.push({
+        id: `gift:${promo.id}:${w.id}`,
+        type: 'stok_hadiah' as const,
+        title: `Stok hadiah promo habis di ${w.nama}`,
+        message: `${giftName} — promo "${promo.name}"${terjadwal ? ' (terjadwal)' : ''}`,
+        href: '/oms/dashboard/gudang/stok',
+        createdAt: habisSejak.get(key) ?? null,
+        unread: false, // diisi pemanggil setelah lastSeen diketahui
+      })
+    }
+  }
+  return out
+}
+
 // === Gabungan ===
 
 // Mengurutkan terbaru dulu. Notifikasi tanpa waktu (produk habis tanpa jejak mutasi) ditaruh
@@ -227,13 +311,14 @@ export async function getOmsNotifications(options: {
 }): Promise<NotificationPage> {
   const { lastSeen, limit = 10, offset = 0 } = options
 
-  const [stock, reviews, issues] = await Promise.all([
+  const [stock, reviews, issues, giftStock] = await Promise.all([
     buildStockNotifications(),
     buildReviewNotifications(),
     buildIssueNotifications(),
+    buildGiftStockNotifications(),
   ])
 
-  const all = [...stock, ...reviews, ...issues]
+  const all = [...stock, ...reviews, ...issues, ...giftStock]
     .map((n) => ({
       ...n,
       // Notifikasi tanpa waktu dihitung belum dibaca HANYA sebelum admin pernah membuka panel.

@@ -32,6 +32,7 @@ import {
 import { getWarehouseById } from '@/lib/mock-db/warehouses'
 import { MENGANTAR_ORIGIN_ID_REGEX } from '@/lib/warehouse-validation'
 import {
+  dropUnshippableGifts,
   getCachedShippingOptions,
   resolveShippingOptions,
   shippingOptionsKey,
@@ -601,6 +602,34 @@ export async function POST(request: Request) {
       isPromoItem: true,
       promotionId: promo.id,
     })
+  }
+
+  // === Hadiah yang tak bisa ikut dikirim dari satu gudang bersama barang pesanan ===
+  //
+  // Aturan yang SAMA dengan /api/mengantar/shipping/options (dropUnshippableGifts): bila tak ada
+  // gudang yang punya barang pesanan sekaligus hadiahnya, hadiah itu dilewati — bukan pesanannya
+  // yang gagal "stok tidak mencukupi". Checkout sudah memberi tahu pembeli dan meminta ongkir
+  // tanpa hadiah itu, jadi kebutuhan stok & berat di bawah tetap cocok dengan tarif pilihannya.
+  const giftPlan = await dropUnshippableGifts(
+    pricedItems.map((it) => ({
+      productId: it.productId,
+      quantity: it.quantity,
+      ...(it.variantId ? { variantId: it.variantId } : {}),
+      ...(it.isPromoItem ? { isGift: true } : {}),
+    })),
+  )
+  for (const giftId of giftPlan.droppedGiftIds) {
+    const idx = pricedItems.findIndex((it) => it.isPromoItem && it.productId === giftId)
+    if (idx === -1) continue
+    const [dropped] = pricedItems.splice(idx, 1)
+    const promoIdx = freeProductPromos.findIndex((p) => p.id === dropped.promotionId)
+    if (promoIdx !== -1) freeProductPromos.splice(promoIdx, 1)
+    freeProductWarnings.push({
+      code: 'FREE_PRODUCT_UNAVAILABLE',
+      promotionId: dropped.promotionId ?? '',
+      productName: dropped.name,
+    })
+    console.warn(`${LOG} hadiah ${giftId} dilewati: tak ada gudang yang punya barang pesanan + hadiahnya`)
   }
 
   // === Kebutuhan stok & berat kirim — DIHITUNG DI SINI, sebelum ongkir ===

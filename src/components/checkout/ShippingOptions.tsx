@@ -13,7 +13,7 @@
 // memilih kurir & harga. Gudang asal ikut tersimpan di pilihan (`warehouseId`) dan dikirim saat
 // membuat order, lalu diverifikasi ulang di server.
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronRight, Loader2, AlertTriangle, Check, X } from 'lucide-react'
 import { formatRupiah } from '@/lib/format'
 import BottomSheet from '@/components/checkout/BottomSheet'
@@ -40,12 +40,13 @@ export default function ShippingOptions({
   selected,
   onSelect,
   refreshKey = 0,
+  onGiftsUnavailable,
 }: {
   destinationId: string
   weight: number
   // Isi keranjang — dipakai server untuk menilai gudang mana yang stoknya cukup sebelum
   // membandingkan ongkir. Tanpa ini perbandingan bisa menawarkan gudang yang barangnya tak ada.
-  items: { productId: string; quantity: number; variantId?: string }[]
+  items: { productId: string; quantity: number; variantId?: string; isGift?: boolean }[]
   selected: WarehouseShippingOption | null
   onSelect: (courier: WarehouseShippingOption | null) => void
   // Dinaikkan induk untuk MEMAKSA tarik ulang tarif walau tujuan/berat/keranjang tak berubah —
@@ -53,6 +54,10 @@ export default function ShippingOptions({
   // Ikut membentuk kunci daftar tarif, jadi daftar lama langsung tak berlaku dan efek auto-pilih
   // tak sempat memilih ulang tarif basi selagi tarif baru diambil.
   refreshKey?: number
+  // Server menilai sebagian hadiah promo tak bisa ikut dikirim (tak ada gudang yang punya barang
+  // pesanan sekaligus hadiahnya). Induk membuang hadiah itu dari tampilan & berat, lalu `items`
+  // berubah dan tarif diminta ulang otomatis.
+  onGiftsUnavailable?: (productIds: string[]) => void
 }) {
   // Daftar tarif DISIMPAN BERSAMA kunci permintaan yang menghasilkannya (tujuan + berat + isi
   // keranjang), lalu hanya dipakai bila kuncinya sama dengan permintaan yang berlaku sekarang.
@@ -74,6 +79,13 @@ export default function ShippingOptions({
   const [emptyReason, setEmptyReason] = useState('')
   const [retry, setRetry] = useState(0)
 
+  // Callback induk disimpan di ref: bila masuk dependency efek fetch, tiap render induk (mis. tiap
+  // huruf yang diketik di form alamat) memicu tarikan ongkir ulang.
+  const onGiftsUnavailableRef = useRef(onGiftsUnavailable)
+  useEffect(() => {
+    onGiftsUnavailableRef.current = onGiftsUnavailable
+  }, [onGiftsUnavailable])
+
   const [open, setOpen] = useState(false)
   const [draftId, setDraftId] = useState('') // pilihan sementara di dalam sheet (belum dikonfirmasi)
 
@@ -82,7 +94,7 @@ export default function ShippingOptions({
   const itemsKey = useMemo(
     () =>
       items
-        .map((i) => `${i.productId}:${i.variantId ?? ''}:${i.quantity}`)
+        .map((i) => `${i.productId}:${i.variantId ?? ''}:${i.quantity}${i.isGift ? ':g' : ''}`)
         .sort()
         .join(','),
     [items],
@@ -102,45 +114,55 @@ export default function ShippingOptions({
     // items dibangun ulang dari itemsKey agar efek ini tidak bergantung pada referensi array
     const parsedItems = itemsKey
       ? itemsKey.split(',').map((entry) => {
-          const [productId, variantId, quantity] = entry.split(':')
+          const [productId, variantId, quantity, gift] = entry.split(':')
+          const isGift = gift === 'g' ? { isGift: true } : {}
           return variantId
-            ? { productId, variantId, quantity: Number(quantity) }
-            : { productId, quantity: Number(quantity) }
+            ? { productId, variantId, quantity: Number(quantity), ...isGift }
+            : { productId, quantity: Number(quantity), ...isGift }
         })
       : []
 
     // === Batas waktu sisi KLIEN ===
     //
-    // Server sudah membatasi panggilannya sendiri ke Mengantar (ESTIMATE_TIMEOUT_MS 4,5 dtk per
-    // origin di warehouse-shipping.ts), tapi TARIKAN INI — browser ke proxy kita — tak punya batas
+    // Server sudah membatasi panggilannya sendiri ke Mengantar (ESTIMATE_TIMEOUT_MS 8 dtk × 2
+    // percobaan per origin di warehouse-shipping.ts), tapi TARIKAN INI — browser ke proxy kita — tak punya batas
     // apa pun. Akibatnya, apa pun yang membuat proxy menggantung (instance serverless tersendat,
     // jaringan pembeli mati separuh, Mengantar hidup-tapi-diam) meninggalkan pembeli menatap
     // kerangka "Menghitung ongkos kirim…" SELAMANYA: tak ada pesan, tak ada tombol coba lagi, dan
     // tombol bayar tetap terkunci. Terbukti lewat uji kondisi tepi yang menahan proxy 60 detik.
     //
-    // 10 detik = jauh di atas jalur normal (server memanggil seluruh gudang PARALEL, masing-masing
-    // maksimal 4,5 detik, ditambah beberapa query Supabase) tapi masih di dalam rentang kesabaran
-    // manusia. Lebih panjang dari ini hanya memperlama penantian tanpa menaikkan peluang berhasil:
-    // kalau 10 detik belum menjawab, tarikan itu memang sudah tersesat.
-    const BATAS_KLIEN_MS = 10_000
+    // 20 detik = di atas kasus terburuk server (seluruh gudang PARALEL, masing-masing 2 × 8 detik,
+    // ditambah beberapa query Supabase). Dulu 10 detik, dipasang saat server masih 4,5 detik tanpa
+    // coba ulang — setelah batas server dinaikkan, browser menyerah LEBIH DULU dan membuang jawaban
+    // yang sebenarnya sedang dalam perjalanan.
+    const BATAS_KLIEN_MS = 20_000
     let kehabisanWaktu = false
     const timer = setTimeout(() => {
       kehabisanWaktu = true
       ctrl.abort()
     }, BATAS_KLIEN_MS)
 
+    // true = jawaban server meminta tarikan ulang (hadiah dibuang oleh induk) → kerangka "memuat"
+    // dipertahankan supaya tak berkedip ke keadaan kosong di antara dua tarikan.
+    let menungguTarikanUlang = false
+
     async function load() {
       setLoading(true)
       setError('')
       setEmptyReason('')
       try {
-        const { options, reason } = await fetchShippingOptions(
+        const { options, reason, droppedGiftIds } = await fetchShippingOptions(
           destinationId,
           weight,
           parsedItems,
           ctrl.signal,
         )
         if (ctrl.signal.aborted) return
+        if (reason === 'GIFT_UNAVAILABLE' && droppedGiftIds && droppedGiftIds.length > 0) {
+          menungguTarikanUlang = true
+          onGiftsUnavailableRef.current?.(droppedGiftIds)
+          return
+        }
         setHasilTarif({ kunci, options })
         if (options.length === 0) {
           if (reason === 'ESTIMATE_UNAVAILABLE') {
@@ -173,7 +195,7 @@ export default function ShippingOptions({
         clearTimeout(timer)
         // Idem: pada kehabisan waktu, `loading` WAJIB dimatikan walau signal ter-abort — kalau
         // tidak, pesan galat sudah ada tapi tertutup kerangka yang tak pernah berhenti berdenyut.
-        if (kehabisanWaktu || !ctrl.signal.aborted) setLoading(false)
+        if (kehabisanWaktu || (!ctrl.signal.aborted && !menungguTarikanUlang)) setLoading(false)
       }
     }
     load()

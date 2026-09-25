@@ -12,10 +12,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { AlertTriangle, Bell, MessageSquare, PackageX, ShoppingCart } from 'lucide-react'
+import { AlertTriangle, Bell, Gift, MessageSquare, PackageX, ShoppingCart } from 'lucide-react'
 
 // Hanya PERINGATAN — pesanan baru yang normal tidak lagi masuk lonceng (pemilik, 23 Sep 2026).
-type NotificationType = 'stok_habis' | 'ulasan_baru' | 'pesanan_bermasalah'
+type NotificationType = 'stok_habis' | 'ulasan_baru' | 'pesanan_bermasalah' | 'stok_hadiah'
 
 type NotificationItem = {
   id: string
@@ -74,6 +74,15 @@ function NotificationIcon({ type }: { type: NotificationType }) {
     return (
       <span className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-amber-50 text-amber-600">
         <MessageSquare className="h-4 w-4" aria-hidden />
+      </span>
+    )
+  }
+  // Stok hadiah promo habis di salah satu gudang — merah seperti "stok habis" (sama-sama soal
+  // stok), dengan ikon hadiah supaya jelas yang habis adalah bonus promonya.
+  if (type === 'stok_hadiah') {
+    return (
+      <span className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-red-50 text-red-600">
+        <Gift className="h-4 w-4" aria-hidden />
       </span>
     )
   }
