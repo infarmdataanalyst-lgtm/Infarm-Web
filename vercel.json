@@ -1,0 +1,18 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "regions": ["syd1"],
+  "crons": [
+    {
+      "path": "/api/cron/mengantar-pickup",
+      "schedule": "0 23 * * 0-5"
+    },
+    {
+      "path": "/api/cron/expire-orders",
+      "schedule": "0 1 * * *"
+    },
+    {
+      "path": "/api/cron/sync-delivered",
+      "schedule": "0 2 * * *"
+    }
+  ]
+}

@@ -36,6 +36,29 @@ export async function createClient() {
   )
 }
 
+// Membuat Supabase client anon TANPA cookie — untuk baca data yang memang publik.
+//
+// ── Kenapa terpisah dari createClient() di atas ──
+// createClient() memanggil cookies() untuk menyinkronkan sesi Supabase Auth. Dua alasan itu tak
+// cocok di sini:
+//   1. Storefront memakai guest checkout — tak ada sesi Supabase Auth untuk disinkronkan.
+//   2. Baca publik dibungkus unstable_cache (lihat mock-db/cached-reads.ts), dan Next.js MELARANG
+//      API dinamis seperti cookies() di dalamnya. Memakai createClient() di sana akan melempar
+//      saat runtime, bukan saat build.
+//
+// Bedanya dengan createAdminClient(): client ini TUNDUK pada RLS. Itulah gunanya — jalur baca
+// publik jadi punya lapisan pertahanan kedua di database, sehingga satu bug filter di kode aplikasi
+// tak langsung membocorkan baris yang sengaja disembunyikan (SEC-031, SEC-032).
+export function createPublicClient() {
+  return createSupabaseClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      auth: { persistSession: false, autoRefreshToken: false },
+    },
+  )
+}
+
 // Membuat Supabase client dengan service_role key (MENEMBUS RLS).
 // HANYA untuk operasi server tepercaya (mis. webhook, update stok, proses order).
 // Jangan pernah dipakai di komponen klien atau di-expose ke browser.

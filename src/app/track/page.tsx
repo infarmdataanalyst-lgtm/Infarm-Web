@@ -1,25 +1,31 @@
 // src/app/track/page.tsx
 // Halaman Lacak Pesanan (guest checkout, publik). State berdasar query `?order=INV-...`:
 //   - Tanpa param        → form pencarian nomor invoice
-//   - Param ditemukan    → kartu status: nomor pesanan + stepper + riwayat + kurir + alamat
+//   - Param ditemukan    → kartu status: pesanan + produk + stepper + detail pelacakan + kurir + alamat
 //   - Param tak ditemukan → kartu peringatan + form
 // Server Component: order dibaca REAL dari Supabase (getOrderByOrderId).
-// Riwayat perjalanan & stepper di-generate dari status+created_at (lib/tracking.ts) — sementara,
-// sampai tracking asli Mengantar tersedia.
+//
+// "Detail Pelacakan" memakai peristiwa REAL dari Mengantar (lib/mengantar-tracking.ts), diambil di
+// SERVER karena API key-nya ada di dalam URL endpoint DAN karena stepper memakai peristiwa yang
+// sama — mengambilnya dari klien berarti dua panggilan untuk satu halaman.
 
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import Image from 'next/image'
-import { Phone, MapPin, Package } from 'lucide-react'
+import { Phone, MapPin, Package, Clock } from 'lucide-react'
 import TrackSearchForm from '@/components/track/TrackSearchForm'
-import TrackingTimeline from '@/components/track/TrackingTimeline'
+import PayNowButton from '@/components/payment/PayNowButton'
 import ShippingStepper from '@/components/track/ShippingStepper'
-import { getOrderByOrderId } from '@/lib/mock-db/orders'
+import TrackingDetail from '@/components/track/TrackingDetail'
+import OrderItemsCard from '@/components/track/OrderItemsCard'
+import { getOrderByOrderId, markOrderDelivered } from '@/lib/mock-db/orders'
 import {
-  generateTrackingHistory,
-  getCurrentStepIndex,
+  displayStatus,
+  isDeliveredByCourier,
   isOrderCancelled,
+  resolveStepIndex,
 } from '@/lib/tracking'
+import { fetchTrackingDetail, trackingLabelsOf } from '@/lib/mengantar-tracking'
 import { toTitleCase } from '@/lib/mengantar'
 import { maskName, maskPhone, maskStreet } from '@/lib/mask'
 import type { Order } from '@/types/order'
@@ -42,8 +48,10 @@ export default async function TrackPage({ searchParams }: TrackPageProps) {
   return (
     <div className="flex min-h-screen flex-col bg-brand-surface pt-14 text-zinc-900">
       {/* Header hijau brand + tombol kembali */}
-      <header className="fixed inset-x-0 top-0 z-50 border-b border-black/5 bg-brand-header text-zinc-900 shadow-sm">
-        <div className="mx-auto flex h-14 max-w-3xl items-center gap-3 px-4">
+      <header className="fixed inset-x-0 top-0 z-50 rounded-b-[2rem] bg-brand-header/90 text-white shadow-sm backdrop-blur-md">
+        {/* max-w mengikuti <main> di lg+ supaya logo sejajar dengan tepi kiri kartu, bukan
+            mengapung di tengah saat halaman melebar jadi dua kolom. */}
+        <div className="mx-auto flex h-14 max-w-3xl items-center gap-3 px-4 lg:max-w-5xl">
           {/* Back → halaman Lacak Pesanan (satu halaman sebelumnya), bukan beranda */}
           <Link href="/track-order" aria-label="Kembali ke Lacak Pesanan" className="rounded-md p-1 transition active:scale-95">
             <BackIcon />
@@ -55,7 +63,9 @@ export default async function TrackPage({ searchParams }: TrackPageProps) {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-md flex-1 px-4 py-5">
+      {/* max-w-md di mobile (satu kolom), melebar ke max-w-5xl di lg+ agar kartu produk dan
+          timeline pengiriman bisa berdampingan alih-alih menumpuk di kolom sempit. */}
+      <main className="mx-auto w-full max-w-md flex-1 px-4 py-5 lg:max-w-5xl">
         {found ? (
           <TrackResult order={found} />
         ) : (
@@ -68,26 +78,85 @@ export default async function TrackPage({ searchParams }: TrackPageProps) {
 
 // === Hasil pelacakan ===
 
-function TrackResult({ order }: { order: Order }) {
+async function TrackResult({ order }: { order: Order }) {
   const cancelled = isOrderCancelled(order)
-  const currentStep = getCurrentStepIndex(order.status)
-  const history = generateTrackingHistory(order)
   const invoiceLabel = order.orderId.startsWith('#') ? order.orderId : `#${order.orderId}`
+  // Pesanan yang masih menunggu pembayaran harus bisa dibayar DARI SINI juga.
+  //
+  // Sebelumnya tombolnya hanya ada di halaman /checkout/success, yang praktis cuma sekali dilihat
+  // pembeli tepat setelah memesan. Begitu ia menutup tab lalu mencari pesanannya lewat Lacak
+  // Pesanan — jalan yang paling wajar — tak ada satu pun tombol bayar di layar, padahal pesanannya
+  // akan batal sendiri dalam 24 jam.
+  const awaitingPayment = !cancelled && order.paymentStatus !== 'Lunas'
+
+  // === Detail pelacakan dari kurir ===
+  //
+  // Diambil DI SERVER, bukan di komponen klien, karena dua alasan:
+  //   1. Stepper di atas juga memakai peristiwa ini (lihat resolveStepIndex) — mengambilnya dari
+  //      klien berarti dua panggilan Mengantar untuk satu halaman.
+  //   2. API key Mengantar berada di dalam URL endpoint; ia tak boleh pernah menyeberang ke browser.
+  //
+  // Pesanan yang belum punya resi TIDAK dipanggilkan sama sekali — tak ada yang bisa dilacak, dan
+  // memanggilnya hanya membuang kuota. Pesanan dibatalkan juga dilewati.
+  const trackingResult =
+    !cancelled && order.trackingNumber ? await fetchTrackingDetail(order.trackingNumber) : null
+  const trackingEvents = trackingResult?.ok ? trackingResult.events : []
+  const trackingFailure = trackingResult && !trackingResult.ok ? trackingResult.reason : undefined
+
+  // Stepper mengikuti yang TERTINGGI antara status DB dan kabar kurir — paket yang sudah bergerak
+  // tak boleh tampil "Diproses" hanya karena tak ada yang memperbarui status di OMS.
+  //
+  // "Kabar kurir" = peristiwa perjalanan DITAMBAH status paket terkini (`courierStatus`), disatukan
+  // oleh trackingLabelsOf. Riwayat saja tidak cukup: pada resi JO1030839137 di sandbox, riwayatnya
+  // berakhir "Returned to Sender" bertanggal 25 Jun 2026 sementara status paketnya "DELIVERED" per
+  // 4 Sep 15:25 — riwayat sandbox memang data contoh bawaan Mengantar, sama untuk semua resi.
+  const eventLabels = trackingLabelsOf(trackingResult)
+
+  // === Mengunci tanggal terima, gratis ===
+  //
+  // Halaman ini SUDAH memanggil kurir beberapa baris di atas, jadi jawabannya sudah di tangan —
+  // menyimpannya tak menambah satu pun panggilan. Dan yang membuka halaman ini justru orang yang
+  // paling ingin mengulas, sehingga haknya terbuka saat itu juga alih-alih menunggu cron harian
+  // atau menunggu admin membuka OMS.
+  //
+  // Aman dipanggil saat render: `markOrderDelivered` dijaga `where delivered_at is null`, jadi
+  // pemanggilan berulang (render ulang, prefetch, pembeli memuat ulang halaman) tak menggeser
+  // tanggalnya. `order_status` tidak disentuh sama sekali.
+  if (isDeliveredByCourier(eventLabels)) await markOrderDelivered(order.orderId)
+
+  const currentStep = resolveStepIndex(order.status, eventLabels)
+  // Badge memakai sumber yang SAMA dengan stepper, bukan `order.status` mentah — kalau tidak,
+  // keduanya bisa saling bertentangan di layar yang sama.
+  const badgeStatus = displayStatus(order.status, eventLabels)
 
   return (
     <div className="space-y-4">
-      {/* 1 — Nomor pesanan + badge status */}
-      <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="text-sm text-gray-500">Nomor Pesanan</p>
-            <p className="mt-1 text-lg font-bold text-gray-900">{invoiceLabel}</p>
-          </div>
-          <StatusBadge status={order.status ?? 'Diproses'} cancelled={cancelled} />
-        </div>
-      </section>
+      {/* Dua kolom di lg+ — kiri: identitas pesanan & produk yang dibeli (menjawab "pesanan mana
+          yang sedang saya lacak"), kanan: status pengiriman & tujuan. Di mobile grid runtuh jadi
+          satu kolom dan urutannya mengikuti urutan DOM: pesanan → produk → status → riwayat →
+          kurir → alamat. `items-start` supaya kolom yang lebih pendek tak ikut meregang. */}
+      <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
+        {/* === Kolom kiri === */}
+        <div className="space-y-4">
+          {/* 1 — Nomor pesanan + tanggal + badge status */}
+          <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm text-gray-500">Nomor Pesanan</p>
+                <p className="mt-1 text-lg font-bold text-gray-900">{invoiceLabel}</p>
+                <p className="mt-1 text-xs text-gray-400">Dibuat {formatOrderDate(order.date)}</p>
+              </div>
+              <StatusBadge status={badgeStatus} cancelled={cancelled} />
+            </div>
+          </section>
 
-      {/* 2 — Stepper status pengiriman (disembunyikan bila dibatalkan) */}
+          {/* 2 — Kartu produk yang dibeli + ringkasan biaya */}
+          <OrderItemsCard order={order} />
+        </div>
+
+        {/* === Kolom kanan === */}
+        <div className="space-y-4">
+      {/* 3 — Stepper status pengiriman (disembunyikan bila dibatalkan) */}
       {!cancelled && (
         <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
           <h2 className="mb-5 text-sm font-bold text-gray-900">Status Pengiriman</h2>
@@ -95,17 +164,17 @@ function TrackResult({ order }: { order: Order }) {
         </section>
       )}
 
-      {/* 3 — Riwayat perjalanan (timeline) */}
-      <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
-        <h2 className="mb-4 text-sm font-bold text-gray-900">Riwayat Perjalanan</h2>
-        {history.length > 0 ? (
-          <TrackingTimeline events={history} />
-        ) : (
-          <p className="text-sm text-gray-400">Belum ada riwayat perjalanan.</p>
-        )}
-      </section>
+      {/* 4 — Detail pelacakan (peristiwa REAL dari kurir, terbaru di atas).
+              Menggantikan "Riwayat Perjalanan" yang isinya dikarang dari order_status +
+              created_at — lihat catatan di lib/tracking.ts. */}
+      <TrackingDetail
+        events={trackingEvents}
+        failureReason={trackingFailure}
+        {...(order.trackingNumber ? { trackingNumber: order.trackingNumber } : {})}
+        {...(order.logistics?.courier ? { courierName: order.logistics.courier } : {})}
+      />
 
-      {/* 4 — Info kurir */}
+      {/* 5 — Info kurir */}
       <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -131,7 +200,28 @@ function TrackResult({ order }: { order: Order }) {
         </div>
       </section>
 
-      {/* 5 — Alamat pengiriman */}
+      {/* 5b — Pembayaran (hanya bila belum lunas) —— ringkas, satu blok kecil.
+          Letaknya sengaja setelah info kurir/resi dan sebelum alamat: pembeli yang membuka halaman
+          ini datang untuk melihat status, jadi blok aksi tak perlu merebut layar pertama. Tapi ia
+          juga tak boleh terkubur di dasar halaman — pesanan yang belum dibayar batal sendiri
+          dalam 24 jam, dan halaman inilah jalan pulang pembeli dari halaman pembayaran Xendit. */}
+      {awaitingPayment && (
+        <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+          <div className="flex items-center gap-2 text-amber-900">
+            <Clock className="h-4 w-4 shrink-0" />
+            <p className="text-sm font-semibold">Menunggu Pembayaran</p>
+          </div>
+          <p className="mt-1 text-xs leading-relaxed text-amber-800">
+            Selesaikan dalam 24 jam — setelah itu pesanan dibatalkan otomatis dan stok dilepas
+            kembali. Metode pembayaran dipilih di halaman berikutnya.
+          </p>
+          <div className="mt-3">
+            <PayNowButton invoice={order.orderId} />
+          </div>
+        </section>
+      )}
+
+      {/* 6 — Alamat pengiriman */}
       <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
         <h2 className="mb-3 flex items-center gap-1.5 text-sm font-bold text-gray-900">
           <MapPin className="h-4 w-4 text-brand-primary" />
@@ -146,6 +236,8 @@ function TrackResult({ order }: { order: Order }) {
           </p>
         )}
       </section>
+        </div>
+      </div>
 
       <div className="pt-1 text-center">
         <Link href="/track-order" className="text-sm font-medium text-brand-primary transition hover:brightness-90">
@@ -160,7 +252,9 @@ function TrackResult({ order }: { order: Order }) {
 
 function SearchState({ hasQuery, query }: { hasQuery: boolean; query?: string }) {
   return (
-    <div className="flex min-h-[60vh] flex-col justify-center">
+    // max-w-md dipertahankan di sini: form pencarian tak ikut melebar walau <main> kini max-w-5xl
+    // di lg+ (pelebaran itu hanya untuk layout dua kolom hasil pelacakan).
+    <div className="mx-auto flex min-h-[60vh] w-full max-w-md flex-col justify-center">
       <div className="mx-auto w-full rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
         <div className="text-center">
           <h1 className="text-xl font-bold text-gray-900">Lacak Pesanan Anda</h1>
@@ -203,6 +297,14 @@ function formatAddress(order: Order): string {
     .join(', ')
   const street = a.shippingAddress ? maskStreet(a.shippingAddress) : ''
   return [street, region, a.kodepos].filter(Boolean).join(', ')
+}
+
+// Tanggal pesanan dibuat, mis. "20 Agustus 2026". Tanpa jam: pembeli hanya perlu mengenali
+// pesanannya, dan jam pembuatan sudah tampil di Riwayat Perjalanan.
+function formatOrderDate(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }).format(d)
 }
 
 // Badge status: hijau brand untuk alur normal, rose untuk dibatalkan.

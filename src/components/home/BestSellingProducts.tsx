@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import type { Product } from '@/types/product'
+import type { CatalogCardProduct } from '@/types/product'
 import ProductCard from '@/components/product/ProductCard'
 
 const PAGE_SIZE = 10
@@ -18,11 +18,11 @@ export default function BestSellingProducts({
   initialProducts = [],
   initialHasMore = true,
 }: {
-  initialProducts?: Product[]
+  initialProducts?: CatalogCardProduct[]
   initialHasMore?: boolean
 }) {
   // State awal dari data server (halaman 0). page mulai dari 1 karena 0 sudah ter-render server.
-  const [products, setProducts] = useState<Product[]>(initialProducts)
+  const [products, setProducts] = useState<CatalogCardProduct[]>(initialProducts)
   // Bila server mengirim halaman 0 (initialProducts terisi) → mulai fetch dari page 1.
   // Bila kosong (fallback, mis. server gagal) → mulai dari page 0 agar halaman pertama tak terlewat.
   const [page, setPage] = useState(initialProducts.length > 0 ? 1 : 0)
@@ -42,7 +42,7 @@ export default function BestSellingProducts({
     try {
       const res = await fetch(`/api/products/best-selling-catalog?page=${page}&pageSize=${PAGE_SIZE}`)
       if (!res.ok) throw new Error('fetch failed')
-      const data = (await res.json()) as { products: Product[]; hasMore: boolean }
+      const data = (await res.json()) as { products: CatalogCardProduct[]; hasMore: boolean }
       setProducts((prev) => [...prev, ...data.products])
       setHasMore(data.hasMore)
       setPage((p) => p + 1)

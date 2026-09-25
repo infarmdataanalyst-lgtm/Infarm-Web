@@ -4,9 +4,20 @@
 // ISOLASI: seluruh akses data ulasan lewat fungsi di file ini.
 // Di-back oleh Supabase (tabel public.reviews, FK ke products).
 //
-// SERVER-ONLY: memakai createAdminClient() (service_role). Jangan diimpor dari komponen 'use client'.
+// SERVER-ONLY: jangan diimpor dari komponen 'use client'.
+//
+// DUA CLIENT, dan pembagiannya disengaja (SEC-032):
+//   • createPublicClient() — anon, TUNDUK RLS. Dipakai tiga fungsi baca storefront yang hanya
+//     mengambil ulasan `visible = true`. Policy "Public dapat membaca ulasan tampil"
+//     (migration 20260622110000) mengizinkan persis baris yang sama, jadi service_role tak
+//     memberi kemampuan tambahan apa pun di jalur ini — ia hanya melucuti lapisan pertahanan
+//     kedua. Terverifikasi live 2026-09-07: service_role melihat 10 baris, anon 9; satu ulasan
+//     tersembunyi benar-benar ditahan database.
+//   • createAdminClient() — service_role, MENEMBUS RLS. Tetap dipakai untuk yang memang butuh:
+//     daftar OMS (ikut membaca ulasan tersembunyi), pengecekan produk yang sudah diulas, dan
+//     seluruh penulisan.
 
-import { createAdminClient } from '@/lib/supabase/server'
+import { createAdminClient, createPublicClient } from '@/lib/supabase/server'
 import type { ProductReview } from '@/types/product'
 
 const PLACEHOLDER_IMAGE = '/images/product-placeholder.png'
@@ -25,6 +36,9 @@ type ReviewRow = {
   visible: boolean
   created_at: string
   order_invoice: string | null // terisi = ulasan dari pembeli terverifikasi (terikat ke pesanan)
+  // Opsional: kolom baru (migration 20260918160000). Absen/NULL = lingkungan yang belum
+  // menjalankannya → dianggap 'buyer', sama seperti seluruh data lama.
+  source?: string | null
 }
 
 // Baris reviews + data produk hasil join (untuk tampilan OMS)
@@ -64,13 +78,31 @@ export type OmsReviewData = {
   date: string
   reply?: string
   visible: boolean
+  // 'internal' = dimasukkan admin lewat OMS, bukan dari pembeli. Hanya dipakai layar OMS;
+  // storefront sengaja tidak menampilkannya (lihat migration 20260918160000).
+  source: ReviewSource
+}
+
+// Asal ulasan. 'buyer' = dari pembeli lewat /review; 'internal' = dimasukkan admin lewat OMS.
+export type ReviewSource = 'buyer' | 'internal'
+
+// Masukan pembuatan ulasan internal dari OMS.
+export type ManualReviewInput = {
+  productId: string
+  authorName: string
+  rating: number
+  comment: string
+  category?: string
+  // Tanggal tampil ulasan. Boleh mundur — ulasan awal katalog biasanya menyalin testimoni lama,
+  // dan menaruhnya semua di hari peluncuran membuat deretan tanggalnya terlihat janggal.
+  createdAt?: string
 }
 
 // === Baca (storefront) ===
 
 // Mengambil ulasan yang tampil (visible) untuk satu produk, terbaru dulu.
 export async function getReviewsByProduct(productId: string): Promise<ProductReview[]> {
-  const supabase = createAdminClient()
+  const supabase = createPublicClient()
   const { data, error } = await supabase
     .from('reviews')
     .select('*')
@@ -92,7 +124,6 @@ export async function getReviewsByProduct(productId: string): Promise<ProductRev
     category: r.category ?? 'Umum',
     imageUrls: r.image_urls?.length ? r.image_urls : undefined,
     reply: r.reply ?? undefined,
-    verified: Boolean(r.order_invoice), // order_invoice terisi → pembeli terverifikasi
   }))
 }
 
@@ -100,7 +131,7 @@ export async function getReviewsByProduct(productId: string): Promise<ProductRev
 export async function getProductRatingSummary(
   productId: string,
 ): Promise<{ rating: number; reviewCount: number }> {
-  const supabase = createAdminClient()
+  const supabase = createPublicClient()
   const { data, error } = await supabase
     .from('reviews')
     .select('rating')
@@ -114,6 +145,36 @@ export async function getProductRatingSummary(
   const sum = data.reduce((acc, r) => acc + (r.rating as number), 0)
   // Bulatkan rata-rata ke 1 desimal (mis. 4.7)
   return { rating: Math.round((sum / data.length) * 10) / 10, reviewCount: data.length }
+}
+
+// Ringkasan rating (rata-rata + jumlah) untuk BANYAK produk sekaligus, di-group per product_id.
+// Dipakai kartu katalog beranda agar tak query per-produk (1 query untuk semua). Produk tanpa
+// ulasan tampil tak ada di map (pemanggil perlakukan sebagai rating 0 / sembunyikan bintang).
+export async function getRatingSummaryByProduct(): Promise<
+  Record<string, { rating: number; reviewCount: number }>
+> {
+  const supabase = createPublicClient()
+  const { data, error } = await supabase
+    .from('reviews')
+    .select('product_id, rating')
+    .eq('visible', true)
+
+  const out: Record<string, { rating: number; reviewCount: number }> = {}
+  if (error || !data) return out
+
+  // Akumulasi sum & count per product_id di memori, lalu rata-rata (bulat 1 desimal).
+  const acc: Record<string, { sum: number; count: number }> = {}
+  for (const r of data) {
+    const pid = r.product_id as string | null
+    if (!pid) continue
+    const a = (acc[pid] ??= { sum: 0, count: 0 })
+    a.sum += r.rating as number
+    a.count += 1
+  }
+  for (const [pid, a] of Object.entries(acc)) {
+    out[pid] = { rating: Math.round((a.sum / a.count) * 10) / 10, reviewCount: a.count }
+  }
+  return out
 }
 
 // === Tulis (form publik) ===
@@ -196,6 +257,7 @@ export async function listReviewsForOms(): Promise<OmsReviewData[]> {
     date: r.created_at,
     reply: r.reply ?? undefined,
     visible: r.visible,
+    source: r.source === 'internal' ? 'internal' : 'buyer',
   }))
 }
 
@@ -219,4 +281,65 @@ export async function setReviewVisibility(id: string, visible: boolean): Promise
     return false
   }
   return true
+}
+
+// === Ulasan internal (dimasukkan admin lewat OMS) ===
+
+// Menyimpan ulasan internal. order_invoice sengaja NULL: ulasan ini memang tidak terikat pesanan,
+// jadi ia juga tak ikut aturan "satu ulasan per pesanan per produk" yang menjaga ulasan pembeli.
+// Mengembalikan id ulasan baru.
+export async function createManualReview(input: ManualReviewInput): Promise<string> {
+  const supabase = createAdminClient()
+
+  const { data, error } = await supabase
+    .from('reviews')
+    .insert({
+      product_id: input.productId,
+      author_name: input.authorName,
+      rating: input.rating,
+      comment: input.comment,
+      category: input.category ?? null,
+      image_urls: [],
+      order_invoice: null,
+      source: 'internal',
+      // created_at diserahkan ke DEFAULT now() bila tanggal tak diisi.
+      ...(input.createdAt ? { created_at: input.createdAt } : {}),
+    })
+    .select('id')
+    .single()
+
+  // 42703/PGRST204 = kolom source belum ada (migration 20260918160000 belum dijalankan). Sengaja
+  // TIDAK ada fallback menyimpan tanpa kolom itu: ulasan internal yang masuk tanpa penanda tak bisa
+  // dibedakan lagi dari ulasan pembeli selamanya — lebih baik gagal keras dan menyuruh migrasi.
+  if (error?.code === '42703' || error?.code === 'PGRST204') {
+    throw new Error(
+      'Kolom reviews.source belum ada. Jalankan migration 20260918160000 lebih dulu sebelum menambah ulasan internal.',
+    )
+  }
+  if (error || !data) {
+    throw new Error(`Gagal menyimpan ulasan internal: ${error?.message ?? 'tidak diketahui'}`)
+  }
+
+  return data.id as string
+}
+
+// Menghapus ulasan berdasarkan id. HANYA ulasan internal yang boleh terhapus lewat fungsi ini —
+// filter `source = 'internal'` ada di query, bukan cuma di layar, supaya ulasan pembeli sungguhan
+// tak bisa lenyap karena salah id atau payload yang disusun tangan.
+// Mengembalikan jumlah baris yang benar-benar terhapus.
+export async function deleteInternalReviews(ids: string[]): Promise<number> {
+  if (ids.length === 0) return 0
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('reviews')
+    .delete()
+    .in('id', ids)
+    .eq('source', 'internal')
+    .select('id')
+
+  if (error) {
+    console.error('Gagal menghapus ulasan internal:', error.message)
+    return 0
+  }
+  return (data ?? []).length
 }

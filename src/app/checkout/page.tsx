@@ -4,8 +4,10 @@
 // Halaman Checkout. Di luar route group (store) karena punya header hijau sendiri (CheckoutHeader).
 // Orchestrator: menyimpan semua state (modal, kurir, asuransi, pembayaran) & menghitung total reaktif.
 
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { ShoppingBag, PackageX, Wallet, AlertTriangle } from 'lucide-react'
 import type { Product } from '@/types/product'
 import CheckoutHeader from '@/components/checkout/CheckoutHeader'
 import CheckoutProductSummary from '@/components/checkout/CheckoutProductSummary'
@@ -13,14 +15,26 @@ import AddressForm, {
   type AddressFormState,
   type AddressFormHandle,
 } from '@/components/checkout/AddressForm'
-import OptionRow from '@/components/checkout/OptionRow'
 import OrderSummary from '@/components/checkout/OrderSummary'
 import CheckoutBottomBar from '@/components/checkout/CheckoutBottomBar'
 import ShippingOptions from '@/components/checkout/ShippingOptions'
-import PaymentModal from '@/components/checkout/PaymentModal'
-import PhoneConfirmModal from '@/components/checkout/PhoneConfirmModal'
+
+import EmailConfirmModal from '@/components/checkout/EmailConfirmModal'
+import CheckoutSkeleton from '@/components/checkout/CheckoutSkeleton'
+import {
+  readCheckoutDraft,
+  writeCheckoutDraft,
+  clearCheckoutDraft,
+  draftAdaIsinya,
+  emptyAddress,
+} from '@/lib/checkout-draft'
 import { validateAddress } from '@/lib/checkout-validation'
-import { type ShippingCourier } from '@/lib/mengantar'
+import { formatRupiah } from '@/lib/format'
+import { computeOrderPromos } from '@/lib/promo-cart'
+import { XENDIT_MIN_AMOUNT } from '@/lib/payment-limits'
+import type { Promotion } from '@/types/promotion'
+import { shippingWeightKg, type WeighableItem } from '@/lib/shipping-weight'
+import { type WarehouseShippingOption } from '@/lib/mengantar'
 import { dummyProducts } from '@/lib/data/dummy-products'
 import {
   subscribeCheckout,
@@ -29,37 +43,98 @@ import {
   getCheckoutPromo,
   clearCart,
 } from '@/lib/cart-client'
-import { setGuestPhone, incrementActiveOrderCount } from '@/lib/guest-phone'
 import {
-  DUMMY_ORDER_ITEMS,
-  PAYMENT_METHODS,
-  type CheckoutItem,
-} from '@/lib/data/dummy-checkout'
+  trackBeginCheckout,
+  trackAddShippingInfo,
+  type AnalyticsLineItem,
+} from '@/lib/analytics'
+import { readGaClientId, readGaSessionId } from '@/lib/ga-client-id'
+import { setGuestPhone, incrementActiveOrderCount } from '@/lib/guest-phone'
+import { setGuestEmail } from '@/lib/guest-email'
+import type { CheckoutItem } from '@/lib/data/dummy-checkout'
 
-// Asumsi berat: data produk belum punya field berat → pakai 1 kg per item (minimal 1 kg).
-const WEIGHT_PER_ITEM_KG = 1
+// Produk untuk kebutuhan halaman ini: Product + berat (gram) dari OMS. Produk dummy tak punya
+// berat → undefined, dan lib/shipping-weight memakai berat cadangan untuk item seperti itu.
+// `sku` ada di respons /api/products/by-ids (yang mengembalikan StoredProduct), hanya saja tak
+// pernah dideklarasikan di sini karena halaman ini tak menampilkannya. Sekarang ia dipakai:
+// item_id GA4 harus SAMA dengan yang dikirim halaman detail produk (`sku || id`), kalau tidak
+// GA4 menganggap produk yang sama sebagai dua item berbeda dan funnel view_item → purchase
+// terputus tepat di tengah.
+type CheckoutProduct = Product & { berat?: number; sku?: string }
+
+// Penanda "kode sudah berjalan di browser".
+//
+// Cookie hanya terbaca di klien, jadi render pertama SELALU melihat keranjang kosong. Tanpa
+// penanda ini, halaman berkedip ke keadaan "keranjang kosong" sepersekian detik setiap kali
+// checkout dibuka — jenis kedipan yang sama dengan yang baru saja kita hilangkan.
+//
+// Memakai useSyncExternalStore, bukan useState+useEffect: pola itu memanggil setState di dalam
+// effect, yang ditolak aturan lint proyek ini.
+const subscribeNothing = () => () => {}
+
+// Pembungkus satu section checkout.
+//
+// Di MOBILE tak menambahkan apa pun secara visual — section tetap menempel tepi layar seperti
+// sebelumnya. Di lg+ ia memberi bentuk kartu (border, sudut membulat, bayangan tipis).
+//
+// ⚠️ SENGAJA TANPA `overflow-hidden`, walau itu cara termudah membulatkan sudut isinya.
+// Daftar saran alamat di AddressSearchCombobox memakai `absolute` dan akan TERPOTONG oleh ancestor
+// ber-overflow-hidden — pencarian alamat jadi tak terpakai. Sebagai gantinya, sudut membulat
+// diteruskan ke anak langsung (`section` / `button`) lewat arbitrary variant, sehingga latar putih
+// anaknya tak menyembul di sudut. BottomSheet (root-nya `div`) tak ikut tersentuh.
+// Teks pesan "ongkir berubah". `newPrice` null = tarif baru belum tiba (atau gagal dimuat — kartu
+// kurir di atasnya sudah menampilkan galat & tombol coba lagi sendiri).
+//
+// Nama gudang sengaja tak disebut: pembeli tak pernah memilih gudang, jadi "lokasi pengiriman"
+// cukup menjelaskan sebabnya tanpa memperkenalkan konsep baru di titik bayar.
+function shippingNoticeText(
+  notice: { reason: 'SHIPPING_CHANGED' | 'SHIPPING_MISMATCH'; previousPrice: number },
+  newPrice: number | null,
+): string {
+  const sebab =
+    notice.reason === 'SHIPPING_CHANGED'
+      ? 'Stok dari lokasi pengiriman terdekat baru saja habis. Pesanan Anda akan dikirim dari lokasi lain'
+      : 'Ongkos kirim untuk pesanan ini baru saja diperbarui'
+  if (newPrice === null) return `${sebab}. Ongkos kirim sedang dihitung ulang…`
+  const perubahan =
+    newPrice === notice.previousPrice
+      ? `ongkos kirim tetap ${formatRupiah(newPrice)}`
+      : `ongkos kirim berubah dari ${formatRupiah(notice.previousPrice)} menjadi ${formatRupiah(newPrice)}`
+  return `${sebab}, sehingga ${perubahan}. Periksa kembali total pembayaran, lalu tekan Bayar Sekarang.`
+}
+
+function CheckoutCard({ className = '', children }: { className?: string; children: ReactNode }) {
+  return (
+    <div
+      className={`lg:rounded-2xl lg:border lg:border-zinc-200 lg:bg-white lg:shadow-sm lg:[&>button]:rounded-2xl lg:[&>section]:rounded-2xl ${className}`}
+    >
+      {children}
+    </div>
+  )
+}
 
 export default function CheckoutPage() {
   const router = useRouter()
 
   // === State tampilan modal ===
-  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false)
-  const [isPhoneConfirmOpen, setIsPhoneConfirmOpen] = useState(false) // popup konfirmasi no. telepon
+  const [isEmailConfirmOpen, setIsEmailConfirmOpen] = useState(false) // popup konfirmasi alamat email
   const [isPaying, setIsPaying] = useState(false) // mencegah double submit saat memproses bayar
 
+  // === Draf isian yang tersimpan dari kunjungan sebelumnya (localStorage) ===
+  //
+  // Dibaca SEKALI saat mount. Aman terhadap hidrasi walau menyentuh localStorage: selama `hydrated`
+  // masih false halaman merender kerangka, jadi nilai ini belum memengaruhi keluaran apa pun saat
+  // React mencocokkan HTML server dengan render klien pertama.
+  //
+  // `useMemo` dengan dependency kosong, BUKAN useEffect+setState: pola itu ditolak aturan lint
+  // proyek ini, dan draf memang tak perlu jadi state — ia hanya benih nilai awal.
+  const draftTersimpan = useMemo(() => readCheckoutDraft(), [])
+
   // === Alamat pengiriman: diangkat dari AddressForm agar nama/telepon/alamat & destination_id dipakai saat order ===
-  // Seluruh field kosong di awal (tidak ada prefill default).
-  const [address, setAddress] = useState<AddressFormState>({
-    recipientName: '',
-    phone: '',
-    destination_id: '',
-    provinceName: '',
-    cityName: '',
-    districtName: '',
-    subdistrictName: '',
-    postalCode: '',
-    street: '',
-  })
+  // Kosong di awal, kecuali ada draf yang bisa dipulihkan.
+  const [address, setAddress] = useState<AddressFormState>(
+    () => draftTersimpan?.address ?? emptyAddress(),
+  )
 
   // Ref ke AddressForm untuk menampilkan error & scroll saat submit ditolak
   const addressFormRef = useRef<AddressFormHandle>(null)
@@ -70,16 +145,49 @@ export default function CheckoutPage() {
   const isAddressValid = useMemo(() => validateAddress(address).valid, [address])
 
   // === Kurir terpilih (selected_courier) hasil cek ongkir ===
-  const [selectedCourier, setSelectedCourier] = useState<ShippingCourier | null>(null)
+  //
+  // Ikut dipulihkan dari draf supaya baris "Metode Pengiriman" & total langsung terisi setelah
+  // refresh. Harganya BELUM tentu masih berlaku — ShippingOptions menarik tarif baru untuk tujuan
+  // ini dan mengganti pilihan yang tak lagi ada di daftar (lihat rekonsiliasi di komponen itu).
+  // Tanpa penggantian tersebut, tarif basi akan lolos ke `POST /api/orders/create` dan ditolak
+  // `409 SHIPPING_MISMATCH` tepat saat pembeli menekan bayar — kegagalan paling mahal waktunya.
+  const [selectedCourier, setSelectedCourier] = useState<WarehouseShippingOption | null>(
+    () => draftTersimpan?.courier ?? null,
+  )
+
+  // === Ongkir ditolak server karena berubah (MGT-67) ===
+  //
+  // Pembeli bisa kalah balapan stok: gudang yang tarifnya ia lihat kehabisan stok sebelum ia menekan
+  // bayar, dan pesanannya hanya bisa dipenuhi gudang lain dengan ongkir berbeda. Server menolak
+  // (SHIPPING_CHANGED / SHIPPING_MISMATCH) alih-alih menagih angka yang belum ia lihat.
+  //
+  // Di sini checkout memuat ulang tarif (`shippingRefreshKey`) dan menyimpan ongkir LAMA supaya
+  // pesan bisa menyebut "dari Rp… menjadi Rp…". Pesannya MENETAP — bukan toast 3 detik — sampai
+  // pembeli menekan bayar lagi atau mengganti alamat: ongkir yang berubah menyentuh uang, dan
+  // pembeli yang sedang melirik ke tempat lain tak boleh melewatkannya.
+  const [shippingRefreshKey, setShippingRefreshKey] = useState(0)
+  const [shippingNotice, setShippingNotice] = useState<{
+    reason: 'SHIPPING_CHANGED' | 'SHIPPING_MISMATCH'
+    previousPrice: number
+  } | null>(null)
+  const shippingNoticeRef = useRef<HTMLDivElement>(null)
+
+  // Pesan baru muncul → gulirkan ke sana. Di layar ponsel kartu kurir ada jauh di atas bilah bayar,
+  // jadi tanpa ini pesannya muncul di luar pandangan pembeli yang jarinya masih di tombol bayar.
+  useEffect(() => {
+    if (!shippingNotice) return
+    shippingNoticeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [shippingNotice])
 
   // Saat alamat berubah/di-reset (destination_id berganti), reset pilihan kurir → cek ongkir ulang.
   function handleAddressChange(next: AddressFormState) {
-    if (next.destination_id !== address.destination_id) setSelectedCourier(null)
+    if (next.destination_id !== address.destination_id) {
+      setSelectedCourier(null)
+      // Pesan ongkir berubah milik alamat lama; untuk alamat baru angkanya tak lagi relevan.
+      setShippingNotice(null)
+    }
     setAddress(next)
   }
-
-  // === State pilihan user ===
-  const [selectedPaymentId, setSelectedPaymentId] = useState('mandiri')
 
   // === Item yang dibeli: dari pilihan keranjang (cookie checkout), reaktif & aman SSR ===
   const checkoutCookieItems = useSyncExternalStore(
@@ -88,36 +196,72 @@ export default function CheckoutPage() {
     getServerCheckoutSnapshot,
   )
 
-  // === Produk OMS (mock DB) diambil via API agar item dari OMS ikut ter-resolve, bukan hanya dummy ===
-  // TODO: ganti dengan query Supabase setelah OMS selesai
-  const [omsProducts, setOmsProducts] = useState<Product[]>([])
+  // Daftar id produk yang perlu di-resolve, sebagai satu string stabil.
+  //
+  // Dipakai sebagai dependency efek DAN sebagai penanda "jawaban ini untuk permintaan yang mana".
+  // Di-dedup & diurutkan supaya urutan item di keranjang tak memicu tarikan ulang yang percuma.
+  const productIdsKey = useMemo(
+    () => [...new Set(checkoutCookieItems.map((ci) => ci.productId))].sort().join(','),
+    [checkoutCookieItems],
+  )
+
+  // === Produk OMS diambil via API agar item dari cookie ikut ter-resolve (nama, foto, berat) ===
+  //
+  // Memakai `by-ids`, BUKAN `products/list`. `list` menarik SELURUH katalog tanpa cache
+  // (`readProducts()` langsung) hanya untuk me-resolve satu-dua produk — makin besar katalog, makin
+  // lama pembeli menatap kerangka. `by-ids` dibaca dari cache (30 detik, tag `products`) dan hanya
+  // mengembalikan id yang diminta. Bentuk datanya identik, `berat` ikut terbawa sehingga hitung
+  // ongkir tak berubah.
+  const [omsProducts, setOmsProducts] = useState<CheckoutProduct[]>([])
+
+  // Kunci permintaan yang SUDAH dijawab. Dibandingkan dengan `productIdsKey`, bukan boolean:
+  // boolean tak bisa membedakan "sudah dijawab untuk daftar ini" dari "sudah dijawab untuk daftar
+  // sebelumnya", dan isi keranjang bisa berubah selagi halaman terbuka.
+  const [resolvedFor, setResolvedFor] = useState<string | null>(null)
+
   useEffect(() => {
+    if (!productIdsKey) return // tak ada yang perlu di-resolve
+
     let active = true
-    fetch('/api/products/list')
+    const ctrl = new AbortController()
+
+    fetch(`/api/products/by-ids?ids=${encodeURIComponent(productIdsKey)}`, { signal: ctrl.signal })
       .then((res) => res.json())
       .then((data) => {
-        if (active && Array.isArray(data.products)) setOmsProducts(data.products as Product[])
+        if (!active) return
+        if (Array.isArray(data.products)) setOmsProducts(data.products as CheckoutProduct[])
+        setResolvedFor(productIdsKey)
       })
       .catch(() => {
-        // Mode prototipe: bila gagal, fallback ke produk dummy saja
+        // Gagal pun HARUS menandai selesai — kalau tidak, halaman terjebak menampilkan kerangka
+        // selamanya dan pembeli tak pernah tahu ada yang salah. Item yang tak ter-resolve akan
+        // jatuh ke keadaan "produk tak tersedia lagi", yang setidaknya bisa ditindaklanjuti.
+        if (active) setResolvedFor(productIdsKey)
       })
+
     return () => {
       active = false
+      ctrl.abort()
     }
-  }, [])
+  }, [productIdsKey])
 
   // Lookup produk gabungan (OMS + dummy). Produk OMS menimpa dummy bila id sama.
   const productById = useMemo(() => {
-    const map = new Map<string, Product>()
+    const map = new Map<string, CheckoutProduct>()
     for (const product of dummyProducts) map.set(product.id, product)
     for (const product of omsProducts) map.set(product.id, product)
     return map
   }, [omsProducts])
 
-  // Gabungkan item cookie dengan detail produk (nama, foto). Bila cookie kosong (mis. user
-  // membuka /checkout langsung), pakai data dummy agar halaman tetap terisi.
+  // Gabungkan item cookie dengan detail produk (nama, foto).
+  //
+  // Cookie kosong → array kosong, dan halaman menampilkan keadaan kosong (lihat `showEmptyState`).
+  // DULU di sini ada fallback ke DUMMY_ORDER_ITEMS "agar halaman tetap terisi"; itu dibuang karena
+  // mengisi halaman dengan produk & harga KARANGAN. Akibat nyatanya sudah dua kali muncul:
+  // total berkedip ke Rp229.000 sebelum redirect ke Xendit, dan pembeli yang menekan tombol Back
+  // dari halaman sukses melihat dua produk yang tak pernah ia pesan. Siapa pun yang mengetik
+  // /checkout langsung di address bar juga melihatnya.
   const orderItems: CheckoutItem[] = useMemo(() => {
-    if (checkoutCookieItems.length === 0) return DUMMY_ORDER_ITEMS
     return checkoutCookieItems.flatMap((ci) => {
       const product = productById.get(ci.productId)
       if (!product) return []
@@ -130,10 +274,83 @@ export default function CheckoutPage() {
           imageUrl: product.imageUrl,
           variantId: ci.variantId,
           variantName: ci.variantName,
+          // Penanda paket PER BARIS (SEC-033). Dulu disimpan sebagai peta productId → comboId,
+          // sehingga produk A satuan yang berdampingan dengan A di dalam paket ikut dikirim
+          // sebagai anggota paket dan server menolak seluruh pesanan.
+          ...(ci.comboId ? { comboId: ci.comboId } : {}),
         },
       ]
     })
   }, [checkoutCookieItems, productById])
+
+  // Baris item untuk event GA4 checkout (begin_checkout, add_shipping_info).
+  //
+  // Kategori & SKU diambil dari `productById`, bukan dari CheckoutItem: cookie keranjang hanya
+  // menyimpan yang dibutuhkan untuk menampilkan ringkasan, sementara GA4 butuh keduanya agar
+  // item di funnel bisa dikelompokkan sama seperti di halaman detail produk.
+  //
+  // Item HADIAH PROMO (`freeCheckoutItems`) sengaja TIDAK ikut: harganya Rp0 dan pembeli tak
+  // pernah memutuskan untuk membelinya. Memasukkannya menaikkan jumlah item di laporan tanpa
+  // menambah nilai, dan membuat rata-rata harga per item terlihat turun setiap ada promo.
+  const analyticsLines: AnalyticsLineItem[] = useMemo(
+    () =>
+      orderItems.map((item) => {
+        const product = productById.get(item.id)
+        return {
+          id: item.id,
+          sku: product?.sku,
+          name: item.name,
+          category: product?.category ?? '',
+          price: item.price,
+          quantity: item.quantity,
+        }
+      }),
+    [orderItems, productById],
+  )
+
+  // Kode sudah berjalan di browser (cookie hanya terbaca di klien).
+  const hydrated = useSyncExternalStore(
+    subscribeNothing,
+    () => true,
+    () => false,
+  )
+
+  // === Keadaan halaman ===
+  //
+  // DULU cuma ada satu penilaian: `hydrated && orderItems.length === 0` → tampilkan "Belum ada
+  // produk untuk dibayar". Itu menyamakan dua hal yang sangat berbeda, dan salah pada kasus yang
+  // paling sering terjadi:
+  //
+  //   Pembeli menekan "Beli Langsung" → cookie DITULIS lengkap sebelum pindah halaman → checkout
+  //   membacanya utuh di render pertama. Tapi cookie hanya memuat { productId, quantity, price };
+  //   nama & foto baru datang dari API. Selama tarikan itu berjalan, `productById` belum mengenal
+  //   produk OMS → `flatMap` membuang SETIAP item → orderItems kosong → `hydrated` sudah true →
+  //   dan pembeli yang baru saja memilih produk dibilang belum memilih apa pun.
+  //
+  // Racenya bukan di cookie (itu sinkron), melainkan di tarikan detail produk. Karena itu keadaan
+  // halaman dipisah jadi empat, dan yang menentukan EMPTY adalah ISI COOKIE — bukan hasil
+  // pemetaannya:
+  //
+  //   loading      — belum terhidrasi, atau cookie berisi tapi detail produk belum lengkap
+  //   empty        — cookie memang kosong (buka /checkout langsung, atau keranjang kosong).
+  //                  Diputuskan SEKETIKA, tanpa menunggu API: tak ada yang perlu di-resolve.
+  //   unavailable  — cookie berisi, tarikan sudah selesai, tapi tak satu pun produk ketemu.
+  //                  Nyata terjadi bila admin mengarsipkan produk setelah pembeli menaruhnya.
+  //   ready        — detail produk tersedia
+  const productsResolved = resolvedFor === productIdsKey
+  const semuaItemTerpetakan = orderItems.length === checkoutCookieItems.length
+
+  const viewState: 'loading' | 'empty' | 'unavailable' | 'ready' = !hydrated
+    ? 'loading'
+    : checkoutCookieItems.length === 0
+      ? 'empty'
+      : semuaItemTerpetakan
+        ? 'ready' // semua item punya detail (mis. produk dummy, atau API sudah menjawab)
+        : !productsResolved
+          ? 'loading'
+          : orderItems.length > 0
+            ? 'ready' // sebagian hilang, tapi masih ada yang bisa dibayar
+            : 'unavailable'
 
   // Subtotal dihitung dari item pesanan aktual (harga × kuantitas)
   const subtotal = useMemo(
@@ -141,13 +358,57 @@ export default function CheckoutPage() {
     [orderItems],
   )
 
+  // === GA4 begin_checkout — SEKALI per kunjungan ===
+  //
+  // Menunggu `viewState === 'ready'`, bukan saat mount: sebelum /api/products/by-ids menjawab,
+  // `orderItems` masih bisa kosong atau separuh terisi. Event yang terlanjur terkirim dengan
+  // daftar item yang belum lengkap tak bisa diperbaiki — GA4 tak mengenal koreksi.
+  //
+  // Penjaganya `useRef`, bukan state: nilainya tak boleh memicu render, dan event ini harus tetap
+  // satu kali walau komponen render ulang puluhan kali (tiap huruf yang diketik di form alamat
+  // memicu render). `isPaying` yang mengosongkan keranjang di akhir juga tertahan oleh penjaga
+  // yang sama.
+  const beginCheckoutSent = useRef(false)
+  useEffect(() => {
+    if (beginCheckoutSent.current) return
+    if (viewState !== 'ready' || analyticsLines.length === 0) return
+    beginCheckoutSent.current = true
+    trackBeginCheckout(subtotal, analyticsLines)
+  }, [viewState, analyticsLines, subtotal])
+
+  // === GA4 add_shipping_info — tiap kali tarif yang BERLAKU berubah ===
+  //
+  // Sengaja tidak sekali saja. Pilihan kurir bisa diganti otomatis oleh ShippingOptions saat tarif
+  // dimuat ulang — persis yang terjadi setelah server menolak dengan 409 SHIPPING_CHANGED (MGT-67).
+  // Perpindahan itulah datanya: pembeli yang melihat ongkirnya melompat dari Rp4.080 ke Rp66.720
+  // adalah kasus yang paling ingin kita hitung, dan ia hanya terlihat kalau event kedua dikirim.
+  //
+  // Kuncinya nama+harga, jadi render ulang biasa (mengetik alamat) tidak mengirim ulang event —
+  // hanya perubahan yang benar-benar menyentuh uang yang dicatat.
+  const shippingInfoKey = useRef<string | null>(null)
+  useEffect(() => {
+    if (!selectedCourier || analyticsLines.length === 0) return
+    const key = `${selectedCourier.name}|${selectedCourier.price}`
+    if (shippingInfoKey.current === key) return
+    shippingInfoKey.current = key
+    trackAddShippingInfo(subtotal, selectedCourier.name, selectedCourier.price, analyticsLines)
+  }, [selectedCourier, subtotal, analyticsLines])
+
   // Id produk gratis promo (dari snapshot keranjang). Server tetap otoritatif saat create order;
   // ini hanya untuk TAMPILAN ringkasan & perhitungan berat kirim.
-  const [freeProductIds, setFreeProductIds] = useState<string[]>([])
-  useEffect(() => {
-    const snap = getCheckoutPromo()
-    setFreeProductIds(snap?.freeProductIds ?? [])
-  }, [])
+  //
+  // Dibaca saat RENDER (setelah hidrasi), bukan lewat `useEffect` + `setState`. Pola lama melanggar
+  // aturan lint proyek ini (`react-hooks/set-state-in-effect`) dan sudah membuat `npm run lint`
+  // merah di berkas ini sebelum perubahan ini — cocok dibereskan sekarang karena penyebab & obatnya
+  // sama persis dengan race yang sedang diperbaiki: keadaan turunan dari cookie tak perlu melewati
+  // state sama sekali.
+  //
+  // `hydrated` jadi dependency-nya: cookie hanya terbaca di klien, jadi nilainya kosong di render
+  // server lalu terisi sekali begitu berjalan di browser.
+  const freeProductIds = useMemo(
+    () => (hydrated ? (getCheckoutPromo()?.freeProductIds ?? []) : []),
+    [hydrated],
+  )
 
   // Item hadiah promo untuk DITAMPILKAN di ringkasan (harga 0, isPromoItem). Detail dari produk resolved.
   // TIDAK dikirim ke API create (server evaluasi & inject sendiri) → cegah duplikasi/manipulasi.
@@ -174,27 +435,128 @@ export default function CheckoutPage() {
     [orderItems, freeCheckoutItems],
   )
 
-  // Total berat (kg) untuk cek ongkir — minimal 1 kg. Sertakan produk gratis promo (dikirim fisik).
-  const shippingWeight = useMemo(
+  // Total berat kirim (kg) = SUM(berat produk × quantity), dikonversi dari gram di satu tempat
+  // (lib/shipping-weight.ts). Dihitung ulang otomatis tiap isi keranjang berubah karena
+  // orderItems bersumber dari cookie lewat useSyncExternalStore — dan ShippingOptions memakai
+  // nilai ini sebagai dependency efek fetch-nya, jadi ongkir ikut di-refresh tanpa aksi tambahan.
+  //
+  // Produk hadiah promo IKUT ditimbang: barangnya tetap dikirim fisik, jadi mengabaikannya membuat
+  // ongkir yang dikutip lebih murah daripada tarif kurir sebenarnya.
+  //
+  // Selama daftar produk OMS masih dalam perjalanan (fetch by-ids), berat item belum diketahui →
+  // memakai berat cadangan. Nilainya dihitung ulang begitu produk tiba; buyer tak bisa menekan
+  // bayar sebelum memilih kurir, jadi angka sementara ini tak pernah menjadi ongkir final.
+  const shippingWeight = useMemo(() => {
+    const weighable: WeighableItem[] = [...orderItems, ...freeCheckoutItems].map((item) => ({
+      quantity: item.quantity,
+      berat: productById.get(item.id)?.berat,
+    }))
+    return shippingWeightKg(weighable)
+  }, [orderItems, freeCheckoutItems, productById])
+
+  // Kebutuhan stok yang dikirim ke perbandingan ongkir: hanya produk yang dibeli (produk hadiah
+  // promo TIDAK diikutkan — ketersediaannya dievaluasi server saat membuat order, dan menyertakannya
+  // di sini bisa mengecualikan gudang yang sebenarnya sanggup mengirim pesanan utama).
+  const shippingItems = useMemo(
     () =>
-      Math.max(
-        1,
-        (orderItems.reduce((sum, item) => sum + item.quantity, 0) + freeCheckoutItems.length) *
-          WEIGHT_PER_ITEM_KG,
-      ),
-    [orderItems, freeCheckoutItems],
+      orderItems.map((item) => ({
+        productId: item.id,
+        quantity: item.quantity,
+        variantId: item.variantId ?? undefined,
+      })),
+    [orderItems],
   )
 
-  // === Turunan pilihan ===
-  const selectedPayment =
-    PAYMENT_METHODS.find((m) => m.id === selectedPaymentId) ?? PAYMENT_METHODS[0]
+  // === Minimum total belanja (pengaturan toko) ===
+  // Dibandingkan dengan SUBTOTAL BARANG (bukan subtotal+ongkir) agar pesan 'kurang Rp X lagi'
+  // sama persis dengan yang tampil di keranjang, dan tetap konsisten dengan validasi server.
+  const [minOrderAmount, setMinOrderAmount] = useState(0)
+  useEffect(() => {
+    let active = true
+    fetch('/api/settings/min-order')
+      .then((res) => res.json())
+      .then((data: { minOrderAmount?: number }) => {
+        if (active && typeof data.minOrderAmount === 'number') setMinOrderAmount(data.minOrderAmount)
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [])
+
+  // === Promo aktif + plafon diskon ===
+  // Checkout WAJIB menariknya sendiri, tidak boleh mengandalkan cookie snapshot dari keranjang:
+  // promo bisa kedaluwarsa di antara pembeli menutup keranjang dan menekan bayar, dan yang
+  // menentukan tagihan adalah keadaan promo saat itu — sama seperti yang dievaluasi server.
+  const [promos, setPromos] = useState<Promotion[]>([])
+  const [maxDiscountPercent, setMaxDiscountPercent] = useState(50)
+  // Jam acuan evaluasi promo, diambil SEKALI saat daftar promo tiba.
+  // Date.now() tak boleh dipanggil saat render (aturan kemurnian React): nilainya berubah tiap
+  // render sehingga hasil useMemo tak stabil. Diambil bersamaan dengan promonya justru lebih benar
+  // secara semantik — keduanya potret keadaan pada saat yang sama.
+  const [promoNowMs, setPromoNowMs] = useState(0)
+  useEffect(() => {
+    let active = true
+    fetch('/api/promotions/active')
+      .then((res) => res.json())
+      .then((data: { promotions?: Promotion[]; maxDiscountPercent?: number }) => {
+        if (!active) return
+        setPromos(data.promotions ?? [])
+        setPromoNowMs(Date.now())
+        if (typeof data.maxDiscountPercent === 'number') {
+          setMaxDiscountPercent(data.maxDiscountPercent)
+        }
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [])
 
   // === Kalkulasi biaya: ongkir dari kurir terpilih (null bila belum pilih) ===
   const shipping = selectedCourier ? selectedCourier.price : null
-  const total = subtotal + (selectedCourier?.price ?? 0)
+
+  // Promo dihitung dengan fungsi yang SAMA PERSIS dengan yang dipakai /api/orders/create.
+  // Di sini ongkir sudah diketahui, jadi lantai nominal gateway bisa dievaluasi dengan benar dan
+  // hasilnya identik dengan yang nanti ditagih server. Sebelum ini checkout mengabaikan promo
+  // sepenuhnya, sementara keranjang sudah mengurangi totalnya — pembeli melihat dua angka berbeda.
+  const orderPromos = useMemo(
+    () =>
+      computeOrderPromos(promos, subtotal, selectedCourier?.price ?? 0, promoNowMs, {
+        maxDiscountPercent,
+        minTotal: XENDIT_MIN_AMOUNT,
+      }),
+    [promos, subtotal, selectedCourier, maxDiscountPercent],
+  )
+
+  const discount = orderPromos.discount
+  const shippingSubsidy = orderPromos.shippingSubsidy
+  const total = Math.max(0, subtotal + (selectedCourier?.price ?? 0) - discount - shippingSubsidy)
 
   // Tombol bayar aktif hanya bila alamat valid DAN kurir sudah dipilih
-  const canPay = isAddressValid && selectedCourier !== null
+  // Kekurangan agar mencapai minimum belanja (0 = sudah terpenuhi)
+  const minOrderShortfall = Math.max(0, minOrderAmount - subtotal)
+  const canPay = isAddressValid && selectedCourier !== null && minOrderShortfall === 0
+
+  // === Simpan draf isian (debounce 400ms) ===
+  //
+  // Debounce, bukan tulis per ketukan: mengetik alamat lengkap bisa 60+ karakter, dan
+  // `JSON.stringify` + `setItem` di tiap ketukan adalah kerja sinkron yang menahan thread UI.
+  // 400ms cukup singkat sehingga refresh yang tak disengaja hampir selalu jatuh setelah
+  // penyimpanan terakhir, dan cukup panjang untuk melewati satu kata yang diketik cepat.
+  //
+  // Timer di-reset tiap perubahan (cleanup `clearTimeout`), jadi yang tersimpan selalu keadaan
+  // TERAKHIR — bukan tumpukan penulisan tertunda.
+  //
+  // TIDAK menulis saat `isPaying`: pesanan sedang dibuat dan draf akan dihapus sebentar lagi;
+  // penulisan yang menyusul setelah penghapusan justru menghidupkan kembali draf yang baru dibuang.
+  useEffect(() => {
+    if (!hydrated || isPaying) return
+    if (!draftAdaIsinya(address, selectedCourier)) return
+
+    const timer = setTimeout(() => writeCheckoutDraft(address, selectedCourier), 400)
+    return () => clearTimeout(timer)
+  }, [hydrated, isPaying, address, selectedCourier])
 
   // Sembunyikan toast otomatis setelah beberapa detik
   useEffect(() => {
@@ -223,36 +585,78 @@ export default function CheckoutPage() {
       return
     }
 
-    // Validasi lolos → JANGAN langsung bayar. Tampilkan popup konfirmasi nomor telepon dulu.
+    // Minimum belanja belum tercapai → hentikan sebelum request apa pun dikirim.
+    // Server tetap memvalidasi ulang di /api/orders/create (jangan hanya andalkan guard ini).
+    if (minOrderShortfall > 0) {
+      setToast(`Minimal belanja ${formatRupiah(minOrderAmount)} untuk melanjutkan pembayaran`)
+      return
+    }
+
+    // Validasi lolos → JANGAN langsung bayar. Tampilkan popup konfirmasi email dulu.
     // Proses bayar sebenarnya dijalankan proceedPayment() saat user tekan "Lanjutkan Checkout".
-    setIsPhoneConfirmOpen(true)
+    setIsEmailConfirmOpen(true)
   }
 
   // Proses bayar sebenarnya — dipanggil dari popup konfirmasi ("Lanjutkan Checkout").
   async function proceedPayment() {
     if (isPaying || !selectedCourier) return
-    setIsPhoneConfirmOpen(false)
+    setIsEmailConfirmOpen(false)
     setIsPaying(true)
+    // Pembeli sudah melihat ongkir baru dan memutuskan bayar → pesannya selesai tugas.
+    setShippingNotice(null)
 
     try {
       const res = await fetch('/api/orders/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          // Nilai sudah divalidasi (telepon = angka bersih 08xx)
+          // Nilai sudah divalidasi (telepon = angka bersih 08xx, email sudah huruf kecil)
           customerName: address.recipientName.trim(),
           customerPhone: address.phone,
+          // Disimpan ke orders.email. Inilah kunci yang dipakai pembeli untuk melacak pesanannya
+          // di /track-order, jadi ia harus tersimpan persis seperti yang divalidasi di form —
+          // jangan diubah bentuknya lagi di sini.
+          customerEmail: address.email,
           items: orderItems.map((item) => ({
             productId: item.id,
             name: item.name,
             quantity: item.quantity,
             price: item.price, // diabaikan server — harga otoritatif diambil dari DB/varian (K-3)
             variantId: item.variantId, // server pakai untuk harga & stok varian (Tahap 4)
+            // Penanda paket. Server memakainya untuk MENCARI harga combo di DB lalu mengalokasikan
+            // ulang sendiri — bukan untuk mempercayai harga di `price` (SEC-033).
+            comboId: item.comboId,
           })),
           // Server menghitung ulang total dari harga DB + ongkir + diskon (totalAmount client diabaikan)
           totalAmount: total, // dikirim untuk kompatibilitas; server tetap hitung ulang
           shippingCost: selectedCourier.price,
-          logistics: { courier: selectedCourier.name, service: selectedCourier.estimatedDate },
+          // service = JENIS LAYANAN, bukan estimasi tiba. Dulu diisi estimatedDate sehingga
+          // kolom jenis_layanan di OMS berisi "2-4 hari" — menyesatkan. Nilai final ditulis ulang
+          // oleh booking kurir dengan SERVICE_CODE dari Mengantar (mis. 'REG'); ini hanya nilai
+          // awal sebelum pembayaran sukses.
+          logistics: { courier: selectedCourier.name, service: 'Reguler' },
+          // Gudang asal tarif yang dipilih buyer + berat yang dipakai saat cek ongkir.
+          // Server memverifikasi ulang gudang ini (aktif & stok cukup) dan, bila gagal, jatuh ke
+          // opsi termurah berikutnya dari perbandingan ongkir yang masih tersimpan di server.
+          warehouseId: selectedCourier.warehouseId,
+          weight: shippingWeight,
+          // client_id GA4 dari cookie `_ga`. Dititipkan ke pesanan supaya webhook Xendit bisa
+          // mengirim event `purchase` atas nama pembeli ini — event itu TAK BISA dikirim dari
+          // browser, karena pembayaran VA/QRIS sering lunas berjam-jam kemudian tanpa pembeli
+          // pernah kembali ke halaman sukses.
+          //
+          // Dibaca DI SINI, bukan saat halaman mount: cookie `_ga` baru ditulis setelah skrip GA4
+          // selesai dimuat, dan pembeli yang langsung mendarat di checkout bisa saja menekan bayar
+          // sebelum itu. `undefined` (GA diblokir / mode privat) otomatis hilang dari JSON.
+          gaClientId: readGaClientId(),
+          // session_id GA4 dari cookie `_ga_<measurement-id>`. Tanpa ini, `purchase` yang dikirim
+          // webhook tak punya sesi untuk ditempeli, dan SELURUH pendapatan mendarat di baris
+          // "Unassigned" laporan Akuisisi traffic — kanal asal pembeli jadi tak bisa diketahui.
+          // Terukur di produksi 24 Sep 2026 sebelum perbaikan ini.
+          //
+          // Dibaca di titik yang sama dengan client_id, dan dengan alasan yang sama: cookie GA4
+          // baru ada setelah skripnya selesai dimuat.
+          gaSessionId: readGaSessionId(),
           // Alamat terstruktur dari form + hasil search Mengantar
           address: {
             shippingAddress: address.street,
@@ -266,7 +670,23 @@ export default function CheckoutPage() {
         }),
       })
 
-      const data = (await res.json().catch(() => ({}))) as { invoice?: string; error?: string }
+      const data = (await res.json().catch(() => ({}))) as {
+        invoice?: string
+        error?: string
+        code?: string
+      }
+
+      // Ongkir yang dikirim tak lagi berlaku untuk gudang yang sanggup memenuhi pesanan → muat
+      // ulang tarif dan tampilkan pesan menetap di kartu pengiriman (bukan toast). Pilihan kurir
+      // dikosongkan supaya tombol bayar terkunci sampai tarif baru tiba dan terpilih otomatis.
+      if (res.status === 409 && (data.code === 'SHIPPING_CHANGED' || data.code === 'SHIPPING_MISMATCH')) {
+        setShippingNotice({ reason: data.code, previousPrice: selectedCourier.price })
+        setSelectedCourier(null)
+        setShippingRefreshKey((n) => n + 1)
+        setIsPaying(false)
+        return
+      }
+
       if (!res.ok || !data.invoice) {
         // Mis. stok tidak cukup (409) → tampilkan pesan dari server
         setToast(data.error ?? 'Gagal memproses pesanan. Silakan coba lagi.')
@@ -274,17 +694,162 @@ export default function CheckoutPage() {
         return
       }
 
-      // Order berhasil → simpan no_telepon ke cookie (auto-recognize di /track-order & /cancel-order),
-      // naikkan estimasi pesanan aktif (badge angka header; di-refresh akurat saat buka /pesanan-saya),
-      // kosongkan keranjang, lalu ke halaman sukses.
+      // Pesanan SUDAH tersimpan → draf isian tak lagi punya alasan untuk ada.
+      //
+      // Dihapus DI SINI, bukan setelah tagihan terbit: pesanannya sudah nyata apa pun hasil
+      // penerbitan tagihan, jadi membiarkan draf hidup berarti belanja berikutnya dimulai dengan
+      // alamat pesanan ini sudah terisi — terlihat seperti sistem salah mengambil data.
+      //
+      // Berbeda dari `clearCart()` di bawah yang sengaja menunggu: mengosongkan keranjang lebih
+      // awal membuat halaman ini berkedip ke keadaan kosong sebelum berpindah ke Xendit.
+      clearCheckoutDraft()
+
+      // Order berhasil → simpan identitas guest ke cookie untuk auto-recognize berikutnya, dan
+      // naikkan estimasi pesanan aktif (badge angka header; di-refresh akurat saat buka
+      // /pesanan-saya). Keranjang BELUM dikosongkan di sini — lihat catatan di bawah.
+      //
+      // DUA cookie, bukan satu, karena halamannya memakai identitas berbeda:
+      //   infarm_phone → /cancel-order, /review, badge pesanan aktif
+      //   infarm_email → /track-order
       setGuestPhone(address.phone)
+      setGuestEmail(address.email)
       incrementActiveOrderCount()
+
+      // Terbitkan tagihan Xendit lalu bawa pembeli ke halaman pembayarannya.
+      //
+      // Dilakukan SETELAH order tersimpan — bukan sebelum — karena tagihan mengacu pada
+      // `nomor_invoice` yang baru dibuat server. Urutan ini juga berarti pesanannya TIDAK HILANG
+      // bila penerbitan tagihan gagal: ia tetap ada berstatus Menunggu Pembayaran, dan pembeli
+      // diarahkan ke halaman sukses yang menyediakan tombol bayar ulang.
+      const payRes = await fetch('/api/payments/invoice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoice: data.invoice }),
+      })
+      const payData = (await payRes.json().catch(() => ({}))) as {
+        invoiceUrl?: string
+        error?: string
+      }
+
+      // Keranjang dikosongkan SETELAH penerbitan tagihan selesai, bukan sebelumnya.
+      //
+      // Dilakukan di kedua cabang (berhasil & gagal) karena PESANANNYA sudah tersimpan apa pun
+      // hasil penerbitan tagihan — membiarkan keranjang terisi berarti pembeli bisa memesan barang
+      // yang sama dua kali tanpa sadar. Yang dihindari hanyalah mengosongkannya sebelum kita tahu
+      // hasilnya.
       clearCart()
-      router.push(`/checkout/success?invoice=${encodeURIComponent(data.invoice)}`)
+
+      if (payRes.ok && payData.invoiceUrl) {
+        // ── Tombol "kembali" browser harus mendarat di HALAMAN STATUS PESANAN ──
+        //
+        // Sebelumnya di sini dipakai `location.replace`, yang menukar entri checkout dengan halaman
+        // Xendit. Akibatnya menekan "kembali" dari halaman pembayaran membawa pembeli ke halaman
+        // SEBELUM checkout (beranda/keranjang) — pesanannya sudah tersimpan dan stok sudah
+        // dipotong, tapi ia kehilangan satu-satunya jalan untuk membayar atau mengganti metode.
+        //
+        // Sekarang entri checkout ditukar dulu dengan halaman LACAK PESANAN (lewat replaceState),
+        // baru halaman Xendit DIDORONG sebagai entri baru (`assign`, bukan `replace`). Jadi
+        // "kembali" mendarat di halaman lacak: status pesanannya terbaca di sana, lengkap dengan
+        // tombol "Bayar Sekarang" untuk membuka lagi halaman pembayaran.
+        // Checkout sendiri tetap tak bisa dikunjungi lagi — keranjangnya memang sudah dikosongkan.
+        const statusUrl = `/track?order=${encodeURIComponent(data.invoice)}`
+        try {
+          window.history.replaceState(null, '', statusUrl)
+        } catch {
+          // replaceState bisa ditolak di konteks tertentu; pembayaran tak boleh ikut batal
+          // karenanya. Paling buruk, perilaku "kembali" kembali seperti sebelumnya.
+        }
+        // FULL navigation (bukan router.push): tujuannya domain Xendit, di luar aplikasi ini.
+        window.location.assign(payData.invoiceUrl)
+        return
+      }
+
+      // Gagal menerbitkan tagihan → JANGAN biarkan pembeli menyangka pesanannya batal.
+      // Ke halaman sukses (yang menampilkan status sungguhan dari DB + tombol bayar ulang),
+      // sambil membawa alasannya agar bisa ditampilkan di sana.
+      //
+      // `replace`, BUKAN `push` — alasannya sama dengan window.location.replace di jalur berhasil
+      // tepat di atas: keranjang sudah dikosongkan, jadi /checkout tak boleh tertinggal di riwayat
+      // browser. Dengan `push`, satu kali tombol Back memulangkan pembeli ke halaman checkout tanpa
+      // isi dan ia melihat keadaan kosong yang membingungkan padahal pesanannya sudah tersimpan.
+      console.error('[checkout] gagal menerbitkan tagihan:', payData.error ?? payRes.status)
+      router.replace(
+        `/checkout/success?invoice=${encodeURIComponent(data.invoice)}&pay_error=1`,
+      )
     } catch {
       setToast('Gagal memproses pesanan. Periksa koneksi lalu coba lagi.')
       setIsPaying(false)
     }
+  }
+
+  // === Cabang tampilan ===
+  // Ditempatkan SETELAH seluruh hook supaya urutan hook tetap sama di tiap render.
+  //
+  // ⚠️ Ketiganya dilewati saat `isPaying`. Setelah pesanan tersimpan, `clearCart()` mengosongkan
+  // cookie checkout dan halaman ini reaktif terhadapnya — tanpa pengecualian ini, keadaan halaman
+  // berubah jadi `empty` tepat sebelum berpindah ke Xendit, dan pembeli sekilas melihat "Belum ada
+  // produk untuk dibayar" persis setelah menekan bayar. Dengan dilewati, tirai "Mengalihkan ke
+  // pembayaran…" di bawah tetap yang menutupi layar.
+
+  // LOADING — detail produk belum lengkap. Kerangka, BUKAN keadaan kosong.
+  if (viewState === 'loading' && !isPaying) {
+    return (
+      <div className="flex min-h-screen flex-col bg-brand-surface text-zinc-900">
+        <CheckoutHeader />
+        <CheckoutSkeleton />
+      </div>
+    )
+  }
+
+  // EMPTY & UNAVAILABLE — tak ada yang bisa dibayar. Jangan tampilkan form, ongkir, apalagi
+  // tombol bayar. Dua keadaan, dua pesan: pembeli yang belum memilih apa pun butuh diarahkan ke
+  // keranjang, sedangkan pembeli yang produknya baru ditarik admin butuh tahu ITU yang terjadi —
+  // dibilang "belum memilih" setelah ia jelas-jelas menekan Beli Langsung hanya membuatnya
+  // mengira sistemnya rusak.
+  if ((viewState === 'empty' || viewState === 'unavailable') && !isPaying) {
+    const tidakTersedia = viewState === 'unavailable'
+    return (
+      <div className="flex min-h-screen flex-col bg-brand-surface text-zinc-900">
+        <CheckoutHeader />
+        <main className="mx-auto flex w-full max-w-md flex-1 items-center justify-center px-4 py-10">
+          <div className="w-full rounded-2xl border border-zinc-200 bg-white p-6 text-center shadow-sm">
+            <span
+              className={`mx-auto flex h-12 w-12 items-center justify-center rounded-full ${
+                tidakTersedia ? 'bg-orange-50 text-orange-500' : 'bg-brand-surface text-brand-primary'
+              }`}
+            >
+              {tidakTersedia ? (
+                <PackageX className="h-6 w-6" />
+              ) : (
+                <ShoppingBag className="h-6 w-6" />
+              )}
+            </span>
+            <h1 className="mt-3 text-base font-bold text-zinc-800">
+              {tidakTersedia ? 'Produk sudah tidak tersedia' : 'Belum ada produk untuk dibayar'}
+            </h1>
+            <p className="mx-auto mt-1.5 max-w-xs text-sm leading-relaxed text-zinc-500">
+              {tidakTersedia
+                ? 'Produk yang kamu pilih sudah ditarik dari katalog, jadi pesanannya tidak bisa dilanjutkan. Silakan pilih produk lain.'
+                : 'Pilih produk di keranjang lebih dulu, lalu tekan Checkout. Kalau kamu baru saja menyelesaikan pesanan, pesanan itu sudah tersimpan dan bisa dilihat di Lacak Pesanan.'}
+            </p>
+            <div className="mt-5 space-y-2">
+              <Link
+                href={tidakTersedia ? '/products' : '/keranjang'}
+                className="block rounded-xl bg-brand-primary py-3 font-heading text-sm font-bold text-white shadow-sm transition hover:brightness-90 active:scale-[0.99]"
+              >
+                {tidakTersedia ? 'Lihat Produk Lain' : 'Ke Keranjang'}
+              </Link>
+              <Link
+                href={tidakTersedia ? '/keranjang' : '/track-order'}
+                className="block rounded-xl border border-zinc-200 py-3 text-sm font-semibold text-zinc-600 transition hover:bg-zinc-50"
+              >
+                {tidakTersedia ? 'Ke Keranjang' : 'Lacak Pesanan'}
+              </Link>
+            </div>
+          </div>
+        </main>
+      </div>
+    )
   }
 
   return (
@@ -292,36 +857,111 @@ export default function CheckoutPage() {
       {/* Header sticky */}
       <CheckoutHeader />
 
-      {/* Konten — pb-24 agar tak tertutup bilah bayar bawah */}
-      <main className="flex-1 space-y-2 pb-24">
-        {/* 2 — Ringkasan produk yang dibeli (dari pilihan keranjang) */}
-        <CheckoutProductSummary items={summaryItems} />
+      {/* Konten.
+          MOBILE (< lg): satu kolom penuh, section menempel tepi layar — TIDAK BERUBAH.
+            pb-32 memberi ruang untuk bilah bayar yang melayang di dasar layar.
+          DESKTOP (lg+): dua kolom. Kiri = alamat pengiriman saja (porsi lebih besar, karena
+            fieldnya paling banyak), kanan = produk → pengiriman → pembayaran → total.
 
-        {/* 3 — Form input alamat pengiriman */}
-        <AddressForm ref={addressFormRef} onChange={handleAddressChange} />
+          Penempatan kolom memakai `col-start` per item, BUKAN dua div pembungkus. Alasannya:
+          urutan DOM harus tetap urutan mobile (produk → alamat → kirim → bayar → ringkasan),
+          sementara di desktop alamat pindah ke kolom kiri. Membungkus tiap kolom akan memaksa
+          urutan DOM mengikuti desktop dan merusak urutan mobile. */}
+      <main className="mx-auto w-full max-w-6xl flex-1 space-y-2 pb-32 lg:grid lg:grid-cols-[3fr_2fr] lg:grid-rows-[repeat(5,auto)] lg:items-start lg:gap-x-6 lg:gap-y-4 lg:space-y-0 lg:px-8 lg:pb-12 lg:pt-6">
+        {/* 1 — Ringkasan produk yang dibeli (dari pilihan keranjang) — KANAN di desktop */}
+        <CheckoutCard className="lg:col-start-2">
+          <CheckoutProductSummary items={summaryItems} />
+        </CheckoutCard>
 
-        {/* 4 — Pilihan kurir & ongkir (bottom sheet) berdasarkan alamat terpilih */}
-        <ShippingOptions
-          destinationId={address.destination_id}
-          weight={shippingWeight}
-          selected={selectedCourier}
-          onSelect={setSelectedCourier}
-        />
+        {/* 2 — Form alamat pengiriman — KIRI di desktop, satu-satunya isi kolom itu.
+               `row-span-5` + `self-start` = resep sticky di dalam grid: kolomnya membentang
+               setinggi seluruh baris (supaya ada ruang untuk menempel), tapi kartunya sendiri
+               setinggi isinya. Tanpa row-span, area tempelnya cuma setinggi baris pertama dan
+               sticky-nya tak pernah terlihat bekerja. */}
+        <CheckoutCard className="lg:sticky lg:top-20 lg:col-start-1 lg:row-span-5 lg:row-start-1 lg:self-start">
+          <AddressForm
+            ref={addressFormRef}
+            onChange={handleAddressChange}
+            initialValue={draftTersimpan?.address}
+          />
+        </CheckoutCard>
 
-        {/* 4 — Pilihan pembayaran (klik → buka modal) */}
-        <OptionRow
-          icon={<WalletIcon />}
-          title="Metode Pembayaran"
-          value={selectedPayment.name}
-          onClick={() => setIsPaymentModalOpen(true)}
-        />
+        {/* 3 — Pilihan kurir & ongkir (bottom sheet). Isi keranjang dikirim agar server bisa
+               membandingkan ongkir dari tiap gudang yang stoknya cukup.
+               WAJIB dibungkus: komponennya me-return fragment (tombol + bottom sheet), jadi tanpa
+               pembungkus ia menghasilkan DUA grid item dan sheet-nya ikut memakan satu baris. */}
+        <CheckoutCard className="lg:col-start-2">
+          <ShippingOptions
+            destinationId={address.destination_id}
+            weight={shippingWeight}
+            items={shippingItems}
+            selected={selectedCourier}
+            onSelect={setSelectedCourier}
+            refreshKey={shippingRefreshKey}
+          />
+          {/* Latar putih sendiri: di mobile CheckoutCard tak berlatar, jadi tanpa ini pesannya
+              melayang di atas warna halaman, terpisah dari baris kurir yang ia jelaskan. */}
+          {shippingNotice && (
+            <div className="bg-white px-4 pb-4 lg:rounded-b-2xl">
+              <div
+                ref={shippingNoticeRef}
+                role="alert"
+                className="flex items-start gap-2 rounded-lg border border-orange-200 bg-orange-50 p-3 text-orange-800"
+              >
+                <AlertTriangle className="mt-0.5 h-5 w-5 flex-none" />
+                <p className="text-sm leading-relaxed">
+                  {shippingNoticeText(shippingNotice, selectedCourier?.price ?? null)}
+                </p>
+              </div>
+            </div>
+          )}
+        </CheckoutCard>
 
-        {/* 5 — Ringkasan pesanan (rincian harga) tepat sebelum tombol aksi */}
-        <OrderSummary
-          subtotal={subtotal}
-          shipping={shipping}
-          total={total}
-        />
+        {/* 4 — Metode pembayaran: KETERANGAN, bukan pilihan.
+            Seksi berlogo yang dulu ada di sini dihapus bersama pemilih metode (2026-09-18). Yang
+            tersisa satu baris, dan itu memang perlu: tanpanya checkout tak menyebut pembayaran sama
+            sekali, dan pembeli menekan "Lanjutkan Checkout" tanpa tahu nanti bisa bayar pakai apa.
+            Daftarnya sengaja berupa kategori, bukan merek — merek berubah mengikuti kanal yang
+            aktif di Xendit, dan daftar merek di sini akan basi tanpa ada yang menyadarinya. */}
+        <CheckoutCard className="lg:col-start-2">
+          <section className="flex items-center gap-3 bg-white px-4 py-4">
+            <span className="shrink-0 text-brand-primary">
+              <Wallet className="h-6 w-6" />
+            </span>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-zinc-800">Metode Pembayaran</p>
+              <p className="text-xs leading-relaxed text-zinc-500">
+                Transfer Virtual Account, e-wallet, QRIS, atau direct debit — dipilih di halaman
+                pembayaran setelah ini.
+              </p>
+            </div>
+          </section>
+        </CheckoutCard>
+
+        {/* 5 — Ringkasan pesanan (rincian harga) */}
+        <CheckoutCard className="lg:col-start-2">
+          <OrderSummary
+            subtotal={subtotal}
+            shipping={shipping}
+            total={total}
+            discount={discount}
+            shippingSubsidy={shippingSubsidy}
+          />
+        </CheckoutCard>
+
+        {/* 6 — Total + tombol bayar sebagai kartu penutup kolom kanan. Hanya tampak di lg+;
+               di mobile perannya dipegang bilah melayang di bawah (varian 'sticky'). */}
+        <div className="lg:col-start-2">
+          <CheckoutBottomBar
+            variant="panel"
+            total={total}
+            onPay={handlePay}
+            isPaying={isPaying}
+            canPay={canPay}
+            minOrderAmount={minOrderAmount}
+            minOrderShortfall={minOrderShortfall}
+          />
+        </div>
       </main>
 
       {/* Toast singkat (mis. alamat belum lengkap saat menekan Bayar) */}
@@ -334,40 +974,57 @@ export default function CheckoutPage() {
       )}
 
       {/* Bilah bayar bawah (sticky) */}
-      <CheckoutBottomBar total={total} onPay={handlePay} isPaying={isPaying} canPay={canPay} />
-
-      {/* === Modal Pembayaran === */}
-      <PaymentModal
-        open={isPaymentModalOpen}
-        onClose={() => setIsPaymentModalOpen(false)}
-        methods={PAYMENT_METHODS}
-        selectedId={selectedPaymentId}
-        onSelect={setSelectedPaymentId}
+      <CheckoutBottomBar
+        total={total}
+        onPay={handlePay}
+        isPaying={isPaying}
+        canPay={canPay}
+        minOrderAmount={minOrderAmount}
+        minOrderShortfall={minOrderShortfall}
       />
 
-      {/* === Popup konfirmasi nomor telepon (setelah validasi lolos, sebelum bayar) === */}
-      {/* "Kembali" / klik luar / X → tutup + kembalikan fokus ke field telepon untuk dikoreksi */}
-      <PhoneConfirmModal
-        open={isPhoneConfirmOpen}
-        phone={address.phone}
+      {/* === Popup konfirmasi EMAIL (setelah validasi lolos, sebelum bayar) === */}
+      {/* "Kembali" / klik luar / X → tutup + kembalikan fokus ke field email untuk dikoreksi.
+          Dulu popup ini mengonfirmasi no_telepon — lihat alasan pindahnya di EmailConfirmModal. */}
+      <EmailConfirmModal
+        open={isEmailConfirmOpen}
+        email={address.email}
         onBack={() => {
-          setIsPhoneConfirmOpen(false)
-          addressFormRef.current?.focusPhone()
+          setIsEmailConfirmOpen(false)
+          addressFormRef.current?.focusEmail()
         }}
         onConfirm={proceedPayment}
       />
+
+      {/* === Tirai "mengalihkan ke pembayaran" ===
+          Menutup layar sejak tombol bayar ditekan sampai halaman berpindah ke Xendit.
+
+          KENAPA PERLU: setelah order tersimpan, clearCart() menghapus cookie `infarm_checkout` dan
+          halaman ini reaktif terhadapnya — jadi ia pasti render ulang tepat sebelum berpindah.
+          Dulu render ulang itu jatuh ke fallback DUMMY_ORDER_ITEMS dan total berkedip ke angka
+          karangan; fallback-nya kini sudah dibuang, tapi tirai ini tetap dipertahankan karena
+          keadaan kosong yang menggantikannya juga tak boleh sempat terlihat sedetik pun sebelum
+          pembeli diarahkan ke Xendit.
+
+          Berlaku untuk semua penyebab, bukan hanya yang ini: apa pun yang membuat halaman render
+          ulang selama proses bayar tak akan terlihat lagi. */}
+      {isPaying && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed inset-0 z-[80] flex flex-col items-center justify-center gap-3 bg-brand-surface/95 backdrop-blur-sm"
+        >
+          <span
+            className="h-10 w-10 animate-spin rounded-full border-4 border-brand-primary/25 border-t-brand-primary"
+            aria-hidden
+          />
+          <p className="text-sm font-semibold text-brand-primary">Mengalihkan ke pembayaran…</p>
+          <p className="px-8 text-center text-xs text-gray-500">
+            Jangan tutup atau muat ulang halaman ini.
+          </p>
+        </div>
+      )}
     </div>
   )
 }
 
-// === Ikon inline ===
-
-function WalletIcon() {
-  return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M20 12V8H6a2 2 0 0 1 0-4h12v4" />
-      <path d="M4 6v12a2 2 0 0 0 2 2h14v-4" />
-      <path d="M18 12a2 2 0 0 0 0 4h4v-4z" />
-    </svg>
-  )
-}

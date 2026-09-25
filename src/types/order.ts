@@ -14,11 +14,46 @@ export type OrderItem = {
   isPromoItem?: boolean // true = produk GRATIS hadiah promosi (type='free_product'); tak menambah subtotal
   promotionId?: string | null // id promosi penyebab produk ini gratis (null untuk item normal)
   variantId?: string | null // varian produk yang dipilih (null bila produk tak bervarian)
+  comboId?: string | null // paket asal baris ini → order_items.combo_id (dasar laporan penjualan combo)
   variantName?: string // nama varian di-resolve saat baca (mis. "50 Biji") — untuk tampilan invoice
 }
 
 // Status pembayaran pesanan (app-facing). DB: PENDING→Menunggu, PAID→Lunas, FAILED→Gagal.
 export type OrderPaymentStatus = 'Lunas' | 'Menunggu' | 'Gagal'
+
+// Keadaan pengembalian dana. Nilainya dipakai apa adanya di DB (bukan dipetakan seperti
+// order_status) supaya kolom, constraint, dan kode menyebut hal yang sama persis — satu lapis
+// terjemahan lebih sedikit untuk salah.
+// SEDANG_DIPROSES: sudah dikirim ke Xendit, hasilnya belum dipastikan. `refunds` (H+1) menjawab
+// PENDING lebih dulu dan hasil sesungguhnya menyusul lewat callback. Keadaan ini yang mencegah
+// dana terkirim dua kali TANPA berbohong bahwa urusannya sudah selesai.
+export type RefundStatus = 'PERLU_REFUND' | 'SEDANG_DIPROSES' | 'SUDAH_REFUND' | 'TIDAK_PERLU'
+
+// Satu baris di daftar kerja pengembalian dana OMS.
+//
+// SENGAJA BUKAN `Order` (SEC-048). Daftar itu boleh dibuka peran `staff` juga — CS perlu bisa
+// menjawab "kapan uang saya kembali" — dan `Order` utuh membawa jauh lebih banyak daripada yang
+// dibutuhkan pertanyaan itu: alamat lengkap pembeli, `invoiceUrl` (halaman pembayaran yang bisa
+// jadi MASIH HIDUP), `transactionId`, serta `mengantarObjectId` yang cukup untuk menghapus
+// penjemputan. Tak satu pun ditampilkan halamannya, tapi semuanya ikut terkirim ke browser.
+//
+// Bentuknya ditulis eksplisit supaya kolom baru di `orders` tak pernah lagi ikut terbawa ke klien
+// hanya karena ia ada.
+export type RefundWorkItem = {
+  orderId: string
+  customerName: string
+  customerPhone?: string
+  customerEmail?: string
+  date: string
+  totalAmount: number
+  paymentMethod?: string
+  refundStatus?: RefundStatus
+  // Tiga di bawah hanya terisi untuk baris SEDANG_DIPROSES — nomor yang dicari admin di dashboard
+  // Xendit, plus siapa yang memulainya dan kapan.
+  refundReference?: string
+  refundAt?: string
+  refundBy?: string
+}
 
 // Status alur (fulfillment) pesanan (app-facing) — dipakai tab filter di OMS.
 // DB: PENDING→'Menunggu Pembayaran', PROCESSING→Diproses, SHIPPED→Dikirim,
@@ -56,12 +91,93 @@ export type Order = {
   date: string // ISO date = created_at
   items: OrderItem[]
   totalAmount: number // = jumlah_total (subtotal + ongkir - diskon)
+  // = ongkos_kirim. Bagian ongkir DARI totalAmount, disimpan terpisah supaya bisa direkonsiliasi
+  // dengan tagihan Mengantar. `undefined` untuk pesanan yang dibuat sebelum kolomnya ada — itu
+  // BUKAN berarti gratis ongkir (nilai 0 yang berarti gratis).
+  shippingCost?: number
   paymentStatus: OrderPaymentStatus
   status?: OrderFulfillmentStatus
   logistics?: OrderLogistics
   trackingNumber?: string // no_tracking (diisi setelah kurir pickup)
   transactionId?: string // id_transaksi (dari Xendit setelah pembayaran)
+  // client_id GA4 pembeli, dititipkan checkout dari cookie `_ga` (migration 20260923120000).
+  // Dipakai webhook Xendit untuk mengirim event `purchase` atas nama pembeli yang benar — lihat
+  // src/lib/analytics-server.ts. `undefined` bila pembeli memblokir GA atau pesanannya dibuat
+  // sebelum kolom ini ada; keduanya normal dan tidak menghalangi apa pun selain atribusi.
+  gaClientId?: string
+  // session_id GA4 pembeli, dari cookie `_ga_<measurement-id>` (migration 20260924120000).
+  // Dikirim bersama gaClientId supaya `purchase` menempel ke SESI yang benar — tanpa ini seluruh
+  // pendapatan mendarat di baris "Unassigned" laporan Akuisisi traffic, dan kanal asal pembeli
+  // tak bisa diketahui. `undefined` bila cookie tak terbaca; pesanan tetap sah.
+  gaSessionId?: string
+  // Estimasi lama pengiriman dari Mengantar saat pesanan dibuat, teks mentah ("2-4 hari").
+  // Diurai oleh src/lib/delivery-estimate.ts. Kosong = pesanan lama → perkiraan 2–4 hari.
+  deliveryEstimate?: string
+  // Tagihan Xendit yang masih berlaku, disimpan agar tombol "Bayar Sekarang" yang ditekan
+  // berulang kali memakai ulang halaman pembayaran yang SAMA alih-alih menerbitkan tagihan baru
+  // (API-XND-027). Keduanya `undefined` untuk pesanan yang belum pernah ditagih, dan untuk seluruh
+  // pesanan lama bila migration 20260908120000 belum dijalankan.
+  invoiceUrl?: string
+  invoiceExpiresAt?: string // ISO 8601, dari `expiry_date` respons Xendit
+  // Hasil upaya mematikan tagihan saat pesanan dibatalkan.
+  invoiceExpiredAt?: string // ISO 8601 — tagihan BERHASIL dimatikan, tak bisa dibayar lagi
+  // Terisi = pesanan sudah batal tapi tagihannya MASIH HIDUP dan masih bisa dibayar. Uang yang
+  // terlanjur masuk lewat VA tak bisa di-refund Xendit, jadi ini WAJIB ditindaklanjuti manual.
+  invoiceExpireError?: string
+  // === Pengembalian dana ===
+  // Hanya relevan untuk pesanan LUNAS yang dibatalkan. undefined = tak pernah relevan.
+  //
+  // Sengaja TIDAK memakai paymentStatus: kolom itu menjawab "apakah pembeli sudah membayar",
+  // yang jawabannya tetap YA meski uangnya sudah dikembalikan — dan fakta itu dibutuhkan
+  // rekonsiliasi maupun laporan penjualan.
+  refundStatus?: RefundStatus
+  refundAmount?: number // rupiah yang BENAR-BENAR dikembalikan; bisa < totalAmount bila dipotong biaya
+  refundNote?: string // bank & rekening tujuan, nomor referensi transfer, atau alasan TIDAK_PERLU
+  refundAt?: string // ISO 8601
+  refundBy?: string // nama admin yang menjalankan
+  // Nomor referensi dari Xendit, diisi SISTEM saat pengembalian otomatis berhasil.
+  // undefined = dikembalikan manual oleh manusia (dan itu akan tetap umum: transfer bank tak
+  // bisa dikembalikan lewat Xendit sama sekali).
+  refundReference?: string
+  // = metode_pembayaran. Metode/channel yang BENAR-BENAR dipakai pembeli menurut Xendit
+  // (mis. 'BCA', 'OVO', 'QRIS', 'ALFAMART'). Hanya diketahui setelah callback pembayaran masuk —
+  // di jalur invoice pembeli memilih metodenya sendiri di halaman Xendit, jadi `undefined` selama
+  // tagihan belum dibayar, dan juga untuk pesanan yang dibuat sebelum kolomnya ada.
+  paymentMethod?: string
   address?: OrderShippingAddress
+  warehouseId?: string // gudang pemenuh pesanan (orders.warehouse_id); undefined untuk pesanan lama
+  // Nama gudang pemenuh, di-resolve saat baca (join ke tabel warehouses). Hanya untuk TAMPILAN OMS —
+  // tak pernah dikirim ke storefront. undefined bila pesanan lama (warehouse_id NULL) atau gudangnya
+  // sudah dihapus; UI menampilkannya sebagai "Belum ditentukan".
+  warehouseName?: string
+  // Hasil booking kurir Mengantar. undefined = belum pernah dicoba (pesanan lama / belum dibayar).
+  // FAILED = pembayaran sudah masuk tapi resi gagal terbit -> WAJIB ditindaklanjuti admin.
+  // CANCELLED = penjemputan berhasil dihapus di Mengantar (ongkir kembali ke saldo).
+  // CANCEL_FAILED = pesanan sudah dibatalkan tapi penghapusannya gagal → PERLU DIHAPUS MANUAL,
+  // kalau tidak kurir tetap datang menjemput paket yang pembatalannya sudah disetujui.
+  // Sengaja terpisah dari FAILED: FAILED berarti "booking gagal, perlu dibooking ULANG" —
+  // tindakan yang berlawanan.
+  shipmentStatus?: "BOOKED" | "FAILED" | "CANCELLED" | "CANCEL_FAILED"
+  shipmentError?: string // alasan kegagalan terakhir (untuk admin OMS)
+  shipmentBookedAt?: string // ISO, kapan resi terbit
+  // Kapan KURIR menyatakan paket diterima — diisi otomatis dari peristiwa pelacakan, dan inilah
+  // yang memberi pembeli hak mengulas selama 14 hari (lihat lib/review-eligibility.ts).
+  //
+  // SENGAJA TERPISAH dari `status: 'Selesai'`. 'Selesai' itu final, tak bisa dibatalkan lewat UI,
+  // dan menghentikan sinkronisasi resi — karena itu ia tak pernah ditulis otomatis. Kolom ini
+  // menanggung hak ulas tanpa mengunci apa pun.
+  //
+  // Isinya waktu KITA MENGAMATI sinyal terkirim, bukan waktu yang diklaim kurir: timestamp
+  // peristiwa dari Mengantar adalah teks bebas yang sengaja tak pernah diparse. Selalu lebih
+  // lambat daripada penerimaan sesungguhnya, jadi jendela ulasan tak pernah tutup terlalu cepat.
+  deliveredAt?: string // ISO 8601
+  // Identitas pengiriman di sisi MENGANTAR — bukan nomor invoice kita, bukan nomor resi.
+  // Diperlukan untuk membatalkan penjemputan (DELETE /order), yang hanya menerima kedua nilai ini
+  // dan menolak nomor resi. undefined pada pesanan yang dibooking sebelum 2026-09-09 sampai
+  // diisi backfill, dan pada pesanan yang memang belum pernah dibooking.
+  mengantarObjectId?: string // Mengantar `_id`      -> DELETE /order field `ids`
+  mengantarOrderId?: string // Mengantar `ORDER_ID`  -> DELETE /order field `orderIds`
+  mengantarBatchId?: string // Mengantar `batch_id`  -> DELETE /batch
 }
 
 // Payload dari checkout ke API (sebelum disimpan). nomor_invoice digenerate di server.
@@ -73,10 +189,20 @@ export type CreateOrderInput = {
   customerEmail?: string
   items: OrderItem[]
   totalAmount: number
+  // Ongkir hasil verifikasi SERVER terhadap tarif Mengantar — bukan angka mentah dari client.
+  // Diteruskan ke RPC agar tersimpan di kolomnya sendiri, bukan hanya melebur ke totalAmount.
+  shippingCost?: number
   logistics?: OrderLogistics
   address: OrderShippingAddress
   paymentStatus?: OrderPaymentStatus
   status?: OrderFulfillmentStatus
+  warehouseId?: string // gudang hasil resolveWarehouseForOrder; kosong → RPC pakai gudang default
+  // === Promo (dihitung server lewat computeOrderPromos, TIDAK PERNAH dari client) ===
+  discount?: number // potongan harga barang → orders.diskon
+  shippingSubsidy?: number // ongkir yang ditanggung promo → orders.ongkos_kirim_ditanggung.
+  // ⚠️ shippingCost di atas TETAP tarif Mengantar yang sebenarnya — jangan dinolkan saat gratis
+  // ongkir. Kolom itu dipakai merekonsiliasi tagihan kurir; subsidinya dicatat terpisah di sini.
+  appliedPromos?: { id: string; name: string; type: string; value: number }[] // → promo_terpakai
 }
 
 // Agregasi produk terlaris — jumlah unit terjual & total pendapatan per produk.

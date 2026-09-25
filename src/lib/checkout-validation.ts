@@ -3,14 +3,16 @@
 // Dipakai bersama oleh AddressForm (tampilkan error per field) & halaman checkout (status tombol).
 
 import { getPhoneError } from './phone'
+import { getEmailError } from './email'
 
 // Field wajib pada section alamat. Urutan = urutan tampilan (untuk scroll ke field pertama yang error).
-export type AddressFieldKey = 'recipientName' | 'phone' | 'destination_id' | 'street'
+export type AddressFieldKey = 'recipientName' | 'phone' | 'email' | 'destination_id' | 'street'
 
 // Subset field yang divalidasi (AddressFormState memenuhinya secara struktural).
 export type AddressValidationInput = {
   recipientName: string
   phone: string
+  email: string
   destination_id: string
   street: string
 }
@@ -22,7 +24,13 @@ export type AddressValidationResult = {
 }
 
 // Urutan field sesuai tampilan form
-const FIELD_ORDER: AddressFieldKey[] = ['recipientName', 'phone', 'destination_id', 'street']
+const FIELD_ORDER: AddressFieldKey[] = [
+  'recipientName',
+  'phone',
+  'email',
+  'destination_id',
+  'street',
+]
 
 // Memvalidasi seluruh field alamat. Mengembalikan status valid, pesan error per field,
 // dan field pertama yang belum valid (untuk auto-scroll saat submit).
@@ -35,6 +43,11 @@ export function validateAddress(a: AddressValidationInput): AddressValidationRes
 
   const phoneError = getPhoneError(a.phone)
   if (phoneError) errors.phone = phoneError
+
+  // Email WAJIB, bukan opsional. Sejak Lacak Pesanan berpindah ke email, pesanan tanpa email
+  // tak punya cara ditemukan kembali oleh pembelinya sendiri.
+  const emailError = getEmailError(a.email)
+  if (emailError) errors.email = emailError
 
   if (!a.destination_id) {
     errors.destination_id = 'Pilih alamat pengiriman dari hasil pencarian'

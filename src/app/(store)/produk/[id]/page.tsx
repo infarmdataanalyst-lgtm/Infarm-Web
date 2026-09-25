@@ -28,6 +28,7 @@ import {
   getCachedVariantsByProduct,
 } from '@/lib/mock-db/cached-reads'
 import type { StoredProduct, ProductDetail, ProductReview } from '@/types/product'
+import { comboShowsOnProduct } from '@/types/combo'
 import ProductImageSlider from '@/components/product/ProductImageSlider'
 import ProductInfo from '@/components/product/ProductInfo'
 import VariantSelector from '@/components/product/VariantSelector'
@@ -50,6 +51,7 @@ function toProductDetail(
   return {
     id: p.id,
     name: p.name,
+    minOrderQty: p.minOrderQty ?? 1,
     sku: p.sku,
     originalPrice: p.originalPrice,
     promoPrice: p.promoPrice,
@@ -106,7 +108,9 @@ export default async function ProductDetailPage({
   }
   if (!product) notFound()
 
-  // Paket combo REAL (Supabase) yang aktif, memuat produk ini, & semua produknya masih ada stok.
+  // Paket combo REAL (Supabase) yang aktif, BER-PRODUK UTAMA produk ini, & semua produknya masih
+  // ada stok. Cross-sell sengaja satu arah (lihat comboShowsOnProduct): paket "A + B" tayang di
+  // halaman A saja, sehingga B bebas disandingkan produk lain di paket tersendiri.
   // Varian produk (opsional): kosong bila produk tak bervarian → tampil seperti biasa.
   const [allCombos, allProducts, salesCounts, variants] = await Promise.all([
     getCachedCombos(),
@@ -125,13 +129,20 @@ export default async function ProductDetailPage({
   const productCombos = allCombos.filter(
     (c) =>
       c.isActive &&
-      c.items.some((it) => it.productId === product.id) &&
+      comboShowsOnProduct(c, product.id) &&
       c.items.every((it) => (stockById[it.productId] ?? 0) > 0),
   )
+  // Stok anggota paket saja — dasar batas tombol "+" jumlah paket di BundleOffer. Sengaja bukan
+  // seluruh `stockById`: peta itu memuat semua produk katalog dan ikut terkirim ke browser.
+  const comboStockById: Record<string, number> = {}
+  for (const c of productCombos) {
+    for (const it of c.items) comboStockById[it.productId] = stockById[it.productId] ?? 0
+  }
 
   return (
-    // pt-14: ruang untuk AppBar fixed (h-14). pb-24: ruang agar konten tak tertutup bilah aksi bawah.
-    <main className="flex flex-1 flex-col bg-brand-surface pt-14 pb-24">
+    // pt-14: ruang untuk AppBar fixed (h-14). pb-24: ruang agar konten tak tertutup bilah aksi
+    // mengambang — hanya perlu di mobile; di desktop (lg+) bilah itu statis, jadi padding dikecilkan.
+    <main className="flex flex-1 flex-col bg-brand-surface pt-14 pb-24 lg:pb-8">
       {/* Container terpusat: full-bleed di mobile, dibatasi lebar di desktop */}
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-2 lg:gap-4 lg:px-6 lg:py-4">
         {/* Bagian atas: 2 kolom sejajar di desktop (foto kiri, info kanan),
@@ -149,17 +160,32 @@ export default async function ProductDetailPage({
               <ProductInfo product={product} soldCount={soldCount} showPrice={!hasVariants} />
               {hasVariants && <VariantSelector productId={product.id} variants={variants} />}
             </div>
+
             {/* 5 — Deskripsi / spesifikasi produk (di bawah info, kolom kanan desktop) */}
             <div className="lg:overflow-hidden lg:rounded-xl">
               <ProductDescription description={product.description} />
             </div>
+
+            {/* 8 + 9 — Tombol aksi + logika simpan ke cookie keranjang.
+                Ditempatkan DI SINI (bukan di akhir halaman) supaya di desktop tombolnya tampil statis
+                tepat di bawah section Deskripsi Produk. Di mobile komponennya `fixed` sehingga keluar
+                dari alur dan tetap menempel di dasar layar — posisinya di markup tidak berpengaruh. */}
+            <StickyBuyBar
+              productId={product.id}
+              price={product.promoPrice}
+              name={product.name}
+              category={product.category}
+              sku={product.sku}
+              minOrderQty={product.minOrderQty ?? 1}
+              variants={variants}
+            />
           </div>
         </div>
 
         {/* Bagian bawah: tetap tumpuk vertikal di semua ukuran layar */}
         <div className="flex flex-col gap-2 lg:gap-4">
           {/* 4 — Rekomendasi paket kombo hemat (real dari Supabase, clickable) */}
-          <BundleOffer combos={productCombos} imageById={imageById} />
+          <BundleOffer combos={productCombos} imageById={imageById} stockById={comboStockById} />
 
           {/* 6 — "Produk yang Pernah Anda Lihat" (dari localStorage real-time) */}
           <RecentlyViewed currentProductId={id} allProducts={allProducts} />
@@ -172,16 +198,6 @@ export default async function ProductDetailPage({
           />
         </div>
       </div>
-
-      {/* 8 + 9 — Bilah aksi bawah (sticky) + logika simpan ke cookie keranjang */}
-      <StickyBuyBar
-        productId={product.id}
-        price={product.promoPrice}
-        name={product.name}
-        category={product.category}
-        sku={product.sku}
-        variants={variants}
-      />
 
       {/* Catat produk ini ke riwayat "pernah dilihat" (localStorage, sisi-klien) */}
       <TrackProductView productId={product.id} />

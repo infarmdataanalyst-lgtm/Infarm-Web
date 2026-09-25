@@ -11,6 +11,14 @@
 
 import { randomUUID } from 'node:crypto'
 import { createAdminClient } from '@/lib/supabase/server'
+import {
+  getEffectiveStockMaps,
+  returnStockToWarehouse,
+  writeEffectiveStock,
+} from '@/lib/warehouse'
+import { isMissingFunction } from '@/lib/mock-db/warehouses'
+import { IMAGE_MIME_EXT, validateImageValue } from '@/lib/product-image-validation'
+import { WEIGHT_GRAM_MAX, WEIGHT_GRAM_MIN } from '@/lib/shipping-weight'
 import type {
   StoredProduct,
   CreateProductInput,
@@ -23,15 +31,23 @@ import type {
 
 const IMAGE_BUCKET = 'product-images'
 
-// Ekstensi file dari mime data-URL (fallback .bin)
-const MIME_EXT: Record<string, string> = {
-  'image/jpeg': 'jpg',
-  'image/png': 'png',
-  'image/webp': 'webp',
-}
-
-// Bila string berupa data-URL base64 → decode, upload ke Storage, kembalikan URL publik.
+// Bila string berupa data-URL base64 → validasi, decode, upload ke Storage, kembalikan URL publik.
 // Bila sudah URL (http) / placeholder / kosong → kembalikan apa adanya (idempoten).
+//
+// === Validasi gambar di sini adalah LAPIS KEDUA (menutup SEC-019) ===
+//
+// Lapis pertamanya ada di route (products/create & products/update) lewat validateProductImages,
+// dan di sanalah admin memperoleh pesan penolakan yang jelas. Pemeriksaan diulang di sini karena
+// fungsi ini adalah SATU-SATUNYA pintu menuju Storage publik: siapa pun yang nanti menambahkan
+// jalur tulis produk baru dan lupa memanggil validator di route-nya tetap tak bisa menembus.
+//
+// Yang dijaga, dan kenapa: MIME pada data-URL adalah KLAIM CLIENT, dan dulu nilainya dipakai apa
+// adanya sebagai contentType saat mengunggah ke bucket PUBLIK — tanpa diadu ke whitelist, tanpa
+// dicocokkan dengan isi berkasnya, dan tanpa batas ukuran sebelum Buffer.from mendekodenya.
+//
+// Di lapis ini berkas yang tak lolos dikembalikan sebagai string kosong, bukan melempar error:
+// pemanggilnya memperlakukan nilai kosong sebagai "tidak ada foto", sehingga satu gambar buruk
+// yang lolos sampai sini tidak menggagalkan seluruh penyimpanan produk. Alasannya dicatat ke log.
 async function uploadImageIfDataUrl(value: string): Promise<string> {
   if (!value || !value.startsWith('data:')) return value
 
@@ -39,8 +55,16 @@ async function uploadImageIfDataUrl(value: string): Promise<string> {
   if (!match) return value // format tak dikenal → biarkan (jangan hilangkan foto)
 
   const mime = match[1]
-  const ext = MIME_EXT[mime] ?? 'bin'
-  const buffer = Buffer.from(match[2], 'base64')
+  const base64 = match[2]
+
+  const invalid = validateImageValue(value)
+  if (invalid) {
+    console.error(`[products] Upload ditolak (${mime.slice(0, 40)}): ${invalid}`)
+    return ''
+  }
+
+  const ext = IMAGE_MIME_EXT[mime]
+  const buffer = Buffer.from(base64, 'base64')
   const path = `products/${randomUUID()}.${ext}`
 
   const supabase = createAdminClient()
@@ -80,6 +104,8 @@ type ProductRow = {
   description: string | null
   archived: boolean
   created_at: string
+  min_order_qty: number | null // null bila kolom belum di-migrate (produk lama)
+  berat: number | null // berat satuan (GRAM); null = belum diisi admin ATAU kolom belum di-migrate
 }
 
 // Mengubah baris DB (snake_case) menjadi StoredProduct (camelCase) yang dipakai aplikasi.
@@ -106,7 +132,23 @@ function rowToStored(row: ProductRow): StoredProduct {
     description: row.description ?? undefined,
     archived: row.archived,
     createdAt: row.created_at,
+    // Fallback 1 = tanpa batasan, aman bila kolom belum di-migrate atau berisi nilai tak valid
+    minOrderQty: row.min_order_qty && row.min_order_qty >= 1 ? row.min_order_qty : 1,
+    // Berat DIBIARKAN undefined bila null/tak valid — JANGAN diisi angka cadangan di sini.
+    // Cadangan hanya berlaku saat menghitung ongkir (lib/shipping-weight.ts); OMS butuh tahu
+    // bedanya "belum diisi" (badge peringatan) dan "sudah diisi".
+    ...(typeof row.berat === 'number' && row.berat >= 1 ? { berat: row.berat } : {}),
   }
+}
+
+// Berat (gram) siap-tulis: bilangan bulat dalam rentang CHECK products_berat_check, atau null
+// bila tak dikirim/tak valid. Mengembalikan null (bukan melempar) supaya produk tetap tersimpan
+// dengan status "berat belum diisi" — form OMS yang menegakkan kewajiban isinya.
+function clampBeratGram(berat: number | undefined): number | null {
+  if (typeof berat !== 'number' || !Number.isFinite(berat)) return null
+  const g = Math.floor(berat)
+  if (g < WEIGHT_GRAM_MIN) return null
+  return Math.min(g, WEIGHT_GRAM_MAX)
 }
 
 // Membersihkan & membatasi galeri foto: buang non-string/kosong, maksimal 9.
@@ -119,6 +161,8 @@ function sanitizeGallery(images: string[] | undefined): string[] {
 
 // Membaca seluruh produk (termasuk archived), terbaru di depan.
 // Array kosong bila terjadi error agar UI tidak crash.
+// Nilai `stock` yang dikembalikan = STOK EFEKTIF dari product_stock_per_warehouse (lihat
+// applyEffectiveStock); kolom products.stock hanya dipakai bila baris gudang belum ada.
 export async function readProducts(): Promise<StoredProduct[]> {
   const supabase = createAdminClient()
   const { data, error } = await supabase
@@ -131,7 +175,50 @@ export async function readProducts(): Promise<StoredProduct[]> {
     return []
   }
 
-  return (data as ProductRow[]).map(rowToStored)
+  return applyEffectiveStock((data as ProductRow[]).map(rowToStored))
+}
+
+// Menimpa field `stock` tiap produk dengan stok efektif dari tabel gudang.
+//
+// Kenapa di sini, bukan di tiap pemanggil: semua storefront & OMS membaca stok lewat
+// readProducts/getProductById, jadi satu titik ini membuat SELURUH aplikasi otomatis memakai
+// stok per gudang tanpa mengubah komponen mana pun. Di mode single, stok dijumlahkan dari semua
+// gudang sehingga angka yang tampil identik dengan sebelum migration.
+//
+// Dipakai versi BATCH (satu query untuk semua produk) supaya tidak terjadi N+1 query.
+// Produk yang belum punya baris gudang tetap memakai nilai products.stock (fail-safe).
+async function applyEffectiveStock(products: StoredProduct[]): Promise<StoredProduct[]> {
+  if (products.length === 0) return products
+  const { byProduct } = await getEffectiveStockMaps(products.map((p) => p.id))
+  if (byProduct.size === 0) return products // tabel gudang belum di-migrate → pakai kolom lama
+  return products.map((p) => {
+    const effective = byProduct.get(p.id)
+    return effective === undefined ? p : { ...p, stock: effective }
+  })
+}
+
+// Membaca SEBAGIAN produk berdasarkan daftar id — bukan seluruh tabel.
+//
+// Kenapa ada, padahal readProducts() sudah ada: jalur checkout hanya butuh produk yang benar-benar
+// ada di keranjang (biasanya 1–5), sementara readProducts() menarik SETIAP baris beserta SEMUA
+// kolomnya, termasuk deskripsi panjang dan daftar gambar. Pada katalog 11 produk itu masih murah;
+// pada 500 produk ia menjadi beban yang dibayar setiap kali ada yang checkout.
+//
+// Stok efektif tetap dihitung lewat applyEffectiveStock, sama seperti readProducts, jadi pemanggil
+// tak perlu tahu bedanya. Array kosong bila `ids` kosong — tanpa menyentuh database sama sekali.
+export async function readProductsByIds(ids: string[]): Promise<StoredProduct[]> {
+  const unik = [...new Set(ids.filter((id) => typeof id === 'string' && id.length > 0))]
+  if (unik.length === 0) return []
+
+  const supabase = createAdminClient()
+  const { data, error } = await supabase.from('products').select('*').in('id', unik)
+
+  if (error) {
+    console.error('Gagal membaca produk (by ids) dari Supabase:', error.message)
+    return []
+  }
+
+  return applyEffectiveStock((data as ProductRow[]).map(rowToStored))
 }
 
 // Membaca satu produk berdasarkan id. null bila tidak ditemukan.
@@ -148,7 +235,9 @@ export async function getProductById(id: string): Promise<StoredProduct | null> 
     return null
   }
 
-  return data ? rowToStored(data as ProductRow) : null
+  if (!data) return null
+  const [product] = await applyEffectiveStock([rowToStored(data as ProductRow)])
+  return product
 }
 
 // === Tulis ===
@@ -181,24 +270,38 @@ export async function saveProduct(input: CreateProductInput): Promise<StoredProd
     sku: input.sku,
     stock: input.stock,
     description: input.description ?? null,
+    // Minimum pembelian; clamp ≥ 1 agar tak pernah melanggar CHECK di DB
+    min_order_qty: Math.max(1, Math.floor(input.minOrderQty ?? 1)),
+    // Berat (gram): clamp ke rentang CHECK products_berat_check. null bila tak dikirim —
+    // produk tersimpan sebagai "berat belum diisi", bukan gagal insert.
+    berat: clampBeratGram(input.berat),
   }
 
   let { data, error } = await supabase.from('products').insert(row).select('*').single()
 
-  // Jaring pengaman: bila kolom images belum di-migrate, simpan ulang tanpa galeri
-  // agar upload tetap jalan (foto utama tetap tersimpan di image_url).
+  // Jaring pengaman: bila kolom images / min_order_qty / berat belum di-migrate, simpan ulang
+  // tanpa kolom tersebut agar upload tetap jalan (foto utama tetap tersimpan di image_url).
   // PGRST204 = kolom tak dikenal PostgREST; 42703 = kolom tak ada di Postgres.
   if (error?.code === 'PGRST204' || error?.code === '42703') {
-    const rowWithoutImages = { ...row }
-    delete rowWithoutImages.images
-    ;({ data, error } = await supabase.from('products').insert(rowWithoutImages).select('*').single())
+    const rowFallback = { ...row }
+    delete rowFallback.images
+    delete rowFallback.min_order_qty
+    delete rowFallback.berat
+    ;({ data, error } = await supabase.from('products').insert(rowFallback).select('*').single())
   }
 
   if (error || !data) {
     throw new Error(`Gagal menyimpan produk: ${error?.message ?? 'tidak diketahui'}`)
   }
 
-  return rowToStored(data as ProductRow)
+  const saved = rowToStored(data as ProductRow)
+
+  // Stok awal dicatat ke gudang (mode single → gudang default). Kolom products.stock di atas
+  // TETAP diisi nilai yang sama: bukan sebagai sumber kebenaran, tapi agar produk baru punya
+  // fallback yang benar bila baris gudang gagal dibuat (mis. migration belum di-apply).
+  await writeEffectiveStock({ productId: saved.id, stok: input.stock })
+
+  return saved
 }
 
 // === Ubah ===
@@ -218,15 +321,34 @@ export async function updateProduct(
   if (patch.category !== undefined) dbPatch.category = patch.category
   if (patch.badge !== undefined) dbPatch.badge = patch.badge
   if (patch.sku !== undefined) dbPatch.sku = patch.sku
-  if (patch.stock !== undefined) dbPatch.stock = patch.stock
   if (patch.description !== undefined) dbPatch.description = patch.description
   if (patch.archived !== undefined) dbPatch.archived = patch.archived
+  // Clamp ≥ 1 agar tak melanggar CHECK products_min_order_qty_check
+  if (patch.minOrderQty !== undefined) {
+    dbPatch.min_order_qty = Math.max(1, Math.floor(patch.minOrderQty))
+  }
+  // Berat (gram). Nilai tak valid → null = kembali ke status "belum diisi", bukan menyimpan
+  // angka yang melanggar CHECK dan menggagalkan seluruh update.
+  if (patch.berat !== undefined) dbPatch.berat = clampBeratGram(patch.berat)
   // Galeri: upload data-URL → URL Storage, simpan array + sinkronkan foto utama ke foto pertama
   if (patch.images !== undefined) {
     const gallery = await uploadGallery(sanitizeGallery(patch.images))
     dbPatch.images = gallery
     if (gallery[0]) dbPatch.image_url = gallery[0]
   }
+
+  // Stok TIDAK lagi ditulis ke products.stock. Sumber kebenarannya kini
+  // product_stock_per_warehouse (mode single → gudang default). Kolom lama dibiarkan apa adanya
+  // sebagai cadangan historis. Bila penulisan ke gudang gagal (tabel belum di-migrate), stok
+  // baru dikembalikan ke kolom lama supaya perubahan admin tidak hilang.
+  if (patch.stock !== undefined) {
+    const written = await writeEffectiveStock({ productId: id, stok: patch.stock })
+    if (!written) dbPatch.stock = patch.stock
+  }
+
+  // Hanya stok yang diubah & sudah tersimpan ke gudang → tak ada kolom products yang perlu
+  // di-update. Supabase menolak update dengan payload kosong, jadi cukup baca ulang produknya.
+  if (Object.keys(dbPatch).length === 0) return getProductById(id)
 
   const supabase = createAdminClient()
   let { data, error } = await supabase
@@ -236,13 +358,15 @@ export async function updateProduct(
     .select('*')
     .maybeSingle()
 
-  // Fallback bila kolom images belum di-migrate: ulangi update tanpa galeri
+  // Fallback bila kolom images / min_order_qty / berat belum di-migrate: ulangi tanpa kolom itu
   if (error?.code === 'PGRST204' || error?.code === '42703') {
-    const patchWithoutImages = { ...dbPatch }
-    delete patchWithoutImages.images
+    const patchFallback = { ...dbPatch }
+    delete patchFallback.images
+    delete patchFallback.min_order_qty
+    delete patchFallback.berat
     ;({ data, error } = await supabase
       .from('products')
-      .update(patchWithoutImages)
+      .update(patchFallback)
       .eq('id', id)
       .select('*')
       .maybeSingle())
@@ -253,21 +377,65 @@ export async function updateProduct(
     return null
   }
 
-  return data ? rowToStored(data as ProductRow) : null
+  if (!data) return null
+  // Overlay stok gudang: baris products yang baru dikembalikan Supabase masih membawa nilai
+  // products.stock yang sudah tidak otoritatif.
+  const [updated] = await applyEffectiveStock([rowToStored(data as ProductRow)])
+  return updated
 }
 
 // === Stok ===
 
-// Mengembalikan stok produk ke "tersedia" saat pesanan dibatalkan: stock += quantity.
+// Mengembalikan stok produk ke "tersedia" saat pesanan dibatalkan: stok += quantity.
 // Hanya berlaku untuk produk yang ADA di DB (produk OMS); item dummy/tak dikenal dilewati.
 // Catatan: idealnya stok dikurangi saat checkout (alokasi). Selama alokasi belum ada,
 // fungsi ini menambah kembali jumlah yang dibatalkan sebagai simulasi pelepasan stok.
+//
+// `warehouseId` = gudang pemenuh pesanan (orders.warehouse_id). Kosong → gudang default, sehingga
+// pembatalan pesanan lama (sebelum kolom itu ada) tetap mengembalikan stok ke tempat yang benar
+// di mode single. Bila tabel gudang belum di-migrate, penambahan jatuh ke kolom products.stock
+// seperti perilaku sebelumnya.
 export async function restoreStock(
-  items: { productId: string; quantity: number }[],
+  items: { productId: string; quantity: number; variantId?: string }[],
+  warehouseId?: string,
 ): Promise<void> {
+  // 1. Jalur utama: kembalikan ke stok per gudang
+  await returnStockToWarehouse(
+    items.map((i) => ({ productId: i.productId, variantId: i.variantId, quantity: i.quantity })),
+    warehouseId,
+  )
+
+  // 2. Jaring pengaman untuk produk yang belum punya baris gudang (mis. tabel belum di-migrate):
+  //    tanpa ini stok yang dibatalkan tak pernah kembali.
   const supabase = createAdminClient()
-  for (const { productId, quantity } of items) {
+  const { byProduct } = await getEffectiveStockMaps(items.map((i) => i.productId))
+  for (const { productId, quantity, variantId } of items) {
     if (!quantity || quantity <= 0) continue
+    if (variantId) continue // stok varian tidak disimpan di products.stock
+    if (byProduct.has(productId)) continue // sudah ditangani jalur gudang di atas
+
+    // Increment ATOMIK (menutup SEC-020). Dulu di sini stok dibaca lebih dulu lalu ditulis kembali
+    // sebagai `product.stock + quantity` — nilai MUTLAK yang dihitung dari angka yang sudah bisa
+    // basi begitu dua pembatalan berjalan berdampingan. Kini penjumlahannya dikerjakan Postgres.
+    const { data: adjusted, error: rpcError } = await supabase.rpc('adjust_product_stock_atomic', {
+      p_product_id: productId,
+      p_delta: quantity,
+    })
+    if (!rpcError) {
+      if (adjusted === null) continue // produk dummy / tidak ada di DB → lewati dengan aman
+      continue
+    }
+    if (!isMissingFunction(rpcError)) {
+      console.error('Gagal mengembalikan stok produk (RPC):', rpcError.message)
+      continue
+    }
+
+    // Jalur cadangan selama migration RPC belum dijalankan — lihat catatan yang sama di
+    // adjustWarehouseStock. Rawan lost update, tapi lebih baik daripada stok tak kembali sama sekali.
+    console.warn(
+      '[products] RPC adjust_product_stock_atomic belum ada — memakai baca-lalu-tulis yang RAWAN ' +
+        'LOST UPDATE (SEC-020). Jalankan supabase/migrations/20260904120000_stok_increment_atomik.sql.',
+    )
     const product = await getProductById(productId)
     if (!product) continue // produk dummy / tidak ada di DB → lewati dengan aman
     const { error } = await supabase
@@ -276,6 +444,50 @@ export async function restoreStock(
       .eq('id', productId)
     if (error) console.error('Gagal mengembalikan stok produk:', error.message)
   }
+}
+
+// === Aksi massal (OMS) ===
+
+// Mengarsipkan / memulihkan BANYAK produk sekaligus. Mengembalikan jumlah baris terpengaruh.
+// Satu query `.in('id', ids)` — bukan loop update — agar aksi massal atas puluhan produk tetap
+// satu perjalanan ke database.
+export async function bulkSetArchived(ids: string[], archived: boolean): Promise<number> {
+  if (ids.length === 0) return 0
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('products')
+    .update({ archived })
+    .in('id', ids)
+    .select('id')
+
+  if (error) throw new Error(`Gagal memperbarui status arsip: ${error.message}`)
+  return data?.length ?? 0
+}
+
+// Mengubah kategori BANYAK produk sekaligus. Kategori divalidasi pemanggil (route handler)
+// terhadap PRODUCT_CATEGORIES — DB juga menolak nilai di luar CHECK constraint.
+export async function bulkSetCategory(ids: string[], category: ProductCategory): Promise<number> {
+  if (ids.length === 0) return 0
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('products')
+    .update({ category })
+    .in('id', ids)
+    .select('id')
+
+  if (error) throw new Error(`Gagal mengubah kategori: ${error.message}`)
+  return data?.length ?? 0
+}
+
+// Menghapus BANYAK produk sekaligus. Baris stok per gudang & varian ikut terhapus lewat
+// FK ON DELETE CASCADE; order_items menyimpan product_id nullable sehingga riwayat pesanan aman.
+export async function bulkDeleteProducts(ids: string[]): Promise<number> {
+  if (ids.length === 0) return 0
+  const supabase = createAdminClient()
+  const { data, error } = await supabase.from('products').delete().in('id', ids).select('id')
+
+  if (error) throw new Error(`Gagal menghapus produk: ${error.message}`)
+  return data?.length ?? 0
 }
 
 // === Hapus ===

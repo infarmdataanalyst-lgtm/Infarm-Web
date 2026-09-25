@@ -1,7 +1,19 @@
 // src/app/api/orders/cancel-by-phone/route.ts
-// LANGKAH akhir pembatalan by no_telepon: batalkan pesanan setelah RE-VERIFIKASI no_telepon ke DB
+// LANGKAH akhir pembatalan: batalkan pesanan setelah RE-VERIFIKASI DUA IDENTITAS ke DB
 // (defense-in-depth — tidak percaya hasil verify sisi client) + cek status di server.
 // Set status 'Dibatalkan' + kembalikan stok. Aturan status = sama dengan alur token (/api/orders/cancel).
+//
+// ── DUA IDENTITAS, keduanya diverifikasi di sini (menutup SEC-037) ──
+// Endpoint ini dulu hanya menuntut nomor invoice + no_telepon. Halaman /cancel-order memang
+// meminta email lebih dulu lalu no_telepon sebagai konfirmasi, tetapi properti "dua identitas"
+// itu HANYA hidup di UI: siapa pun yang memanggil endpoint ini langsung tak perlu tahu email
+// pemilik pesanan sama sekali. Dibuktikan saat audit — satu request berisi orderId dan phone saja
+// membatalkan pesanan sungguhan.
+//
+// Kini `email` WAJIB ada di payload dan dicocokkan ke orders.email. Jadi pembatalan benar-benar
+// menuntut dua data berbeda dari pesanan yang sama, dan keduanya diperiksa SERVER, bukan UI.
+// Jangan melonggarkan ini kembali menjadi telepon saja: sendirian, no_telepon hanya menyembunyikan
+// 4 digit tengah (lihat maskPhone di /track) sehingga ruang tebaknya cuma 10.000.
 //
 // Perlindungan: honeypot `website` + rate limit per-IP & per-nomor (threshold lebih ketat
 // karena ini aksi destruktif — lihat @/lib/rate-limit). Menutup temuan K-1 audit keamanan
@@ -9,11 +21,20 @@
 
 import { NextResponse } from 'next/server'
 import { revalidatePath, revalidateTag } from 'next/cache'
-import { getOrderByOrderId, updateOrderStatus } from '@/lib/mock-db/orders'
+import {
+  getOrderByOrderId,
+  getOrderUuidByInvoice,
+  markRefundNeeded,
+  updateOrderStatus,
+} from '@/lib/mock-db/orders'
 import { restoreStock } from '@/lib/mock-db/products'
+import { recordOrderStockChanges } from '@/lib/stock-audit'
 import { normalizePhone, isValidPhone } from '@/lib/phone'
+import { normalizeEmail, isValidEmail } from '@/lib/email'
+import { evaluateBuyerCancel } from '@/lib/order-cancellation'
+import { expireInvoiceForCancelledOrder } from '@/lib/order-invoice-expiry'
 import type { OrderFulfillmentStatus } from '@/types/order'
-import { isRateLimited, getClientIp } from '@/lib/rate-limit'
+import { RATE_LIMITS, enforceRateLimit, getClientIp } from '@/lib/rate-limit'
 
 export const runtime = 'nodejs'
 
@@ -34,60 +55,118 @@ export async function POST(request: Request) {
 
   // Rate limit per-IP: aksi destruktif → threshold lebih ketat dari endpoint baca
   const ip = getClientIp(request)
-  if (isRateLimited(`cancel-by-phone:ip:${ip}`, 8, 15 * 60_000)) {
-    return NextResponse.json(
-      { error: 'Terlalu banyak percobaan. Coba lagi dalam beberapa menit.' },
-      { status: 429 },
-    )
-  }
+  const limitedByIp = enforceRateLimit(`cancel-by-phone:ip:${ip}`, RATE_LIMITS.PHONE_WRITE_IP)
+  if (limitedByIp) return limitedByIp
 
   const orderId = typeof body.orderId === 'string' ? body.orderId.trim().replace(/^#/, '') : ''
   const rawPhone = typeof body.phone === 'string' ? body.phone : ''
+  const rawEmail = typeof body.email === 'string' ? body.email : ''
   if (!orderId) return NextResponse.json({ error: 'Pesanan tidak valid.' }, { status: 400 })
+  if (!isValidEmail(rawEmail)) {
+    return NextResponse.json({ error: 'Email tidak valid.' }, { status: 400 })
+  }
   if (!isValidPhone(rawPhone)) {
     return NextResponse.json({ error: 'Nomor telepon tidak valid.' }, { status: 400 })
   }
 
-  // Rate limit per-nomor: cegah brute-force tertarget ke satu nomor dari banyak IP
+  // Rate limit per-pesanan untuk aksi destruktif. Dikunci pada NOMOR PESANAN dengan alasan yang
+  // sama seperti verify-cancel (SEC-038): mengunci pada nilai yang ditebak berarti penebak selalu
+  // mendapat ember baru. Bedanya di sini SETIAP percobaan dihitung, bukan hanya yang gagal —
+  // membatalkan pesanan yang sama berkali-kali memang bukan perilaku wajar.
   const normalizedPhone = normalizePhone(rawPhone)
-  if (isRateLimited(`cancel-by-phone:phone:${normalizedPhone}`, 5, 60 * 60_000)) {
-    return NextResponse.json(
-      { error: 'Terlalu banyak percobaan untuk nomor ini. Coba lagi nanti.' },
-      { status: 429 },
-    )
-  }
+  const email = normalizeEmail(rawEmail)
+  const limitedByOrder = enforceRateLimit(
+    `cancel-by-phone:order:${orderId}`,
+    RATE_LIMITS.PHONE_WRITE_PHONE,
+  )
+  if (limitedByOrder) return limitedByOrder
 
   // Query ULANG dari DB
   const order = await getOrderByOrderId(orderId)
-  if (!order) return NextResponse.json({ error: 'Pesanan tidak ditemukan.' }, { status: 404 })
 
-  // RE-VERIFIKASI kepemilikan: no_telepon input WAJIB cocok dengan no_telepon order
-  if (normalizedPhone !== normalizePhone(order.customerPhone ?? '')) {
+  // === RE-VERIFIKASI kepemilikan — DUA identitas, keduanya wajib cocok ===
+  //
+  // Lihat catatan di kepala berkas: sebelum SEC-037 ditutup, hanya no_telepon yang diperiksa.
+  //
+  // Pesanan lama ber-email NULL tak akan pernah lolos: normalizeEmail(undefined) menghasilkan
+  // string kosong sementara `email` dijamin tidak kosong oleh isValidEmail di atas. Itu memang
+  // diinginkan — pesanan tanpa email tak punya pemilik yang bisa dibuktikan lewat jalur ini, dan
+  // pemiliknya masih bisa memakai tautan pembatalan bertoken.
+  //
+  // ── SATU respons untuk KETIGA kegagalan (menutup SEC-040) ──
+  // Sebelumnya perbedaannya terus terang: 404 "Pesanan tidak ditemukan" versus 403 yang menyebut
+  // persis identitas mana yang tak cocok. Pemanggil karena itu bisa memastikan sebuah invoice
+  // nyata tanpa tahu apa pun tentang pemiliknya, lalu memusatkan tebakannya hanya ke invoice yang
+  // sudah terbukti ada. Lebih buruk lagi, pesan yang memisahkan "email salah" dari "telepon salah"
+  // mengubah satu tebakan gabungan menjadi dua tebakan terpisah yang jauh lebih murah.
+  //
+  // Kini ketiganya menghasilkan status DAN kalimat yang sama persis. Harga yang dibayar disadari:
+  // pemilik sah yang salah ketik tak lagi diberi tahu field mana yang keliru. Itu trade-off yang
+  // sama yang sudah diterima /api/oms/login, dan pada aksi destruktif seperti ini nilainya lebih
+  // besar daripada di form biasa.
+  const ownershipOk =
+    !!order &&
+    email === normalizeEmail(order.customerEmail ?? '') &&
+    normalizedPhone === normalizePhone(order.customerPhone ?? '')
+  if (!order || !ownershipOk) {
     return NextResponse.json(
-      { error: 'Nomor telepon tidak cocok dengan pesanan ini.' },
+      { error: 'Email atau nomor telepon tidak cocok dengan pesanan ini.' },
       { status: 403 },
     )
   }
 
-  const current = order.status ?? 'Diproses'
-  if (current === 'Dibatalkan') {
-    return NextResponse.json({ error: 'Pesanan ini sudah dibatalkan sebelumnya.' }, { status: 409 })
+  // Validasi di SERVER, memakai aturan yang SAMA dengan /api/orders/cancel dan dengan halaman
+  // pembatalan (`evaluateBuyerCancel`). Termasuk pagar terpenting: pesanan yang resinya sudah
+  // terbit tak bisa dibatalkan sendiri meski statusnya masih 'Diproses' — booking kurir dijalankan
+  // saat pembayaran masuk, jauh sebelum admin menandainya 'Dikirim'.
+  const verdict = evaluateBuyerCancel(order)
+  if (!verdict.ok) {
+    return NextResponse.json({ error: verdict.message, code: verdict.code }, { status: 409 })
   }
-  // Validasi status di SERVER — tolak bila sudah lewat tahap aman (mis. Dikirim/Selesai)
-  if (!CANCELLABLE.includes(current)) {
+
+  // COMPARE-AND-SWAP: status lama ikut menjadi syarat UPDATE (SEC-020). Pemeriksaan `current` di
+  // atas hanya melihat keadaan pada SAAT ITU; di antara pemeriksaan dan penulisan, permintaan
+  // kembar bisa menyelinap. Hanya satu yang akan mendapat baris kembali dari sini.
+  const updated = await updateOrderStatus(orderId, 'Dibatalkan', undefined, CANCELLABLE)
+  if (!updated) {
+    // Kalah lomba (atau statusnya berubah dari sisi OMS sejak pemeriksaan di atas). Jangan
+    // meneruskan ke pengembalian stok — pemenangnya sudah melakukannya.
     return NextResponse.json(
-      { error: 'Pesanan tidak dapat dibatalkan karena sudah dalam proses pengiriman/selesai.' },
+      { error: 'Pesanan ini sudah dibatalkan atau statusnya berubah. Muat ulang halaman.' },
       { status: 409 },
     )
   }
 
-  const updated = await updateOrderStatus(orderId, 'Dibatalkan')
-  if (!updated) {
-    return NextResponse.json({ error: 'Gagal memperbarui status pesanan.' }, { status: 500 })
-  }
+  // Kembalikan stok yang dialokasikan untuk pesanan ini, ke gudang pemenuhnya
+  await restoreStock(
+    order.items.map((i) => ({
+      productId: i.productId,
+      quantity: i.quantity,
+      variantId: i.variantId ?? undefined,
+    })),
+    order.warehouseId,
+  )
 
-  // Kembalikan stok yang dialokasikan untuk pesanan ini
-  await restoreStock(order.items.map((i) => ({ productId: i.productId, quantity: i.quantity })))
+  // Riwayat mutasi: stok kembali karena pembatalan oleh pembeli (lihat catatan di orders/cancel).
+  const orderUuid = await getOrderUuidByInvoice(order.orderId)
+  await recordOrderStockChanges({
+    items: order.items.map((i) => ({
+      productId: i.productId,
+      ...(i.variantId ? { variantId: i.variantId } : {}),
+      quantity: i.quantity,
+    })),
+    ...(order.warehouseId ? { warehouseId: order.warehouseId } : {}),
+    orderInvoice: order.orderId,
+    ...(orderUuid ? { orderId: orderUuid } : {}),
+    direction: 'in',
+  })
+
+  // Matikan tagihan Xendit yang mungkin masih hidup — alasan & perilaku sama persis dengan
+  // alur cancel token; lihat catatan lengkapnya di src/app/api/orders/cancel/route.ts.
+  await expireInvoiceForCancelledOrder(order)
+
+  // Tandai perlu pengembalian dana bila pesanannya sudah lunas — alasan sama dengan alur token.
+  if (order.paymentStatus === 'Lunas') await markRefundNeeded(order.orderId)
 
   // Stok kembali → segarkan cache storefront (sama seperti alur cancel token)
   revalidatePath('/')

@@ -182,7 +182,7 @@ export default function PromosiPage() {
 
   return (
     <>
-      <OmsHeader title="Promosi" notificationCount={3} />
+      <OmsHeader title="Promosi" />
       <div className="p-6 md:p-8">
         {/* === Header Halaman === */}
         <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">

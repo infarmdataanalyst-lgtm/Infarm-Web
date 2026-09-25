@@ -1,10 +1,26 @@
 -- supabase/migrations/20260624120000_add_orders_customer_email.sql
--- Menambah kolom email pelanggan ke tabel orders (untuk kirim konfirmasi pesanan ke buyer).
--- Tipe TEXT (sesuai panduan: email disimpan sebagai teks lowercase tanpa simbol khusus).
--- Dijalankan via Dashboard -> SQL Editor (sama seperti migration lain di folder ini).
+--
+-- ⛔ MIGRATION INI SENGAJA DIKOSONGKAN (no-op). JANGAN dihidupkan kembali.
+--
+-- Isi aslinya:
+--     alter table public.orders add column if not exists customer_email text;
+--
+-- Kolom `customer_email` TIDAK PERNAH ADA di database ini, dan tidak pernah dibutuhkan. Kolom email
+-- pelanggan bernama **`email`**, sudah ada sejak tabel orders dibuat (lihat
+-- 20260622100000_init_orders.sql baris 12), dan itulah yang diisi RPC create_order_with_items lewat
+-- parameter p_email.
+--
+-- Menjalankan versi aslinya akan MENAMBAH kolom kedua yang selamanya NULL, lalu memancing orang
+-- berikutnya "memperbaiki" kode agar menulis ke kolom yang salah. Memakai `customer_email` di
+-- query membuat PostgREST membalas 42703 (undefined_column) — sudah pernah terjadi, dan
+-- peringatannya kini ada di tiga tempat: CLAUDE.md, docs/checkout-flow.md, dan
+-- src/lib/mock-db/orders.ts.
+--
+-- Kenapa filenya tidak dihapus saja: nomor urut migration adalah riwayat. Menghapus satu file
+-- membuat urutan berlubang dan menghilangkan jejak KENAPA kolom itu tak boleh ditambahkan —
+-- persis pengetahuan yang membuat orang berikutnya berhenti sebelum mengulanginya.
+--
+-- Bagian dari penutupan SEC-036 (schema drift), 2026-09-07.
 
-alter table public.orders
-  add column if not exists customer_email text;
-
--- Catatan: kode aplikasi (mock-db/orders.ts) punya fallback aman bila kolom ini belum ada,
--- jadi checkout tetap berjalan; email baru ikut tersimpan setelah migration ini diterapkan.
+-- Sengaja tanpa pernyataan DDL apa pun.
+select 1 where false;

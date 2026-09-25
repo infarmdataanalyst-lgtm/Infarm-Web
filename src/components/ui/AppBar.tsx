@@ -1,30 +1,26 @@
 // src/components/ui/AppBar.tsx
 // Navbar atas storefront infarm — fixed di puncak halaman dan selalu berada di lapisan teratas.
 // Dirender di layout (store) agar tidak terjebak dalam stacking context section manapun.
-// Server Component — menu/search masih placeholder visual.
+// Server Component; tombol menu (MenuDrawer) & search bar persisten (HeaderSearch) = client component.
 
 import Link from 'next/link'
 import Image from 'next/image'
 import CartIconLink from '@/components/ui/CartIconLink'
 import ProfileIconLink from '@/components/ui/ProfileIconLink'
+import HeaderSearch from '@/components/ui/HeaderSearch'
+import MenuDrawer from '@/components/ui/MenuDrawer'
 
-// Menampilkan app bar global: grup kiri (menu + logo + nama brand) dan aksi search/cart/profile (kanan)
+// Menampilkan app bar global: logo (kiri), search bar persisten (tengah), aksi cart & profile (kanan)
 export default function AppBar() {
   return (
-    <header className="fixed inset-x-0 top-0 z-50 border-b border-black/5 bg-brand-header text-white shadow-sm">
-      <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6 lg:px-8">
-        {/* Grup kiri: menu, logo, nama brand — jarak antarelemen disamakan via gap */}
-        <div className="flex items-center gap-3 sm:gap-4">
-          {/* Tombol menu */}
-          <button
-            type="button"
-            aria-label="Buka menu"
-            className="rounded-md p-1 transition active:scale-95"
-          >
-            <HamburgerIcon />
-          </button>
+    <header className="fixed inset-x-0 top-0 z-50 rounded-b-[2rem] bg-brand-header/90 text-white shadow-sm backdrop-blur-md">
+      <div className="mx-auto flex h-14 max-w-6xl items-center gap-2 px-4 sm:gap-4 sm:px-6 lg:px-8">
+        {/* Grup kiri: menu + logo + nama brand */}
+        <div className="flex shrink-0 items-center gap-3 sm:gap-4">
+          {/* Tombol menu + drawer navigasi (kategori & layanan pesanan) */}
+          <MenuDrawer />
 
-          {/* Logo + nama brand */}
+          {/* Logo + nama brand (nama disembunyikan di mobile agar search bar dapat ruang) */}
           <Link href="/" className="flex items-center gap-3 sm:gap-4">
             <Image
               src="/images/logo-infarm.png"
@@ -35,15 +31,15 @@ export default function AppBar() {
               unoptimized
               className="h-9 w-auto object-contain"
             />
-            <span className="text-2xl font-bold tracking-tight text-white">Infarm</span>
+            <span className="hidden text-2xl font-bold tracking-tight text-white sm:inline">Infarm</span>
           </Link>
         </div>
 
-        {/* Aksi (kanan): Search, Cart, Profile */}
-        <nav className="flex items-center gap-3 sm:gap-4">
-          <button type="button" aria-label="Cari" className="p-1 transition active:scale-95">
-            <SearchIcon />
-          </button>
+        {/* Tengah: search bar persisten (desktop inline, mobile ikon → overlay) */}
+        <HeaderSearch />
+
+        {/* Aksi (kanan): Cart, Profile */}
+        <nav className="flex shrink-0 items-center gap-3 sm:gap-4">
           {/* Ikon keranjang + badge jumlah reaktif (client component) */}
           <CartIconLink />
           {/* Ikon profil → hub "Pesanan Saya" + badge bila ada jejak checkout (client component) */}
@@ -51,27 +47,5 @@ export default function AppBar() {
         </nav>
       </div>
     </header>
-  )
-}
-
-// === Ikon inline (SVG) ===
-// Inline SVG agar tidak menambah dependency icon library (lihat aturan CLAUDE.md).
-
-function HamburgerIcon() {
-  return (
-    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
-      <line x1="3" y1="6" x2="21" y2="6" />
-      <line x1="3" y1="12" x2="21" y2="12" />
-      <line x1="3" y1="18" x2="21" y2="18" />
-    </svg>
-  )
-}
-
-function SearchIcon() {
-  return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <circle cx="11" cy="11" r="7" />
-      <line x1="21" y1="21" x2="16.65" y2="16.65" />
-    </svg>
   )
 }

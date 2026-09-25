@@ -10,11 +10,17 @@ export default function OrderSummary({
   subtotal,
   shipping,
   discount = 0,
+  shippingSubsidy = 0,
   total,
 }: {
   subtotal: number
   shipping: number | null
   discount?: number
+  // Ongkir yang ditanggung promo gratis ongkir. Ditampilkan sebagai baris TERSENDIRI, bukan dengan
+  // menolkan baris "Ongkos Kirim": pembeli perlu melihat berapa nilai ongkir yang sebenarnya
+  // dibebaskan — itulah manfaat promonya. Sisi server pun menyimpannya terpisah dengan alasan
+  // sejenis (ongkos_kirim tetap tarif asli untuk rekonsiliasi tagihan Mengantar).
+  shippingSubsidy?: number
   total: number
 }) {
   return (
@@ -35,6 +41,13 @@ export default function OrderSummary({
         {/* Diskon ditampilkan hijau dengan tanda minus — hanya bila ada diskon */}
         {discount > 0 && (
           <Row label="Diskon" value={`- ${formatRupiah(discount)}`} valueClassName="text-brand-primary" />
+        )}
+        {shippingSubsidy > 0 && (
+          <Row
+            label="Gratis Ongkir"
+            value={`- ${formatRupiah(shippingSubsidy)}`}
+            valueClassName="text-brand-primary"
+          />
         )}
 
         <div className="my-2 border-t border-dashed border-zinc-200" />

@@ -6,15 +6,32 @@
 // Menyimpan lewat PATCH /api/orders/update-status (validasi ulang di server).
 
 import { useState } from 'react'
-import { X, Loader2, Package } from 'lucide-react'
+import { X, Loader2, Package, AlertTriangle, Truck } from 'lucide-react'
 import { formatRupiah } from '@/lib/format'
 import { nextStatuses, isFinalStatus } from '@/lib/order-status-machine'
+import { paymentMethodLabel } from '@/lib/payment-method'
 import type { Order, OrderFulfillmentStatus } from '@/types/order'
 
 type OrderStatusModalProps = {
   order: Order
   onClose: () => void
   onUpdated: (order: Order) => void // dipanggil setelah update sukses (untuk refresh tabel + toast)
+}
+
+// Satu pekerjaan manual yang tersisa setelah pembatalan tersimpan. `detail` adalah pesan mentah
+// dari pihak ketiga — ditampilkan apa adanya karena itulah yang berguna saat admin harus
+// menjelaskannya ke Mengantar atau Xendit.
+type PostCancelIssue = { judul: string; penjelasan: string; detail: string }
+
+// Bentuk laporan tindakan pihak ketiga di respons PATCH /api/orders/update-status.
+type ThirdPartyReport = {
+  attempted: boolean
+  ok?: boolean
+  reason?: string
+  detail?: string
+  // Hanya diisi laporan penghapusan penjemputan (MGT-66); laporan Xendit tak punya keduanya.
+  httpStatus?: number
+  attempts?: number
 }
 
 // Modal update status untuk satu pesanan.
@@ -31,10 +48,52 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
   const [trackingNumber, setTrackingNumber] = useState(order.trackingNumber ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  // Tindakan pihak ketiga yang GAGAL setelah pembatalan tersimpan. Selama daftar ini tak kosong,
+  // modal sengaja TIDAK ditutup — lihat handleSave.
+  //
+  // Berupa DAFTAR, bukan satu nilai: pembatalan menyentuh dua pihak ketiga sekaligus (menghapus
+  // penjemputan di Mengantar, mematikan tagihan di Xendit) dan keduanya bisa gagal pada pembatalan
+  // yang sama. Menampilkan hanya yang pertama akan menyembunyikan pekerjaan manual yang kedua.
+  const [issues, setIssues] = useState<PostCancelIssue[]>([])
+  // Pesanan yang sudah tersimpan, ditahan sampai admin menutup peringatan di atas.
+  const [savedOrder, setSavedOrder] = useState<Order | null>(null)
 
   const requiresShipping = status === 'Dikirim'
   const changed = status !== current
   const invoice = order.orderId.startsWith('#') ? order.orderId : `#${order.orderId}`
+
+  // Resi yang SUDAH tersimpan pada pesanan (bukan isian form di atas) — itulah yang menentukan
+  // apakah kurir sudah punya perintah jemput.
+  const bookedAwb = order.trackingNumber?.trim() || ''
+  const isBooked = Boolean(bookedAwb) || order.shipmentStatus === 'BOOKED'
+
+  // Membatalkan pesanan yang kurirnya sudah dibooking kini IKUT menghapus penjemputannya di
+  // Mengantar — server yang melakukannya, di dalam permintaan yang sama (update-status/route.ts).
+  //
+  // Sampai 2026-09-09 blok ini berupa CENTANG WAJIB berbunyi "saya sudah membatalkan di dashboard
+  // Mengantar": sebuah JANJI admin, karena saat itu tak ada cara memanggil pembatalan dari kode.
+  // Setelah DELETE /order tersambung, janji itu jadi salah — dan centang yang menyuruh orang
+  // melakukan sesuatu yang sudah dikerjakan sistem hanya mengajari admin mengabaikan peringatan.
+  //
+  // Yang menggantikannya: keterangan apa yang AKAN terjadi sebelum menyimpan, lalu hasilnya
+  // ditampilkan setelah menyimpan. Peringatan yang menuntut tindakan hanya muncul bila
+  // penghapusannya benar-benar gagal.
+  const willCancelPickup = status === 'Dibatalkan' && isBooked
+
+  // Membatalkan pesanan yang SUDAH LUNAS berarti uang pembeli tertahan di kita. Tak ada satu pun
+  // bagian sistem yang mengembalikannya sendiri — untuk transfer bank Xendit bahkan tak bisa.
+  const willNeedRefund = status === 'Dibatalkan' && order.paymentStatus === 'Lunas'
+
+  function handleStatusChange(next: OrderFulfillmentStatus) {
+    setStatus(next)
+    setError('')
+  }
+
+  // Menutup peringatan kegagalan: barulah pesanan yang sudah tersimpan diteruskan ke daftar
+  // (yang sekaligus menutup modal ini).
+  function acknowledgeFailure() {
+    if (savedOrder) onUpdated(savedOrder)
+  }
 
   async function handleSave() {
     setError('')
@@ -47,7 +106,6 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
       setError('Nama ekspedisi, jenis layanan, dan no resi wajib diisi untuk status Dikirim.')
       return
     }
-
     setSaving(true)
     try {
       const res = await fetch('/api/orders/update-status', {
@@ -61,11 +119,53 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
             : {}),
         }),
       })
-      const data = (await res.json()) as { order?: Order; error?: string }
+      const data = (await res.json()) as {
+        order?: Order
+        error?: string
+        shipmentCancellation?: ThirdPartyReport
+        invoiceExpiry?: ThirdPartyReport
+      }
       if (!res.ok || !data.order) {
         setError(data.error ?? 'Gagal memperbarui status pesanan.')
         return
       }
+
+      // Pembatalannya SUDAH tersimpan di server pada titik ini — status, stok, dan mutasinya.
+      // Yang mungkin gagal hanyalah dua tindakan ke pihak ketiga. Karena itu modal DITAHAN, bukan
+      // dibatalkan: satu-satunya jejak lain dari kegagalan ini adalah kolom database yang tak
+      // pernah dibuka siapa pun, sementara akibatnya berjalan terus di dunia nyata.
+      const gagal: PostCancelIssue[] = []
+
+      const pickup = data.shipmentCancellation
+      if (pickup?.attempted && pickup.ok === false) {
+        // Jumlah percobaan ikut disebut (MGT-66): "sudah dicoba 3 kali" memberi tahu admin bahwa
+        // menekan tombol coba lagi kemungkinan besar percuma, sedangkan 1 kali berarti kegagalannya
+        // dinilai bukan gangguan sesaat — dua keadaan yang menuntut tindakan berbeda.
+        const percobaan =
+          typeof pickup.attempts === 'number' ? ` Sistem sudah mencobanya ${pickup.attempts} kali.` : ''
+        gagal.push({
+          judul: 'Penjemputan kurir BELUM dibatalkan',
+          penjelasan: `Kalau dibiarkan, kurir tetap datang menjemput paket ini sementara stoknya sudah dikembalikan.${percobaan} Coba lagi lewat tombol "Coba hapus lagi" di kolom No. Resi pada daftar pesanan; kalau masih gagal, hapus pengiriman${bookedAwb ? ` beresi ${bookedAwb}` : ''} manual di dashboard Mengantar.`,
+          detail: `${pickup.reason ?? 'unknown'}${pickup.httpStatus !== undefined ? ` [HTTP ${pickup.httpStatus}]` : ''}${pickup.detail ? `: ${pickup.detail}` : ''}`,
+        })
+      }
+
+      const tagihan = data.invoiceExpiry
+      if (tagihan?.attempted && tagihan.ok === false) {
+        gagal.push({
+          judul: 'Tagihan Xendit MASIH BISA DIBAYAR',
+          penjelasan:
+            'Matikan tagihannya manual di dashboard Xendit. Kalau pembeli terlanjur membayarnya lewat transfer bank, uangnya TIDAK BISA dikembalikan lewat Xendit — harus ditransfer manual ke rekening pembeli.',
+          detail: `${tagihan.reason ?? 'unknown'}${tagihan.detail ? `: ${tagihan.detail}` : ''}`,
+        })
+      }
+
+      if (gagal.length > 0) {
+        setSavedOrder(data.order)
+        setIssues(gagal)
+        return
+      }
+
       onUpdated(data.order)
     } catch {
       setError('Terjadi kesalahan jaringan. Coba lagi.')
@@ -98,6 +198,25 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
             <dd className="text-right font-medium text-gray-900">{order.customerName}</dd>
             <dt className="text-gray-500">Total</dt>
             <dd className="text-right font-semibold text-gray-900">{formatRupiah(order.totalAmount)}</dd>
+            {/* Metode bayar HANYA muncul untuk pesanan yang sudah lunas.
+                Di sinilah CS berada saat membatalkan pesanan, dan inilah pertanyaan pertama yang
+                menentukan langkah berikutnya: transfer bank menuntut CS meminta nomor rekening
+                (Xendit tak bisa me-refund VA sama sekali), sedangkan e-wallet/QRIS/kartu bisa
+                dikembalikan ke sumbernya. Pada pesanan yang belum dibayar tak ada uang yang perlu
+                dikembalikan, jadi barisnya sengaja tidak ditampilkan.
+                "Belum tercatat" DITAMPILKAN, bukan disembunyikan: pesanan lunas sebelum
+                2026-08-28 tak punya nilai ini, dan CS perlu tahu bahwa jalur pengembaliannya harus
+                dipastikan lewat dashboard Xendit — bukan diasumsikan transfer bank. */}
+            {order.paymentStatus === 'Lunas' && (
+              <>
+                <dt className="text-gray-500">Metode Bayar</dt>
+                <dd className="text-right font-medium text-gray-900">
+                  {paymentMethodLabel(order.paymentMethod) ?? (
+                    <span className="text-gray-400">Belum tercatat</span>
+                  )}
+                </dd>
+              </>
+            )}
           </dl>
 
           {/* Item pesanan */}
@@ -135,7 +254,7 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
               <select
                 id="order-status"
                 value={status}
-                onChange={(e) => setStatus(e.target.value as OrderFulfillmentStatus)}
+                onChange={(e) => handleStatusChange(e.target.value as OrderFulfillmentStatus)}
                 className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 focus:border-emerald-600 focus:outline-none focus:ring-2 focus:ring-emerald-100"
               >
                 {/* Opsi pertama = pertahankan status sekarang */}
@@ -195,6 +314,76 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
             </div>
           )}
 
+          {/* === Apa yang akan terjadi pada penjemputannya (sebelum menyimpan) === */}
+          {willCancelPickup && issues.length === 0 && (
+            <div className="mt-4 rounded-lg border border-sky-200 bg-sky-50 p-3.5">
+              <p className="flex items-start gap-2 text-sm font-semibold text-sky-900">
+                <Truck className="mt-0.5 h-4 w-4 flex-none" />
+                <span>
+                  Penjemputan kurir ikut dibatalkan
+                  {bookedAwb && (
+                    <>
+                      {' '}
+                      — resi <span className="font-mono">{bookedAwb}</span>
+                    </>
+                  )}
+                </span>
+              </p>
+              <p className="mt-1.5 pl-6 text-xs leading-relaxed text-sky-800">
+                Pengirimannya dihapus di Mengantar dan ongkos kirimnya kembali ke saldo. Bila
+                penghapusan gagal — misalnya paketnya sudah keburu dijemput — pembatalan pesanan
+                tetap berlaku dan Anda akan diberi tahu di sini.
+              </p>
+            </div>
+          )}
+
+          {/* === Uang pembeli masih di kita (sebelum menyimpan) ===
+              Muncul saat membatalkan pesanan yang SUDAH LUNAS. Membatalkan tidak mengembalikan
+              uang apa pun — dan untuk transfer bank, Xendit bahkan tak bisa melakukannya.
+              Peringatan ini ada supaya admin tak menutup modal dengan anggapan urusannya selesai. */}
+          {willNeedRefund && issues.length === 0 && (
+            <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3.5">
+              <p className="flex items-start gap-2 text-sm font-semibold text-amber-900">
+                <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
+                <span>Pesanan ini sudah dibayar — dananya perlu dikembalikan</span>
+              </p>
+              <p className="mt-1.5 pl-6 text-xs leading-relaxed text-amber-800">
+                {formatRupiah(order.totalAmount)}
+                {paymentMethodLabel(order.paymentMethod)
+                  ? ` lewat ${paymentMethodLabel(order.paymentMethod)}`
+                  : ''}
+                . Membatalkan di sini <strong>tidak</strong> mengembalikan uangnya. Pesanan akan
+                masuk daftar <strong>Pengembalian Dana</strong> untuk ditindaklanjuti.
+              </p>
+            </div>
+          )}
+
+          {/* === Tindakan pihak ketiga yang GAGAL — butuh penanganan manual === */}
+          {issues.length > 0 && (
+            <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3.5">
+              <p className="flex items-start gap-2 text-sm font-semibold text-amber-900">
+                <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
+                <span>
+                  Pesanan sudah dibatalkan, tapi ada {issues.length === 1 ? 'satu hal' : `${issues.length} hal`}{' '}
+                  yang harus Anda selesaikan manual.
+                </span>
+              </p>
+              <ul className="mt-2.5 space-y-3 pl-6">
+                {issues.map((issue) => (
+                  <li key={issue.judul}>
+                    <p className="text-xs font-semibold text-amber-900">{issue.judul}</p>
+                    <p className="mt-0.5 text-xs leading-relaxed text-amber-800">
+                      {issue.penjelasan}
+                    </p>
+                    <p className="mt-1 font-mono text-[11px] leading-relaxed text-amber-700">
+                      {issue.detail}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {/* Pesan error */}
           {error && (
             <p role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">
@@ -205,23 +394,38 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
 
         {/* Footer aksi */}
         <div className="flex justify-end gap-3 border-t border-gray-100 px-5 py-4">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-600 transition hover:bg-gray-50"
-          >
-            Batal
-          </button>
-          {!final && (
+          {issues.length > 0 ? (
+            // Perubahannya SUDAH tersimpan; satu-satunya jalan keluar adalah mengakui peringatan
+            // di atas. Tombol "Batal" sengaja tidak ditampilkan — tak ada lagi yang bisa dibatalkan,
+            // dan menawarkannya hanya menyarankan bahwa peringatan itu boleh diabaikan.
             <button
               type="button"
-              onClick={handleSave}
-              disabled={saving || !changed}
-              className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={acknowledgeFailure}
+              className="rounded-lg bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-amber-700"
             >
-              {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-              {saving ? 'Menyimpan…' : 'Simpan Perubahan'}
+              Mengerti, saya tangani manual
             </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-600 transition hover:bg-gray-50"
+              >
+                Batal
+              </button>
+              {!final && (
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={saving || !changed}
+                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {saving ? 'Menyimpan…' : 'Simpan Perubahan'}
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>

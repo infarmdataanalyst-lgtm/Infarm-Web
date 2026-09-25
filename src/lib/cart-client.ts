@@ -4,6 +4,15 @@
 // Catatan: pembacaan keranjang dari Server Component nanti memakai cookies() di lib/cart.ts.
 
 import type { CartItem, CheckoutPromoSnapshot } from '@/types/cart'
+import { markProductAddedToCart } from '@/lib/recently-viewed'
+import {
+  addCombo,
+  addLooseItem,
+  removeLooseLine,
+  setComboCount,
+  updateLooseQuantity,
+  type ComboUnit,
+} from '@/lib/cart-lines'
 
 // === Konstanta cookie ===
 const CART_COOKIE_NAME = 'infarm_cart'
@@ -76,44 +85,35 @@ export function subscribeCart(callback: () => void): () => void {
 
 // === Tulis Cookie ===
 
-// Menambahkan produk ke keranjang lalu menyimpannya kembali ke cookie.
-// Item dibedakan per (productId + variantId): produk sama beda varian = baris terpisah.
-// Jika kombinasi sudah ada, jumlahnya diakumulasi. Mengembalikan keranjang terbaru.
+// Menambahkan produk SATUAN ke keranjang lalu menyimpannya kembali ke cookie.
+// Baris dibedakan per (productId + variantId + paket): produk yang sama di dalam paket adalah baris
+// TERSENDIRI dan tak pernah ikut bertambah di sini (aturannya di lib/cart-lines.ts).
+// Jika baris satuan yang sama sudah ada, jumlahnya diakumulasi. Mengembalikan keranjang terbaru.
 export function addToCart(item: CartItem): CartItem[] {
-  const cart = getCart()
-  const existing = cart.find((i) => i.productId === item.productId && i.variantId === item.variantId)
-
-  if (existing) {
-    existing.quantity += item.quantity
-    existing.price = item.price // sinkronkan harga terbaru
-    if (item.variantName) existing.variantName = item.variantName
-  } else {
-    cart.push(item)
-  }
-
+  const cart = addLooseItem(getCart(), item)
   writeCart(cart)
+  // Catat pernah di-cart → dikecualikan dari rekomendasi "Dilihat Sebelumnya"
+  markProductAddedToCart(item.productId)
   return cart
 }
 
-// Menambahkan paket/combo ke keranjang. Untuk tiap produk combo:
-// - bila belum ada di keranjang → ditambahkan dengan quantity & harga (alokasi) combo
-// - bila sudah ada → quantity DISESUAIKAN dengan quantity combo (bukan diakumulasi) + harga combo
-// Semua item ditandai comboId agar bisa dibedakan saat checkout. Mengembalikan keranjang terbaru.
+// Menambahkan SATU paket/combo ke keranjang (harga alokasi paket, ditandai comboId).
+// Baris satuan produk yang sama TIDAK disentuh — dulu baris itu ditimpa jadi anggota paket dan
+// barang satuan milik pembeli hilang diam-diam. Jumlah paket diatur lewat setComboCountInCart.
 export function addComboToCart(
   comboId: string,
   items: { productId: string; quantity: number; price: number }[],
 ): CartItem[] {
-  const cart = getCart()
-  for (const it of items) {
-    const existing = cart.find((c) => c.productId === it.productId)
-    if (existing) {
-      existing.quantity = it.quantity
-      existing.price = it.price
-      existing.comboId = comboId
-    } else {
-      cart.push({ productId: it.productId, quantity: it.quantity, price: it.price, comboId })
-    }
-  }
+  const cart = addCombo(getCart(), comboId, items)
+  // Catat tiap produk combo pernah di-cart → dikecualikan dari rekomendasi "Dilihat Sebelumnya"
+  for (const it of items) markProductAddedToCart(it.productId)
+  writeCart(cart)
+  return cart
+}
+
+// Mengubah jumlah paket (N): setiap anggota = jumlahnya per paket × N. N < 1 mengeluarkan paket.
+export function setComboCountInCart(comboId: string, units: ComboUnit[], count: number): CartItem[] {
+  const cart = setComboCount(getCart(), comboId, units, count)
   writeCart(cart)
   return cart
 }
@@ -126,24 +126,18 @@ export function removeComboFromCart(comboId: string): CartItem[] {
   return cart
 }
 
-// Mengubah jumlah (quantity) satu baris keranjang (produk + varian tertentu). Jumlah < 1 menghapus
-// baris tsb. variantId dihilangkan → baris produk tanpa varian. Mengembalikan keranjang terbaru.
+// Mengubah jumlah (quantity) satu baris SATUAN (produk + varian tertentu). Jumlah < 1 menghapus
+// baris tsb. Anggota paket tak tersentuh — jumlahnya hanya berubah lewat setComboCountInCart.
 export function updateQuantity(productId: string, quantity: number, variantId?: string): CartItem[] {
-  let cart = getCart()
-  if (quantity < 1) {
-    cart = cart.filter((i) => !(i.productId === productId && i.variantId === variantId))
-  } else {
-    const item = cart.find((i) => i.productId === productId && i.variantId === variantId)
-    if (item) item.quantity = quantity
-  }
+  const cart = updateLooseQuantity(getCart(), productId, quantity, variantId)
   writeCart(cart)
   return cart
 }
 
-// Menghapus satu baris keranjang (produk + varian tertentu). Bila variantId dihilangkan,
-// menghapus baris produk tanpa varian. Mengembalikan keranjang terbaru.
+// Menghapus satu baris SATUAN (produk + varian tertentu). Anggota paket dihapus lewat
+// removeComboFromCart, karena paket hanya sah bila utuh. Mengembalikan keranjang terbaru.
 export function removeFromCart(productId: string, variantId?: string): CartItem[] {
-  const cart = getCart().filter((i) => !(i.productId === productId && i.variantId === variantId))
+  const cart = removeLooseLine(getCart(), productId, variantId)
   writeCart(cart)
   return cart
 }

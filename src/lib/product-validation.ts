@@ -4,6 +4,7 @@
 // TIDAK di file ini karena butuh akses server.
 
 import type { ProductCategory } from '@/types/product'
+import { WEIGHT_GRAM_MAX, WEIGHT_GRAM_MIN } from '@/lib/shipping-weight'
 
 // === Batasan ===
 export const SKU_REGEX = /^[A-Z0-9-]+$/
@@ -15,6 +16,23 @@ export const PRICE_MIN = 100
 export const PRICE_MAX = 99_999_999
 export const STOCK_MIN = 0
 export const STOCK_MAX = 999_999
+export const MIN_ORDER_QTY_MIN = 1
+export const MIN_ORDER_QTY_MAX = 999
+// Ambang "harga kecil": di bawah ini admin DIINGATKAN (bukan dipaksa) menaikkan minimum pembelian,
+// karena order 1 pcs berisiko di bawah batas minimum payment gateway & tak menutup ongkir.
+export const LOW_PRICE_THRESHOLD = 5_000
+// Target nilai minimal satu baris produk saat menyarankan minimum pembelian (≈ batas Xendit).
+export const SUGGESTED_LINE_TOTAL = 10_000
+// Ambang "stok menipis" BAWAAN: di bawah angka ini produk diberi peringatan.
+// Angka sebenarnya kini diatur admin di /oms/dashboard/pengaturan dan disimpan di
+// store_settings.low_stock_threshold (baca lewat getLowStockThreshold()). Konstanta ini hanya
+// NILAI CADANGAN — dipakai saat setting belum pernah diisi atau gagal dibaca, dan sebagai nilai
+// awal state di komponen klien sebelum hasil fetch tiba.
+//
+// Tetap SATU sumber untuk kartu ringkasan + filter stok di halaman Produk, widget "Stok Rendah"
+// di Dashboard, dan notifikasi stok — kalau dua halaman memakai angka berbeda, jumlah
+// peringatannya tidak akan cocok dan admin kehilangan kepercayaan pada keduanya.
+export const DEFAULT_LOW_STOCK_THRESHOLD = 10
 export const MAX_PRODUCT_IMAGES = 9 // sesuai slider detail produk & constraint DB
 export const MAX_IMAGE_BYTES = 2 * 1024 * 1024 // 2MB per file
 export const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp']
@@ -43,15 +61,25 @@ export function validateCategory(category: ProductCategory | ''): string | undef
   return undefined
 }
 
+// Rupiah TIDAK punya satuan pecahan yang dipakai, dan kolom DB-nya `integer`. Harga pecahan yang
+// lolos ke sini tidak ditolak Postgres melainkan DIBULATKAN diam-diam saat assignment, sehingga
+// harga tersimpan berbeda dari yang diketik admin tanpa pesan error apa pun (SEC-030). Karena itu
+// integer diperiksa di sini, sejajar dengan validateStock.
 export function validatePrice(price: number | ''): string | undefined {
   if (price === '' || Number.isNaN(Number(price))) return 'Harga tidak boleh kosong'
   const n = Number(price)
+  if (!Number.isInteger(n)) return 'Harga harus bilangan bulat (tanpa koma)'
   if (n < PRICE_MIN) return 'Harga minimal Rp 100'
   if (n > PRICE_MAX) return 'Harga melebihi batas maksimal'
   return undefined
 }
 
 // Harga asli opsional. Bila diisi wajib > harga jual (biar coretan bermakna).
+//
+// Number.isInteger dipanggil SEBELUM perbandingan lain karena ia sekaligus menutup NaN dan
+// Infinity: keduanya membuat `orig <= promo` maupun `orig > PRICE_MAX` bernilai false, jadi versi
+// lama meloloskan keduanya lewat jalur "tidak ada error". PRICE_MIN juga ikut ditegakkan di sini —
+// dulu terlewat, sehingga harga coret Rp 1 bisa masuk selama masih di atas harga jual.
 export function validateOriginalPrice(
   originalPrice: number | '' | undefined,
   price: number | '',
@@ -59,6 +87,8 @@ export function validateOriginalPrice(
   if (originalPrice === '' || originalPrice === undefined) return undefined // opsional
   const orig = Number(originalPrice)
   const promo = price === '' ? 0 : Number(price)
+  if (!Number.isInteger(orig)) return 'Harga asli harus bilangan bulat (tanpa koma)'
+  if (orig < PRICE_MIN) return 'Harga asli minimal Rp 100'
   if (orig <= promo) return 'Harga asli harus lebih besar dari harga jual'
   if (orig > PRICE_MAX) return 'Harga melebihi batas maksimal'
   return undefined
@@ -96,6 +126,41 @@ export function validateImageFile(file: File): string | undefined {
   return undefined
 }
 
+// Minimum pembelian (pcs): wajib bilangan bulat 1–999. 1 = tanpa batasan.
+export function validateMinOrderQty(qty: number | ''): string | undefined {
+  if (qty === '' || Number.isNaN(qty)) return 'Minimal pembelian wajib diisi'
+  if (!Number.isInteger(qty)) return 'Minimal pembelian harus bilangan bulat'
+  if (qty < MIN_ORDER_QTY_MIN) return `Minimal pembelian minimal ${MIN_ORDER_QTY_MIN}`
+  if (qty > MIN_ORDER_QTY_MAX) return `Minimal pembelian maksimal ${MIN_ORDER_QTY_MAX}`
+  return undefined
+}
+
+// Berat satuan (GRAM): wajib, bilangan bulat positif dalam rentang CHECK products_berat_check.
+// Wajib karena berat adalah dasar ongkir — produk tanpa berat membuat buyer dikutip tarif cadangan
+// yang bisa jauh dari tarif riil, dan selisihnya ditanggung toko.
+export function validateBerat(berat: number | ''): string | undefined {
+  if (berat === '' || Number.isNaN(Number(berat))) return 'Berat wajib diisi'
+  const n = Number(berat)
+  if (!Number.isInteger(n)) return 'Berat harus bilangan bulat (gram)'
+  if (n < WEIGHT_GRAM_MIN) return 'Berat minimal 1 gram'
+  if (n > WEIGHT_GRAM_MAX) return 'Berat maksimal 1.000.000 gram (1 ton)'
+  return undefined
+}
+
+// Saran jumlah minimum agar satu baris produk mencapai ±SUGGESTED_LINE_TOTAL.
+// HANYA saran (ditampilkan sebagai hint) — keputusan akhir tetap di admin.
+// Mengembalikan null bila harga tak valid atau produk sudah cukup mahal.
+export function suggestMinOrderQty(price: number | ''): number | null {
+  if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) return null
+  if (price >= LOW_PRICE_THRESHOLD) return null
+  return Math.min(MIN_ORDER_QTY_MAX, Math.ceil(SUGGESTED_LINE_TOTAL / price))
+}
+
+// Apakah harga tergolong kecil → tampilkan peringatan non-blocking di form.
+export function isLowPrice(price: number | ''): boolean {
+  return typeof price === 'number' && Number.isFinite(price) && price > 0 && price < LOW_PRICE_THRESHOLD
+}
+
 // === Validasi seluruh form (sinkron; tanpa cek duplikat SKU) ===
 
 export type ProductFieldKey =
@@ -105,6 +170,8 @@ export type ProductFieldKey =
   | 'price'
   | 'originalPrice'
   | 'stock'
+  | 'minOrderQty'
+  | 'berat'
   | 'description'
   | 'images'
 
@@ -117,6 +184,8 @@ export type ProductFormValues = {
   price: number | ''
   originalPrice?: number | ''
   stock: number | ''
+  minOrderQty: number | ''
+  berat: number | ''
   description: string
   imageCount: number
 }
@@ -129,6 +198,8 @@ export const PRODUCT_FIELD_ORDER: ProductFieldKey[] = [
   'price',
   'originalPrice',
   'stock',
+  'minOrderQty',
+  'berat',
   'description',
   'images',
 ]
@@ -148,6 +219,10 @@ export function validateProductForm(values: ProductFormValues): ProductFieldErro
   if (originalPrice) errors.originalPrice = originalPrice
   const stock = validateStock(values.stock)
   if (stock) errors.stock = stock
+  const minOrderQty = validateMinOrderQty(values.minOrderQty)
+  if (minOrderQty) errors.minOrderQty = minOrderQty
+  const berat = validateBerat(values.berat)
+  if (berat) errors.berat = berat
   const description = validateDescription(values.description)
   if (description) errors.description = description
   const images = validateImages(values.imageCount)

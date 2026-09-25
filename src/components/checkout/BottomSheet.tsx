@@ -29,7 +29,10 @@ export default function BottomSheet({
   return (
     <div
       aria-hidden={!open}
-      className={`fixed inset-0 z-50 ${open ? '' : 'pointer-events-none'}`}
+      // z-[80] sengaja tinggi: sheet harus menang atas elemen mengambang mana pun. Dulu dengan
+      // z-50, tombol WhatsApp mengambang (z-[60]) melayang di atas sheet dan menyerap tap di pojok
+      // kanan bawah → tombol aksi sheet (mis. "Terapkan filter") hanya bisa diklik di sisi kiri.
+      className={`fixed inset-0 z-[80] ${open ? '' : 'pointer-events-none'}`}
     >
       {/* Backdrop — fade in/out */}
       <button

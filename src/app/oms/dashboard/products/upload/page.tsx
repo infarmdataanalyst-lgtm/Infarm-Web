@@ -11,8 +11,13 @@ import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import { ChevronRight, UploadCloud, Check, X } from 'lucide-react'
 import OmsHeader from '@/components/oms/OmsHeader'
+import WarehouseStockFields, {
+  sumStock,
+  type StockByWarehouse,
+} from '@/components/oms/WarehouseStockFields'
 import { PRODUCT_CATEGORIES } from '@/lib/data/categories'
 import { formatRupiah } from '@/lib/format'
+import { WEIGHT_GRAM_MIN, formatWeight } from '@/lib/shipping-weight'
 import type { ProductCategory } from '@/types/product'
 import {
   validateProductForm,
@@ -23,6 +28,10 @@ import {
   ACCEPTED_IMAGE_ACCEPT,
   DESC_MAX,
   NAME_MAX,
+  LOW_PRICE_THRESHOLD,
+  SUGGESTED_LINE_TOTAL,
+  isLowPrice,
+  suggestMinOrderQty,
   type ProductFieldErrors,
   type ProductFieldKey,
 } from '@/lib/product-validation'
@@ -44,6 +53,13 @@ export default function UploadProductPage() {
   const [price, setPrice] = useState<number | ''>(35000) // harga jual (promo)
   const [originalPrice, setOriginalPrice] = useState<number | ''>('') // harga asli (opsional, dicoret)
   const [stock, setStock] = useState<number | ''>(120)
+  // Stok per gudang (mode multi). Kosong di mode single — server memakai `stock` di atas.
+  const [stockByWarehouse, setStockByWarehouse] = useState<StockByWarehouse>({})
+  const [warehouseMode, setWarehouseMode] = useState<'single' | 'multi'>('single')
+  const [minOrderQty, setMinOrderQty] = useState<number | ''>(1) // 1 = tanpa batasan
+  // Berat satuan dalam GRAM. Kosong di awal (bukan angka contoh) supaya admin tak diam-diam
+  // menyimpan berat asal yang langsung dipakai menghitung ongkir.
+  const [berat, setBerat] = useState<number | ''>('')
   const [description, setDescription] = useState('')
 
   // === State gambar produk ===
@@ -59,6 +75,12 @@ export default function UploadProductPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Stok yang divalidasi & dikirim sebagai total: di mode multi = jumlah seluruh gudang,
+  // di mode single = isi input tunggal. Satu sumber angka agar aturan stok yang sudah ada
+  // (0–999.999) tetap berlaku tanpa cabang validasi baru.
+  const effectiveStock: number | '' =
+    warehouseMode === 'multi' ? sumStock(stockByWarehouse) : stock
+
   // === Error live (dihitung ulang tiap render dari nilai form) ===
   const liveErrors: ProductFieldErrors = useMemo(
     () =>
@@ -68,12 +90,17 @@ export default function UploadProductPage() {
         category,
         price,
         originalPrice,
-        stock,
+        stock: effectiveStock,
+        minOrderQty,
+        berat,
         description,
         imageCount: images.length,
       }),
-    [sku, name, category, price, originalPrice, stock, description, images.length],
+    [sku, name, category, price, originalPrice, effectiveStock, minOrderQty, berat, description, images.length],
   )
+
+  // Saran minimum pembelian (hanya untuk produk berharga kecil). null → tak ada saran.
+  const minQtySuggestion = useMemo(() => suggestMinOrderQty(price), [price])
 
   // Error SKU gabungan: format dulu, lalu duplikat
   const skuError = liveErrors.sku ?? (skuDuplicate ? 'SKU sudah digunakan produk lain' : undefined)
@@ -175,9 +202,18 @@ export default function UploadProductPage() {
     const digits = raw.replace(/\D/g, '')
     setOriginalPrice(digits === '' ? '' : Number(digits))
   }
-  function handleStockChange(raw: string) {
+  // Catatan: penyaringan angka untuk input stok kini ditangani WarehouseStockFields
+  // (satu tempat untuk mode single maupun per gudang).
+
+  // Berat hanya menerima digit (gram, bilangan bulat) — sama seperti harga & stok.
+  function handleBeratChange(raw: string) {
     const digits = raw.replace(/\D/g, '')
-    setStock(digits === '' ? '' : Number(digits))
+    setBerat(digits === '' ? '' : Number(digits))
+  }
+
+  function handleMinOrderQtyChange(raw: string) {
+    const digits = raw.replace(/\D/g, '')
+    setMinOrderQty(digits === '' ? '' : Number(digits))
   }
 
   // === Submit ===
@@ -191,6 +227,8 @@ export default function UploadProductPage() {
       price: true,
       originalPrice: true,
       stock: true,
+      minOrderQty: true,
+      berat: true,
       description: true,
       images: true,
     })
@@ -202,7 +240,9 @@ export default function UploadProductPage() {
       category,
       price,
       originalPrice,
-      stock,
+      stock: effectiveStock,
+      minOrderQty,
+      berat,
       description,
       imageCount: images.length,
     })
@@ -227,7 +267,17 @@ export default function UploadProductPage() {
           category,
           price: Number(price) || 0,
           originalPrice: originalPrice === '' ? undefined : Number(originalPrice),
-          stock: Number(stock) || 0,
+          stock: Number(effectiveStock) || 0,
+          // Rincian per gudang hanya dikirim di mode multi; server mengabaikannya di mode single
+          stockPerWarehouse:
+            warehouseMode === 'multi'
+              ? Object.entries(stockByWarehouse).map(([warehouseId, stok]) => ({
+                  warehouseId,
+                  stok: stok === '' ? 0 : stok,
+                }))
+              : undefined,
+          minOrderQty: Number(minOrderQty) || 1,
+          berat: Number(berat),
           description: description.trim(),
           imageUrl: images[0]?.src,
           images: images.map((img) => img.src),
@@ -249,7 +299,7 @@ export default function UploadProductPage() {
 
   return (
     <>
-      <OmsHeader title="Produk" notificationCount={3} />
+      <OmsHeader title="Produk" />
 
       {/* pb-28 memberi ruang agar konten tidak tertutup footer sticky */}
       <main className="p-6 pb-28 md:p-8 md:pb-28">
@@ -370,6 +420,15 @@ export default function UploadProductPage() {
                     </p>
                   )}
                   <FieldError message={shownError('price')} />
+
+                  {/* Peringatan harga kecil — NON-BLOCKING (form tetap bisa disimpan).
+                      Order 1 pcs produk murah berisiko di bawah minimum payment gateway. */}
+                  {isLowPrice(price) && !shownError('price') && (
+                    <p className="mt-2 rounded-lg bg-orange-50 px-3 py-2 text-xs leading-relaxed text-orange-700">
+                      Harga produk di bawah {formatRupiah(LOW_PRICE_THRESHOLD)} — disarankan set
+                      minimal pembelian agar transaksi memenuhi minimum payment gateway.
+                    </p>
+                  )}
                 </div>
 
                 {/* Harga Asli (opsional; dicoret bila > harga jual) */}
@@ -397,21 +456,69 @@ export default function UploadProductPage() {
                   <FieldError message={shownError('originalPrice')} />
                 </div>
 
-                {/* Stok */}
+                {/* Stok — satu input di mode single, per gudang di mode multi */}
                 <div id="pf-stock">
                   <Field label="Stok Tersedia">
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      value={stock}
-                      onChange={(e) => handleStockChange(e.target.value)}
-                      onBlur={() => markTouched('stock')}
-                      placeholder="0"
-                      className={inputClass(!!shownError('stock'))}
-                      aria-invalid={!!shownError('stock')}
+                    <WarehouseStockFields
+                      singleValue={stock}
+                      onSingleChange={(v) => {
+                        setStock(v)
+                        markTouched('stock')
+                      }}
+                      value={stockByWarehouse}
+                      onChange={setStockByWarehouse}
+                      onModeResolved={setWarehouseMode}
+                      inputClassName={inputClass(!!shownError('stock'))}
+                      invalid={!!shownError('stock')}
                     />
                   </Field>
                   <FieldError message={shownError('stock')} />
+                </div>
+
+                {/* Minimal Pembelian — kelipatan minimum per baris keranjang */}
+                <div id="pf-minOrderQty">
+                  <Field label="Minimal Pembelian (pcs)">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={minOrderQty}
+                      onChange={(e) => handleMinOrderQtyChange(e.target.value)}
+                      onBlur={() => markTouched('minOrderQty')}
+                      // Saran hanya muncul untuk produk murah; TIDAK auto-fill — admin yang putuskan
+                      placeholder={minQtySuggestion ? String(minQtySuggestion) : '1'}
+                      className={inputClass(!!shownError('minOrderQty'))}
+                      aria-invalid={!!shownError('minOrderQty')}
+                    />
+                  </Field>
+                  <p className="mt-1 text-xs text-gray-400">
+                    {minQtySuggestion
+                      ? `Saran: ${minQtySuggestion} pcs (≈ ${formatRupiah(SUGGESTED_LINE_TOTAL)} per pesanan). Isi 1 bila tanpa batasan.`
+                      : 'Isi 1 bila pembeli boleh membeli satuan.'}
+                  </p>
+                  <FieldError message={shownError('minOrderQty')} />
+                </div>
+
+                {/* Berat satuan — DASAR PERHITUNGAN ONGKIR, bukan sekadar info katalog.
+                    Disimpan gram, dikonversi ke kilogram saat cek ongkir (lib/shipping-weight.ts). */}
+                <div id="pf-berat">
+                  <Field label="Berat (gram)">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={berat}
+                      onChange={(e) => handleBeratChange(e.target.value)}
+                      onBlur={() => markTouched('berat')}
+                      placeholder="Contoh: 500"
+                      className={inputClass(!!shownError('berat'))}
+                      aria-invalid={!!shownError('berat')}
+                    />
+                  </Field>
+                  <p className="mt-1 text-xs text-gray-400">
+                    {typeof berat === 'number' && berat >= WEIGHT_GRAM_MIN
+                      ? `Dipakai menghitung ongkir: ${formatWeight(berat)} per pcs.`
+                      : 'Berat 1 pcs dalam gram. Dipakai menghitung ongkir — isi seakurat mungkin.'}
+                  </p>
+                  <FieldError message={shownError('berat')} />
                 </div>
               </div>
 

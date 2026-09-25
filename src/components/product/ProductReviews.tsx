@@ -6,7 +6,7 @@
 
 import Image from 'next/image'
 import { useMemo, useState } from 'react'
-import { Star, BadgeCheck } from 'lucide-react'
+import { Star } from 'lucide-react'
 import type { ProductReview } from '@/types/product'
 import StarRating from '@/components/product/StarRating'
 
@@ -134,7 +134,7 @@ function RatingPill({
       aria-label={value === 0 ? 'Semua rating' : `${value} bintang`}
       className={`flex shrink-0 items-center gap-1 rounded-full border px-3.5 py-1.5 text-xs font-medium transition ${
         active
-          ? 'border-emerald-600 bg-emerald-600 text-white'
+          ? 'border-brand-header bg-brand-header text-white'
           : 'border-zinc-200 bg-white text-zinc-600 hover:bg-slate-50'
       }`}
     >
@@ -152,7 +152,7 @@ function RatingPill({
   )
 }
 
-// Tombol filter berbentuk kapsul: hijau Infarm saat aktif, abu terang saat nonaktif
+// Tombol filter berbentuk kapsul: hijau brand (sama dengan header) saat aktif, abu terang saat nonaktif
 function FilterPill({
   label,
   active,
@@ -168,7 +168,7 @@ function FilterPill({
       onClick={onClick}
       className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-medium transition ${
         active
-          ? 'bg-emerald-600 text-white'
+          ? 'bg-brand-header text-white'
           : 'bg-slate-50 text-zinc-600 hover:bg-slate-100'
       }`}
     >
@@ -181,7 +181,7 @@ function FilterPill({
 
 // Satu baris ulasan: avatar inisial, nama, tanggal, bintang, komentar, foto (opsional), dan balasan admin (opsional)
 function ReviewItem({ review }: { review: ProductReview }) {
-  const { authorName, rating, date, comment, imageUrls, reply, verified } = review
+  const { authorName, rating, date, comment, imageUrls, reply } = review
 
   return (
     <div>
@@ -191,16 +191,11 @@ function ReviewItem({ review }: { review: ProductReview }) {
           {authorName.charAt(0)}
         </span>
         <div>
-          <p className="flex items-center gap-1.5 text-sm font-semibold text-zinc-800">
-            {authorName}
-            {/* Badge "Pembeli Terverifikasi" — hanya untuk ulasan yang terikat ke pesanan */}
-            {verified && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-brand-light/40 px-2 py-0.5 text-[10px] font-semibold text-brand-primary">
-                <BadgeCheck className="h-3 w-3" />
-                Pembeli Terverifikasi
-              </span>
-            )}
-          </p>
+          {/* Badge "Pembeli Terverifikasi" DIHAPUS 2026-09-18 (keputusan pemilik proyek).
+              Ikatan ulasan ke pesanan tetap ditegakkan di server saat ulasan dikirim — yang hilang
+              hanya penandanya di layar. Jangan dikembalikan tanpa membahas ulang: badge ini
+              membedakan ulasan pembeli sungguhan dari ulasan yang dimasukkan dari sisi admin. */}
+          <p className="text-sm font-semibold text-zinc-800">{authorName}</p>
           <p className="text-xs text-zinc-400">{formatReviewDate(date)}</p>
         </div>
       </div>

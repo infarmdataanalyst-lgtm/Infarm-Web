@@ -9,7 +9,63 @@
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"http://localhost:3000\")",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"http://localhost:3001\")",
       "Bash(curl -s \"http://localhost:3000/api/products/list\")",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(npm install *)",
+      "Bash(curl -s http://localhost:3000/)",
+      "PowerShell(npx tsc --noEmit 2>&1)",
+      "PowerShell($r = Invoke-WebRequest \"http://localhost:3000/\" -UseBasicParsing -TimeoutSec 120; $css = [regex]::Matches\\($r.Content,'/_next/static/[^\"]+\\\\.css'\\) | ForEach-Object { $_.Value } | Select-Object -Unique; $css; foreach \\($c in $css\\) { $t = \\(Invoke-WebRequest \"http://localhost:3000$c\" -UseBasicParsing\\).Content; \"$c -> montserrat=$\\([regex]::Matches\\($t,'Montserrat'\\).Count\\) fontHeadingVar=$\\([regex]::Matches\\($t,'--font-heading'\\).Count\\) fontHeadingUtil=$\\([regex]::Matches\\($t,'\\\\.font-heading'\\).Count\\)\" })",
+      "PowerShell(npx tsc --noEmit)",
+      "Bash(curl -s -o /tmp/ongkir.json -w \"HTTP %{http_code}\\\\n\" \"http://localhost:3000/api/mengantar/shipping/estimate?destination_id=5fc62dfbf8f44b34aa4be9e0&weight=1\")",
+      "Bash(curl -s -o /dev/null -w \"port3000 HTTP %{http_code}\\\\n\" \"http://localhost:3000/api/settings/min-order\")",
+      "Bash(node \"C:/Users/fiqih/AppData/Local/Temp/claude/c--Users-fiqih-OneDrive-Dokumen-Infarm-Web-Infarm-Web/96589674-dcb9-430c-854e-a231b53ed65c/scratchpad/verify-warehouse.mjs\")",
+      "Bash(sed -i '81s|if \\(!isMultiWarehouse\\(\\)\\) return getDefaultWarehouse\\(\\)|if \\(!\\(await isMultiWarehouse\\(\\)\\)\\) return getDefaultWarehouse\\(\\)|' src/lib/warehouse.ts)",
+      "Bash(sed -i '166s|const warehouseId = isMultiWarehouse\\(\\) ? options?.warehouseId : undefined|const warehouseId = \\(await isMultiWarehouse\\(\\)\\) ? options?.warehouseId : undefined|' src/lib/warehouse.ts)",
+      "Bash(sed -i '188s|const warehouseId = isMultiWarehouse\\(\\) ? options?.warehouseId : undefined|const warehouseId = \\(await isMultiWarehouse\\(\\)\\) ? options?.warehouseId : undefined|' src/lib/warehouse.ts)",
+      "Bash(sed -i \"24s|import { type ShippingCourier } from '@/lib/mengantar'|import { type WarehouseShippingOption } from '@/lib/mengantar'|\" src/app/checkout/page.tsx)",
+      "Bash(sed -i \"74s|useState<ShippingCourier \\\\| null>\\(null\\)|useState<WarehouseShippingOption \\\\| null>\\(null\\)|\" src/app/checkout/page.tsx)",
+      "Bash(npx next *)",
+      "Bash(cp \"C:/Users/fiqih/AppData/Local/Temp/claude/c--Users-fiqih-OneDrive-Dokumen-Infarm-Web-Infarm-Web/e8aa62ab-4a73-4ade-890a-9766b1bd32e8/scratchpad/check-data.mjs\" ./.tmp-check-data.mjs)",
+      "Bash(node ./.tmp-check-data.mjs)",
+      "Bash(rm -f ./.tmp-check-data.mjs)",
+      "Bash(npx eslint *)",
+      "Bash(grep -n \"per BARIS \\(\\\\`<li>\\\\`\\)\\\\|kartu gabungan, \\\\`relative\\\\`\" CLAUDE.md)",
+      "PowerShell($conn = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue; if \\($conn\\) { $conn | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue } }; Start-Sleep -Seconds 2; if \\(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue\\) { \"masih hidup\" } else { \"dev server dimatikan\" })",
+      "PowerShell($conn = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue; if \\($conn\\) { $conn | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue } }; Start-Sleep -Seconds 3; if \\(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue\\) { \"masih hidup\" } else { \"dev server dimatikan\" })",
+      "Bash(grep -E \"Compiled|error|Error|Failed|oms/dashboard$\")",
+      "PowerShell(Get-Process node -ErrorAction SilentlyContinue | Select-Object Id, StartTime, @{n='Cmd';e={\\(Get-CimInstance Win32_Process -Filter \"ProcessId=$\\($_.Id\\)\"\\).CommandLine}} | Format-Table -AutoSize -Wrap)",
+      "Bash(git stash *)",
+      "PowerShell(Get-Process node -ErrorAction SilentlyContinue)",
+      "PowerShell(Stop-Process -Force)",
+      "Bash(node minicart-shot.mjs)",
+      "Bash(sed -n '1542,1635p' CLAUDE.md)",
+      "Read(//c/Users/fiqih/AppData/Local/Temp/claude/c--Users-fiqih-OneDrive-Dokumen-Infarm-Web-Infarm-Web/e8aa62ab-4a73-4ade-890a-9766b1bd32e8/scratchpad/**)",
+      "Bash(curl -s -o /dev/null -w \"dev server: %{http_code}\\\\n\" http://localhost:3000/oms/login)",
+      "Bash(grep -n \"Stok Menipis\\\\|SummaryCard\\\\|<section\\\\|bg-orange-50\\\\|{/\\\\* ===\" src/app/oms/dashboard/products/page.tsx)",
+      "Bash(npx playwright *)"
+    ],
+    "deny": [
+      "Bash(curl * https://app.mengantar.com/api/public/*)",
+      "Bash(curl * https://sandbox.mengantar.com/api/public/*)",
+      "Bash(curl * https://api.xendit.co/*)",
+      "Bash(curl -X POST *simulate-payment*)",
+      "PowerShell(Invoke-RestMethod * https://api.xendit.co/*)",
+      "PowerShell(Invoke-WebRequest * https://api.xendit.co/*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-paid-api.cjs"
+            ]
+          }
+        ]
+      }
     ]
   }
 }

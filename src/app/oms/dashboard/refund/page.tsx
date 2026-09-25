@@ -1,0 +1,478 @@
+'use client'
+
+// src/app/oms/dashboard/refund/page.tsx
+// Daftar kerja pengembalian dana: pesanan LUNAS yang dibatalkan, uangnya masih di kita.
+//
+// ── Kenapa halaman tersendiri, bukan tab di Pesanan ──
+// Ini bukan cara lain melihat pesanan — ini daftar PEKERJAAN yang belum selesai, dan yang
+// dicari darinya berbeda: siapa yang menunggu, sudah berapa lama, dan lewat jalur mana uangnya
+// harus dikirim. Ditempel sebagai tab di halaman Pesanan, ia akan tenggelam di antara filter
+// tanggal, kurir, dan gudang yang tak satu pun relevan di sini.
+//
+// ── Kenapa jalur pembayaran ditonjolkan ──
+// Terverifikasi 2026-09-10: pembayaran lewat transfer bank TIDAK BISA di-refund Xendit sama
+// sekali — pengembaliannya transfer manual ke rekening pembeli, dan CS harus meminta nomor
+// rekeningnya lewat chat. E-wallet bisa kembali ke sumbernya. Dua prosedur yang sangat berbeda,
+// dan yang menentukan hanyalah kolom metode bayar — jadi ia dibuat mencolok, bukan sekadar ada.
+
+import { useCallback, useEffect, useState } from 'react'
+import { Wallet, Landmark, HelpCircle, Loader2, Inbox, RefreshCw, Hourglass } from 'lucide-react'
+import OmsHeader from '@/components/oms/OmsHeader'
+import { formatRupiah } from '@/lib/format'
+import { paymentMethodInfo, paymentMethodLabel } from '@/lib/payment-method'
+import type { RefundWorkItem } from '@/types/order'
+
+// Berapa lama pesanan ini sudah menunggu dikembalikan, dalam hari.
+function hariMenunggu(iso: string): number {
+  const ms = Date.now() - Date.parse(iso)
+  return Number.isFinite(ms) ? Math.max(0, Math.floor(ms / 86_400_000)) : 0
+}
+
+function formatTanggal(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  return new Intl.DateTimeFormat('id-ID', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'Asia/Jakarta',
+  }).format(d)
+}
+
+// Petunjuk jalur pengembalian berdasarkan metode bayar. Inilah kalimat pertama yang perlu dibaca
+// admin sebelum menyentuh apa pun.
+function jalurPengembalian(order: RefundWorkItem): {
+  Icon: typeof Wallet
+  warna: string
+  judul: string
+  langkah: string
+} {
+  const info = paymentMethodInfo(order.paymentMethod)
+
+  if (!info) {
+    return {
+      Icon: HelpCircle,
+      warna: 'text-gray-600 bg-gray-50 border-gray-200',
+      judul: 'Metode bayar tak tercatat',
+      langkah:
+        'Pesanan lama sebelum kolom metode bayar ada. Cek transaksinya di dashboard Xendit dulu untuk memastikan jalurnya sebelum mengirim apa pun.',
+    }
+  }
+
+  if (info.family === 'transfer-bank') {
+    return {
+      Icon: Landmark,
+      warna: 'text-amber-700 bg-amber-50 border-amber-200',
+      judul: `${info.channel} — transfer manual`,
+      langkah:
+        'Xendit TIDAK BISA me-refund transfer bank. Minta nama bank, nomor rekening, dan nama pemiliknya lewat WhatsApp, lalu kirim dari dashboard Xendit. Cocokkan nama pemilik rekening dengan nama pemesan.',
+    }
+  }
+
+  return {
+    Icon: Wallet,
+    warna: 'text-emerald-700 bg-emerald-50 border-emerald-200',
+    judul: `${info.channel} — kembali ke sumber`,
+    langkah:
+      'Dana bisa dikembalikan ke dompet/kartu asal lewat dashboard Xendit. Tidak perlu meminta nomor rekening.',
+  }
+}
+
+// Apakah pesanan ini bisa dikembalikan OTOMATIS lewat Xendit.
+//
+// Hanya e-wallet/QRIS/kartu. Transfer bank tak bisa sama sekali, dan metode yang tak tercatat
+// TIDAK dianggap bisa — menawarkan tombol yang pasti gagal hanya mengajari admin mengabaikannya.
+// Server memeriksa ulang; ini sekadar menyembunyikan tombol yang tak berlaku.
+function bisaOtomatis(order: RefundWorkItem): boolean {
+  const info = paymentMethodInfo(order.paymentMethod)
+  if (!info) return false
+  return info.family !== 'transfer-bank' && info.family !== 'lain'
+}
+
+// Apakah baris ini sudah dikirim ke Xendit tapi hasilnya belum dipastikan.
+//
+// Baris seperti ini dulu tak muncul di mana pun (SEC-049): daftarnya hanya memuat PERLU_REFUND,
+// jadi pesanan yang tersangkut di tengah — callback yang tak kunjung datang, atau permintaan yang
+// timeout sehingga klaimnya sengaja dipertahankan — lenyap dari layar sambil membawa uang yang
+// mungkin sudah keluar. Sekarang ia ikut tampil, dengan tanda yang berbeda dan TANPA tombol kirim.
+function sedangDiproses(order: RefundWorkItem): boolean {
+  return order.refundStatus === 'SEDANG_DIPROSES'
+}
+
+// Pengambilan data murni — tidak menyentuh state sama sekali, supaya bisa dipanggil dari effect
+// maupun dari penangan tombol tanpa keduanya menduplikasi penanganan galatnya.
+async function ambilRefunds(): Promise<{ orders?: RefundWorkItem[]; error?: string }> {
+  try {
+    const res = await fetch('/api/oms/refunds', { cache: 'no-store' })
+    const data = (await res.json()) as { orders?: RefundWorkItem[]; error?: string }
+    if (!res.ok) return { error: data.error ?? 'Gagal memuat daftar pengembalian dana.' }
+    return { orders: data.orders ?? [] }
+  } catch {
+    return { error: 'Terjadi kesalahan jaringan. Coba lagi.' }
+  }
+}
+
+export default function RefundPage() {
+  const [orders, setOrders] = useState<RefundWorkItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  // Baris yang sedang dibuka formnya. Sengaja SATU, bukan banyak: menutup baris refund adalah
+  // pernyataan bahwa uang sudah dikirim, dan membuka beberapa sekaligus mengundang salah tempel.
+  const [openId, setOpenId] = useState<string | null>(null)
+  const [amount, setAmount] = useState('')
+  const [note, setNote] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [formError, setFormError] = useState('')
+  // Pesanan yang pengembalian otomatisnya sedang berjalan. Selama terisi, SELURUH tombol otomatis
+  // dimatikan — bukan hanya barisnya sendiri. Menekan dua sekaligus berarti dua permintaan uang
+  // berjalan bersamaan tanpa ada yang tahu hasil yang pertama.
+  const [autoId, setAutoId] = useState<string | null>(null)
+
+  // Pemuatan pertama. Sengaja TIDAK memanggil setState secara sinkron di badan effect (dan
+  // membatalkan diri saat komponen dilepas) — pola yang sama dipakai NotificationBell.
+  useEffect(() => {
+    let active = true
+    ambilRefunds().then((hasil) => {
+      if (!active) return
+      if (hasil.error) setError(hasil.error)
+      else setOrders(hasil.orders ?? [])
+      setLoading(false)
+    })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  // Pemuatan ulang atas permintaan (tombol, atau setelah satu baris ditutup). Ini penangan
+  // peristiwa, bukan effect, jadi bebas mengubah state sesukanya.
+  const muatUlang = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    const hasil = await ambilRefunds()
+    if (hasil.error) setError(hasil.error)
+    else setOrders(hasil.orders ?? [])
+    setLoading(false)
+  }, [])
+
+  // Pengembalian otomatis lewat Xendit. Sengaja memakai konfirmasi bawaan browser: ini
+  // satu-satunya tombol di seluruh OMS yang mengirim uang keluar, dan tak bisa ditarik kembali.
+  async function kembalikanOtomatis(order: RefundWorkItem) {
+    const label = paymentMethodLabel(order.paymentMethod) ?? 'metode aslinya'
+    const yakin = window.confirm(
+      `Kembalikan ${formatRupiah(order.totalAmount)} ke ${label} untuk pesanan ${order.orderId}?\n\n` +
+        'Uang benar-benar dikirim ke pembeli dan TIDAK BISA ditarik kembali.',
+    )
+    if (!yakin) return
+
+    setAutoId(order.orderId)
+    setError('')
+    try {
+      const res = await fetch('/api/oms/refunds/xendit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: order.orderId }),
+      })
+      const data = (await res.json()) as {
+        error?: string
+        metode?: string
+        reference?: string
+        periksaDashboard?: boolean
+        tuntas?: boolean
+        pesan?: string
+      }
+      if (!res.ok) {
+        setError(
+          data.periksaDashboard
+            ? `${data.error ?? 'Gagal.'} — JANGAN diulang sebelum memeriksa dashboard Xendit; dananya mungkin sudah terkirim.`
+            : (data.error ?? 'Gagal mengembalikan dana.'),
+        )
+        return
+      }
+      // Dibedakan terang-terangan. `refunds` hanya MENERIMA permintaan; hasilnya menyusul lewat
+      // callback. Menampilkan "berhasil" untuk keduanya akan membuat admin menjanjikan ke pembeli
+      // sesuatu yang belum pasti.
+      if (data.tuntas === false && data.pesan) window.alert(data.pesan)
+      await muatUlang()
+    } catch {
+      // Jaringan putus di sisi KITA, setelah permintaan mungkin sudah sampai. Perlakukan sebagai
+      // "tidak diketahui", bukan gagal — mengulanginya berisiko mengirim uang dua kali.
+      setError(
+        'Koneksi terputus sebelum hasilnya diketahui. Periksa dashboard Xendit dulu — dananya mungkin sudah terkirim.',
+      )
+    } finally {
+      setAutoId(null)
+    }
+  }
+
+  function buka(order: RefundWorkItem) {
+    setOpenId(order.orderId)
+    // Nominal diisi awal dengan total pesanan — jumlah yang benar pada kasus paling umum, dan
+    // admin tinggal mengurangi bila biaya transfer dipotong.
+    setAmount(String(order.totalAmount))
+    setNote('')
+    setFormError('')
+  }
+
+  async function tutup(orderId: string, status: 'SUDAH_REFUND' | 'TIDAK_PERLU') {
+    setFormError('')
+    if (note.trim().length < 3) {
+      setFormError(
+        status === 'SUDAH_REFUND'
+          ? 'Isi catatan: rekening tujuan atau nomor referensi transfer.'
+          : 'Isi alasan mengapa tidak perlu dikembalikan.',
+      )
+      return
+    }
+
+    setSaving(true)
+    try {
+      const res = await fetch('/api/oms/refunds', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orderId,
+          status,
+          note: note.trim(),
+          ...(status === 'SUDAH_REFUND' ? { amount: Number(amount) || 0 } : {}),
+        }),
+      })
+      const data = (await res.json()) as { error?: string }
+      if (!res.ok) {
+        setFormError(data.error ?? 'Gagal menyimpan.')
+        return
+      }
+      setOpenId(null)
+      await muatUlang()
+    } catch {
+      setFormError('Terjadi kesalahan jaringan. Coba lagi.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // Dipisah, bukan dijumlah jadi satu. "Menunggu" adalah pekerjaan yang bisa dikerjakan sekarang;
+  // "sedang diproses" adalah uang yang sudah bergerak dan hanya perlu dipastikan. Menyatukan
+  // keduanya jadi satu angka membuat admin mengira masih ada yang harus dikirim.
+  const menunggu = orders.filter((o) => !sedangDiproses(o))
+  const diproses = orders.filter(sedangDiproses)
+  const totalTertahan = menunggu.reduce((sum, o) => sum + o.totalAmount, 0)
+
+  return (
+    <>
+      <OmsHeader title="Pengembalian Dana" />
+
+      <div className="px-4 py-6 sm:px-6 lg:px-8">
+        {/* === Ringkasan === */}
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <p className="text-sm text-gray-500">Pesanan lunas yang dibatalkan dan dananya belum dikembalikan</p>
+            <p className="mt-1 text-2xl font-bold text-gray-900">
+              {menunggu.length} pesanan
+              {menunggu.length > 0 && (
+                <span className="ml-2 text-base font-semibold text-amber-700">
+                  · {formatRupiah(totalTertahan)} tertahan
+                </span>
+              )}
+            </p>
+            {diproses.length > 0 && (
+              <p className="mt-1 text-sm font-semibold text-sky-700">
+                + {diproses.length} sedang diproses di Xendit — menunggu kepastian, jangan dikirim
+                ulang
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => void muatUlang()}
+            disabled={loading}
+            className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3.5 py-2 text-sm font-semibold text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            Muat ulang
+          </button>
+        </div>
+
+        {error && (
+          <p role="alert" className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">
+            {error}
+          </p>
+        )}
+
+        {loading ? (
+          <div className="flex items-center justify-center rounded-xl border border-gray-100 bg-white py-16 text-gray-400">
+            <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+            Memuat…
+          </div>
+        ) : orders.length === 0 ? (
+          <div className="flex flex-col items-center justify-center rounded-xl border border-gray-100 bg-white py-16 text-center">
+            <Inbox className="h-10 w-10 text-gray-300" />
+            <p className="mt-3 font-semibold text-gray-700">Tidak ada yang menunggu</p>
+            <p className="mt-1 max-w-sm text-sm text-gray-500">
+              Setiap pesanan lunas yang dibatalkan akan muncul di sini sampai dananya dikembalikan.
+            </p>
+          </div>
+        ) : (
+          <ul className="space-y-3">
+            {orders.map((order) => {
+              const jalur = jalurPengembalian(order)
+              const hari = hariMenunggu(order.date)
+              const terbuka = openId === order.orderId
+
+              return (
+                <li
+                  key={order.orderId}
+                  className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-emerald-700">#{order.orderId}</p>
+                      <p className="mt-0.5 text-sm text-gray-900">{order.customerName}</p>
+                      <p className="mt-0.5 text-xs text-gray-500">
+                        {order.customerPhone ?? '—'}
+                        {order.customerEmail ? ` · ${order.customerEmail}` : ''}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-lg font-bold text-gray-900">
+                        {formatRupiah(order.totalAmount)}
+                      </p>
+                      <p className="mt-0.5 text-xs text-gray-500">
+                        Dipesan {formatTanggal(order.date)}
+                        {hari > 0 && (
+                          <span className={hari >= 3 ? 'font-semibold text-amber-700' : ''}>
+                            {' '}· {hari} hari lalu
+                          </span>
+                        )}
+                      </p>
+                      <p className="mt-0.5 text-xs text-gray-400">
+                        {paymentMethodLabel(order.paymentMethod) ?? 'Metode tak tercatat'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Jalur pengembalian — kalimat pertama yang perlu dibaca admin */}
+                  <div className={`mt-3 rounded-lg border p-3 ${jalur.warna}`}>
+                    <p className="flex items-center gap-2 text-sm font-semibold">
+                      <jalur.Icon className="h-4 w-4 flex-none" />
+                      {jalur.judul}
+                    </p>
+                    <p className="mt-1 pl-6 text-xs leading-relaxed opacity-90">{jalur.langkah}</p>
+                  </div>
+
+                  {/* Baris yang uangnya SUDAH dikirim ke Xendit tapi belum dipastikan (SEC-049).
+                      Ditandai terang-terangan karena tindakan yang benar di sini berlawanan
+                      dengan baris lain: jangan kirim, periksa. */}
+                  {sedangDiproses(order) && (
+                    <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sky-900">
+                      <p className="flex items-center gap-2 text-sm font-semibold">
+                        <Hourglass className="h-4 w-4 flex-none" />
+                        Sudah dikirim ke Xendit — menunggu kepastian
+                      </p>
+                      <p className="mt-1 pl-6 text-xs leading-relaxed">
+                        JANGAN kirim ulang. Cari nomor referensi di dashboard Xendit, lalu tutup
+                        baris ini lewat &ldquo;Catat pengembalian&rdquo; setelah dipastikan.
+                      </p>
+                      <p className="mt-1.5 pl-6 text-[11px] text-sky-700">
+                        Ref {order.refundReference ?? '—'}
+                        {order.refundBy ? ` · dimulai ${order.refundBy}` : ''}
+                        {order.refundAt ? ` · ${formatTanggal(order.refundAt)}` : ''}
+                      </p>
+                    </div>
+                  )}
+
+                  {!terbuka ? (
+                    <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+                      {/* Tombol otomatis HANYA untuk e-wallet & sejenisnya. Transfer bank tak bisa
+                          dikembalikan lewat Xendit sama sekali — menampilkan tombolnya di sana
+                          berarti menawarkan sesuatu yang pasti gagal. */}
+                      {bisaOtomatis(order) && !sedangDiproses(order) && (
+                        <button
+                          type="button"
+                          onClick={() => void kembalikanOtomatis(order)}
+                          disabled={autoId !== null}
+                          className="inline-flex items-center gap-2 rounded-lg bg-sky-700 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {autoId === order.orderId && <Loader2 className="h-4 w-4 animate-spin" />}
+                          {autoId === order.orderId ? 'Mengembalikan…' : 'Kembalikan lewat Xendit'}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => buka(order)}
+                        className="rounded-lg bg-emerald-700 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800"
+                      >
+                        Catat pengembalian
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3.5">
+                      <label className="block text-xs font-semibold text-gray-600">
+                        Nominal yang dikembalikan
+                        <input
+                          type="number"
+                          min={0}
+                          value={amount}
+                          onChange={(e) => setAmount(e.target.value)}
+                          className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal text-gray-900"
+                        />
+                      </label>
+                      <p className="mt-1 text-[11px] text-gray-500">
+                        Kurangi bila biaya transfer dipotong. Nilai pesanan{' '}
+                        {formatRupiah(order.totalAmount)}.
+                      </p>
+
+                      <label className="mt-3 block text-xs font-semibold text-gray-600">
+                        Catatan (wajib)
+                        <textarea
+                          rows={2}
+                          value={note}
+                          onChange={(e) => setNote(e.target.value)}
+                          placeholder="Bank & no. rekening tujuan, atau nomor referensi transfer"
+                          className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal text-gray-900"
+                        />
+                      </label>
+
+                      {formError && (
+                        <p role="alert" className="mt-2 text-xs text-red-600">
+                          {formError}
+                        </p>
+                      )}
+
+                      <div className="mt-3 flex flex-wrap justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setOpenId(null)}
+                          className="rounded-lg border border-gray-300 bg-white px-3.5 py-2 text-sm font-semibold text-gray-600 transition hover:bg-gray-100"
+                        >
+                          Batal
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void tutup(order.orderId, 'TIDAK_PERLU')}
+                          disabled={saving}
+                          className="rounded-lg border border-gray-300 bg-white px-3.5 py-2 text-sm font-semibold text-gray-600 transition hover:bg-gray-100 disabled:opacity-50"
+                        >
+                          Tidak perlu dikembalikan
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void tutup(order.orderId, 'SUDAH_REFUND')}
+                          disabled={saving}
+                          className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:opacity-50"
+                        >
+                          {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+                          Sudah saya kirim
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
+    </>
+  )
+}

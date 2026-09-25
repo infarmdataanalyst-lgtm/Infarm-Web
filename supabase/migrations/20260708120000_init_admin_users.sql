@@ -22,17 +22,31 @@ comment on table public.admin_users is
 alter table public.admin_users enable row level security;
 -- (Sengaja tanpa policy: anon/browser tak boleh baca/tulis; semua akses lewat server.)
 
--- === Seed admin awal ===
--- Username: admin@infarm.id
--- Password: admin123   <-- GANTI setelah login pertama (lihat cara ganti di bawah).
-insert into public.admin_users (username, password_hash, name)
-values (
-  'admin@infarm.id',
-  '9ea6b945bf0bd73c96d54e0b33c90ca9:576a7d92df207d657e2a8bc06ec81abedeab0c64f3da88f1e414592b2aa7b6d57a895ab822255a20a6148adab00dce4e169a22155a2a54568aad9d44a2cf024d',
-  'Admin Infarm'
-)
+-- === Seed admin awal — SENGAJA TANPA PASSWORD YANG BISA DIPAKAI ===
+--
+-- Versi awal file ini men-seed akun ini dengan password default yang lemah beserta hash-nya, keduanya
+-- tertulis polos di sini dan ikut ter-commit ke Git (temuan SEC-011 / audit 07-24 K4). Artinya
+-- siapa pun yang pernah memegang salinan repo ini memegang kredensial back-office yang berfungsi
+-- penuh: kelola produk, order, harga, dan stok. Kredensial itu sudah dirotasi di database dan
+-- DIBLOKIR PERMANEN di lapisan aplikasi (lihat KNOWN_COMPROMISED_HASHES di
+-- src/lib/mock-db/admins.ts) — hash lamanya tidak akan pernah diterima lagi walaupun muncul
+-- kembali dari backup atau dari riwayat Git.
+--
+-- Karena itu seed di bawah membuat akun dalam keadaan NONAKTIF dengan password_hash yang secara
+-- format tidak mungkin lolos verifikasi ('DISABLED' tak punya pemisah ':', jadi verifyPassword
+-- menolaknya lebih dulu). Instalasi baru tidak mendapat kredensial default apa pun — passwordnya
+-- harus diberikan sendiri oleh operator lewat langkah di bawah.
+--
+-- ATURAN: jangan pernah menaruh password (plaintext MAUPUN hash-nya) di file yang ikut ter-commit.
+insert into public.admin_users (username, password_hash, name, is_active)
+values ('admin@infarm.id', 'DISABLED', 'Admin Infarm', false)
 on conflict (username) do nothing;
 
--- === Cara ganti password (jalankan di mesin dev, lalu UPDATE hash-nya) ===
---   node -e "const{scryptSync,randomBytes}=require('node:crypto');const s=randomBytes(16);const h=scryptSync('PASSWORD_BARU',s,64);console.log(s.toString('hex')+':'+h.toString('hex'))"
---   update public.admin_users set password_hash = '<hash_baru>' where username = 'admin@infarm.id';
+-- === Mengaktifkan akun / mengganti password (dijalankan manual, JANGAN di-commit) ===
+-- 1. Di mesin dev, buat hash dari password kuat yang kamu pilih sendiri:
+--      node -e "const{scryptSync,randomBytes}=require('node:crypto');const s=randomBytes(16);const h=scryptSync('PASSWORD_BARU',s,64);console.log(s.toString('hex')+':'+h.toString('hex'))"
+-- 2. Tempel HASH-nya saja di SQL Editor Supabase (passwordnya jangan ikut berpindah):
+--      update public.admin_users
+--      set password_hash = '<hash_baru>', is_active = true
+--      where username = 'admin@infarm.id';
+-- 3. Simpan passwordnya di password manager — bukan di repo, catatan, atau chat.

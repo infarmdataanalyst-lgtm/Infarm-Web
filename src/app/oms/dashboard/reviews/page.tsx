@@ -8,7 +8,8 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
-import { Star, MessageSquare, Clock4 } from 'lucide-react'
+import Link from 'next/link'
+import { Star, MessageSquare, Clock4, Plus, Trash2 } from 'lucide-react'
 import OmsHeader from '@/components/oms/OmsHeader'
 
 // === Tipe Data ===
@@ -25,6 +26,9 @@ type OmsReview = {
   date: string // ISO datetime
   reply?: string // balasan admin
   visible: boolean // true = tampil di halaman produk ecommerce
+  // 'internal' = dimasukkan admin lewat OMS (pengisi katalog), bukan dikirim pembeli.
+  // Penanda ini HANYA tampil di layar ini; storefront memperlakukan keduanya sama.
+  source: 'buyer' | 'internal'
 }
 
 type MediaFilter = 'all' | 'with-photo' | 'text-only'
@@ -65,6 +69,11 @@ export default function ReviewsPage() {
   // Moderasi: balas inline
   const [replyingId, setReplyingId] = useState<string | null>(null)
   const [replyDraft, setReplyDraft] = useState('')
+
+  // Hapus ulasan internal (dikonfirmasi lewat dialog, bukan langsung)
+  const [deleteTarget, setDeleteTarget] = useState<OmsReview | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   // Daftar produk unik untuk dropdown filter
   const productOptions = useMemo(
@@ -131,6 +140,31 @@ export default function ReviewsPage() {
     }).catch(() => {})
   }
 
+  // Menghapus satu ulasan internal. Server menolak id ulasan pembeli, jadi tombolnya yang
+  // disembunyikan di sini murni soal tampilan — bukan satu-satunya penjaga.
+  async function confirmDelete() {
+    if (!deleteTarget) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      const res = await fetch('/api/reviews/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: [deleteTarget.id] }),
+      })
+      const data = (await res.json().catch(() => ({}))) as { deleted?: number; error?: string }
+      if (!res.ok || !data.deleted) {
+        throw new Error(data.error ?? 'Ulasan tidak terhapus.')
+      }
+      setReviews((prev) => prev.filter((r) => r.id !== deleteTarget.id))
+      setDeleteTarget(null)
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Gagal menghapus ulasan.')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   function toggleVisible(id: string) {
     const current = reviews.find((r) => r.id === id)
     if (!current) return
@@ -147,15 +181,24 @@ export default function ReviewsPage() {
 
   return (
     <>
-      <OmsHeader title="Ulasan" notificationCount={3} />
+      <OmsHeader title="Ulasan" />
 
       <main className="p-6 md:p-8">
         {/* ===================== LANTAI 0: Header & Filter Produk ===================== */}
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900">Manajemen Ulasan</h2>
-          <p className="mt-1 text-sm text-gray-500">
-            Pantau reputasi toko dan kualitas produk dari e-commerce Infarm secara real-time.
-          </p>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900">Manajemen Ulasan</h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Pantau reputasi toko dan kualitas produk dari e-commerce Infarm secara real-time.
+            </p>
+          </div>
+          <Link
+            href="/oms/dashboard/reviews/baru"
+            className="inline-flex flex-none items-center justify-center gap-2 rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-800"
+          >
+            <Plus className="h-4 w-4" />
+            Tambah Ulasan
+          </Link>
         </div>
 
         <div className="mt-4 max-w-md">
@@ -270,7 +313,15 @@ export default function ReviewsPage() {
                           <span className="flex h-9 w-9 flex-none items-center justify-center rounded-full bg-emerald-100 text-sm font-bold text-emerald-700">
                             {review.customerName.charAt(0)}
                           </span>
-                          <span className="font-medium text-gray-900">{review.customerName}</span>
+                          <div className="min-w-0">
+                            <span className="block font-medium text-gray-900">{review.customerName}</span>
+                            {/* Penanda ulasan pengisi katalog — hanya terlihat admin di layar ini */}
+                            {review.source === 'internal' && (
+                              <span className="mt-0.5 inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                                Internal
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </td>
                       {/* Produk */}
@@ -335,6 +386,19 @@ export default function ReviewsPage() {
                       {/* Aksi */}
                       <td className="px-5 py-4">
                         <div className="flex flex-col gap-2.5">
+                          {review.source === 'internal' && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDeleteError(null)
+                                setDeleteTarget(review)
+                              }}
+                              className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-600 transition hover:bg-red-50"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Hapus
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => openReply(review)}
@@ -360,6 +424,43 @@ export default function ReviewsPage() {
           </div>
         </section>
       </main>
+
+      {/* === Dialog konfirmasi hapus ulasan internal === */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => (deleting ? null : setDeleteTarget(null))}
+          />
+          <div className="relative w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+            <h3 className="text-base font-bold text-gray-900">Hapus ulasan internal?</h3>
+            <p className="mt-2 text-sm text-gray-600">
+              Ulasan <span className="font-semibold">{deleteTarget.customerName}</span> pada produk{' '}
+              {deleteTarget.productName} akan dihapus permanen, dan rata-rata rating produk itu ikut
+              berubah. Tindakan ini tidak bisa dibatalkan.
+            </p>
+            {deleteError && <p className="mt-3 text-xs font-medium text-red-600">{deleteError}</p>}
+            <div className="mt-5 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setDeleteTarget(null)}
+                disabled={deleting}
+                className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-600 transition hover:bg-gray-50 disabled:opacity-60"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={confirmDelete}
+                disabled={deleting}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-60"
+              >
+                {deleting ? 'Menghapus…' : 'Hapus'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }

@@ -5,11 +5,16 @@
 // (API Route) tidak perlu tahu sumber datanya. Di-back oleh Supabase
 // (tabel public.product_combos + public.product_combo_items).
 //
-// SERVER-ONLY: memakai createAdminClient() (service_role) yang menembus RLS.
-// Tabel combo terkunci dari publik → semua baca/tulis WAJIB lewat server.
+// SERVER-ONLY. Dua jenis client, dan pemilihannya disengaja (SEC-031):
+//   - readActiveCombosPublic() → createPublicClient() (anon, TUNDUK RLS). Khusus STOREFRONT.
+//     Policy "Public dapat membaca combo aktif" (migration 20260907120000) hanya meloloskan
+//     is_active = true, termasuk isi paketnya, jadi satu bug filter di kode tak lagi cukup untuk
+//     membocorkan paket yang sengaja dinonaktifkan — database ikut menahan.
+//   - Selebihnya → createAdminClient() (service_role, menembus RLS). OMS butuh baris NONAKTIF, dan
+//     orders/create butuh baca otoritatif yang tak bergantung pada policy.
 // Jangan diimpor dari komponen 'use client'.
 
-import { createAdminClient } from '@/lib/supabase/server'
+import { createAdminClient, createPublicClient } from '@/lib/supabase/server'
 import type { ProductCombo, ComboItem, ComboInput } from '@/types/combo'
 
 // === Pemetaan baris DB <-> ProductCombo ===
@@ -31,6 +36,12 @@ type ComboItemRow = {
   name: string
   unit_price: number
   quantity: number
+  // Opsional: kolom baru (migration 20260918120000). Lingkungan yang belum menjalankannya
+  // mengembalikan baris tanpa field ini — dianggap "belum ada produk utama", bukan error.
+  is_primary?: boolean | null
+  // Opsional: kolom baru (migration 20260918140000). NULL/absen = harga paket produk ini belum
+  // dipecah — pembagian proporsional lama yang dipakai.
+  deal_price?: number | null
 }
 
 function rowToItem(row: ComboItemRow): ComboItem {
@@ -39,6 +50,8 @@ function rowToItem(row: ComboItemRow): ComboItem {
     name: row.name,
     unitPrice: row.unit_price,
     quantity: row.quantity,
+    isPrimary: row.is_primary === true,
+    dealPrice: typeof row.deal_price === 'number' ? row.deal_price : null,
   }
 }
 
@@ -61,7 +74,50 @@ function itemsToRows(comboId: string, items: ComboItem[]) {
     name: item.name,
     unit_price: item.unitPrice,
     quantity: item.quantity,
+    is_primary: item.isPrimary,
+    deal_price: item.dealPrice,
   }))
+}
+
+// Menyisipkan isi paket, dengan satu jaring pengaman: bila kolom BARU belum ada di database
+// (migration 20260918120000 / 20260918140000 belum dijalankan di lingkungan ini), ulangi tanpa
+// kolom-kolom itu.
+//
+// Kenapa repot: tanpa ini, satu lingkungan yang ketinggalan migration membuat seluruh simpan/edit
+// paket di OMS gagal — kerusakan yang jauh lebih besar daripada kehilangan penanda produk utama
+// (paket kembali tayang di semua anggotanya) atau harga per produk (harga paket dibagi proporsional
+// seperti dulu). Keduanya perilaku lama yang masih benar, bukan data rusak.
+const KOLOM_BARU = ['is_primary', 'deal_price']
+
+async function insertComboItems(
+  supabase: ReturnType<typeof createAdminClient>,
+  comboId: string,
+  items: ComboItem[],
+): Promise<{ message: string } | null> {
+  const rows = itemsToRows(comboId, items)
+  const { error } = await supabase.from('product_combo_items').insert(rows)
+  if (!error) return null
+
+  // 42703 = undefined_column. Nama kolomnya dicocokkan juga agar kolom lain yang hilang tidak ikut
+  // ditelan diam-diam oleh percobaan ulang ini.
+  const kolomBelumAda =
+    error.code === '42703' && KOLOM_BARU.some((kolom) => error.message.includes(kolom))
+  if (!kolomBelumAda) return { message: error.message }
+
+  console.warn(
+    `Kolom baru product_combo_items belum ada (${error.message}) — jalankan migration ` +
+      '20260918120000 & 20260918140000. Paket disimpan dengan perilaku lama.',
+  )
+  const { error: ulangError } = await supabase.from('product_combo_items').insert(
+    rows.map((row) => ({
+      combo_id: row.combo_id,
+      product_id: row.product_id,
+      name: row.name,
+      unit_price: row.unit_price,
+      quantity: row.quantity,
+    })),
+  )
+  return ulangError ? { message: ulangError.message } : null
 }
 
 // === Baca ===
@@ -81,6 +137,73 @@ export async function readCombos(): Promise<ProductCombo[]> {
   }
 
   return (data as ComboRow[]).map(rowToCombo)
+}
+
+// Membaca combo AKTIF beserta itemnya untuk STOREFRONT, lewat anon key (tunduk RLS, SEC-031).
+//
+// Dua lapis yang sengaja bertumpuk: policy database hanya meloloskan is_active = true (isi paket
+// mengikuti induknya lewat EXISTS), dan query ini tetap memfilter is_active sendiri. Kalau salah
+// satunya kelak berubah, yang lain masih menahan paket nonaktif.
+//
+// Array kosong bila error — termasuk bila policy/grant belum ada di sebuah lingkungan. Storefront
+// lalu tampil tanpa rekomendasi paket (bukan crash); penyebabnya tercatat di log server.
+export async function readActiveCombosPublic(): Promise<ProductCombo[]> {
+  const supabase = createPublicClient()
+  const { data, error } = await supabase
+    .from('product_combos')
+    .select('*, product_combo_items(*)')
+    .eq('is_active', true)
+    .order('created_at', { ascending: false })
+
+  if (error) {
+    console.error('Gagal membaca combo aktif (anon) dari Supabase:', error.message)
+    return []
+  }
+
+  return (data as ComboRow[]).map(rowToCombo)
+}
+
+// Jumlah paket TERJUAL per combo, dihitung dari order_items.combo_id.
+//
+// ── Basis hitung: HANYA pesanan LUNAS ──
+// Sengaja berbeda dari aggregateSales (yang menyuplai "N terjual" produk dan menghitung semua
+// pesanan kecuali Dibatalkan, termasuk yang tak pernah dibayar). Keputusan pemilik proyek
+// 2026-09-07: angka combo dibuat jujur sejak awal, tanpa ikut mengubah angka produk yang sudah
+// telanjur tampil di storefront. Karena itu kolomnya di OMS WAJIB berlabel "Terjual (Lunas)" —
+// tanpa label, dua angka di layar yang sama jadi tak bisa dibandingkan tanpa ada yang tahu kenapa.
+//
+// Satu pesanan dihitung SATU paket: pencocokan combo di orders/create menuntut kuantitas persis
+// sama dengan isi paket, jadi belum ada cara membeli dua set paket dalam satu pesanan.
+//
+// Map kosong bila kolom combo_id belum ada (migration 20260907130000 belum dijalankan) — halaman
+// OMS menampilkannya sebagai 0, bukan error.
+export async function getComboSalesCount(): Promise<Record<string, number>> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('order_items')
+    .select('combo_id, order_id, orders!inner(status_pembayaran)')
+    .not('combo_id', 'is', null)
+    .eq('orders.status_pembayaran', 'PAID')
+
+  if (error) {
+    // 42703 = kolom combo_id belum ada. Bukan kegagalan yang perlu meledak: laporan penjualan
+    // paket memang belum bisa dihitung sampai migration dijalankan.
+    console.error('Gagal menghitung penjualan combo:', error.message)
+    return {}
+  }
+
+  // Pasangan (combo, pesanan) yang unik — satu pesanan tak boleh terhitung berkali-kali hanya
+  // karena paketnya berisi beberapa produk.
+  const seen = new Set<string>()
+  const counts: Record<string, number> = {}
+  for (const row of (data ?? []) as { combo_id: string | null; order_id: string }[]) {
+    if (!row.combo_id) continue
+    const key = `${row.combo_id}::${row.order_id}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    counts[row.combo_id] = (counts[row.combo_id] ?? 0) + 1
+  }
+  return counts
 }
 
 // Membaca satu combo berdasarkan id (beserta itemnya). null bila tidak ditemukan.
@@ -120,9 +243,7 @@ export async function createCombo(input: ComboInput): Promise<ProductCombo> {
     throw new Error(`Gagal menyimpan combo: ${comboError?.message ?? 'tidak diketahui'}`)
   }
 
-  const { error: itemsError } = await supabase
-    .from('product_combo_items')
-    .insert(itemsToRows(combo.id, input.items))
+  const itemsError = await insertComboItems(supabase, combo.id, input.items)
 
   if (itemsError) {
     // Rollback manual: hapus combo agar tidak tertinggal tanpa item (cascade ikut bersih)
@@ -167,9 +288,7 @@ export async function updateCombo(id: string, input: ComboInput): Promise<Produc
     return null
   }
 
-  const { error: insError } = await supabase
-    .from('product_combo_items')
-    .insert(itemsToRows(id, input.items))
+  const insError = await insertComboItems(supabase, id, input.items)
   if (insError) {
     console.error('Gagal menyisipkan item combo baru:', insError.message)
     return null

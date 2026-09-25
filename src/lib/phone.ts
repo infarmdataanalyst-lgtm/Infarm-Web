@@ -18,6 +18,19 @@ export function isValidPhone(raw: string): boolean {
   return n.startsWith('08') && n.length >= PHONE_MIN_LENGTH && n.length <= PHONE_MAX_LENGTH
 }
 
+// Mengubah nomor lokal '08xxxxxxxxxx' menjadi format internasional E.164 '+628xxxxxxxxx'.
+//
+// Dibutuhkan API pihak ketiga yang mengirim notifikasi (mis. `customer.mobile_number` di Xendit
+// Invoice untuk notifikasi WhatsApp) — mereka menolak nomor berformat lokal.
+// String kosong bila nomornya tak valid; pemanggil memperlakukannya sebagai "tak ada nomor"
+// daripada mengirim nilai yang pasti ditolak.
+export function toE164Phone(raw: string): string {
+  const n = normalizePhone(raw)
+  if (!isValidPhone(n)) return ''
+  // '08…' → '+628…' (buang satu angka 0 di depan, ganti kode negara)
+  return `+62${n.slice(1)}`
+}
+
 // Mengembalikan pesan error spesifik untuk sebuah nomor, atau '' bila valid.
 // Urutan cek: kosong → tidak diawali 0 → tidak diawali 08 → terlalu pendek → terlalu panjang.
 export function getPhoneError(raw: string): string {

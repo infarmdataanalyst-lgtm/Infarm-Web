@@ -11,7 +11,7 @@ import Link from 'next/link'
 import { Plus, Pencil, Power, PowerOff, Trash2, Boxes, CheckCircle2 } from 'lucide-react'
 import OmsHeader from '@/components/oms/OmsHeader'
 import { formatRupiah } from '@/lib/format'
-import { calcNormalPrice, type ProductCombo } from '@/types/combo'
+import { calcNormalPrice, primaryItem, type ProductCombo } from '@/types/combo'
 
 type StatusFilter = 'all' | 'active' | 'inactive'
 
@@ -21,15 +21,19 @@ const FILTERS: { key: StatusFilter; label: string }[] = [
   { key: 'inactive', label: 'Nonaktif' },
 ]
 
-// Ringkas daftar nama produk: maksimal 3 nama, sisanya jadi "+N lainnya".
+// Ringkas daftar nama produk: produk utama di depan, maksimal 3 nama, sisanya jadi "+N lainnya".
 function summarizeProducts(combo: ProductCombo): string {
-  const names = combo.items.map((i) => i.name)
+  const urut = [...combo.items].sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary))
+  const names = urut.map((i) => i.name)
   if (names.length <= 3) return names.join(', ')
   return `${names.slice(0, 3).join(', ')} +${names.length - 3} lainnya`
 }
 
 export default function PaketComboPage() {
   const [combos, setCombos] = useState<ProductCombo[]>([])
+  // Jumlah paket terjual per combo, HANYA dari pesanan Lunas (lihat getComboSalesCount).
+  // Kosong bila migration combo_id belum dijalankan → kolomnya menampilkan 0, bukan error.
+  const [salesCount, setSalesCount] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<StatusFilter>('all')
 
@@ -46,9 +50,10 @@ export default function PaketComboPage() {
     let active = true
     fetch('/api/combos/list')
       .then((res) => res.json())
-      .then((data: { combos?: ProductCombo[] }) => {
+      .then((data: { combos?: ProductCombo[]; salesCount?: Record<string, number> }) => {
         if (!active) return
         setCombos(data.combos ?? [])
+        setSalesCount(data.salesCount ?? {})
       })
       .catch(() => {})
       .finally(() => {
@@ -123,7 +128,7 @@ export default function PaketComboPage() {
 
   return (
     <>
-      <OmsHeader title="Paket & Combo" notificationCount={3} />
+      <OmsHeader title="Paket & Combo" />
       <div className="p-6 md:p-8">
         {/* === Header Halaman === */}
         <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -168,14 +173,22 @@ export default function PaketComboPage() {
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead className="border-b border-gray-200 bg-gray-50 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                  {/* Lebar kolom sengaja ditetapkan: isi "Produk Tergabung" jauh lebih panjang
+                      daripada kolom lain, dan tanpa patokan ini browser memberinya sisa ruang
+                      paling sedikit sehingga nama produk menumpuk ke bawah. Kolom angka & aksi
+                      dikunci sempit supaya kelebihannya jatuh ke kolom produk. */}
                   <tr>
-                    <th className="px-5 py-3.5">Nama Combo</th>
-                    <th className="px-5 py-3.5">Produk Tergabung</th>
-                    <th className="px-5 py-3.5">Harga Normal</th>
-                    <th className="px-5 py-3.5">Harga Combo</th>
-                    <th className="px-5 py-3.5">Hemat</th>
-                    <th className="px-5 py-3.5">Status</th>
-                    <th className="px-5 py-3.5 text-right">Aksi</th>
+                    <th className="w-[13%] px-5 py-3.5">Nama Combo</th>
+                    <th className="w-[38%] px-5 py-3.5">Produk Tergabung</th>
+                    <th className="whitespace-nowrap px-4 py-3.5">Harga Normal</th>
+                    <th className="whitespace-nowrap px-4 py-3.5">Harga Combo</th>
+                    <th className="whitespace-nowrap px-4 py-3.5">Hemat</th>
+                    {/* Label "Lunas" WAJIB: basisnya sengaja beda dari "N terjual" produk, yang
+                        menghitung semua pesanan kecuali Dibatalkan. Tanpa label ini dua angka di
+                        OMS jadi tak bisa dibandingkan tanpa ada yang tahu kenapa. */}
+                    <th className="w-16 px-2 py-3.5 text-center">Terjual (Lunas)</th>
+                    <th className="w-20 px-2 py-3.5">Status</th>
+                    <th className="w-28 px-4 py-3.5 text-right">Aksi</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -188,14 +201,36 @@ export default function PaketComboPage() {
                         <td className="px-5 py-4">
                           <span className="font-medium text-gray-900">{combo.name}</span>
                         </td>
-                        <td className="px-5 py-4 text-gray-500">{summarizeProducts(combo)}</td>
-                        <td className="px-5 py-4 text-gray-400 line-through">{formatRupiah(normal)}</td>
-                        <td className="px-5 py-4 font-semibold text-gray-900">{formatRupiah(combo.comboPrice)}</td>
-                        <td className="px-5 py-4">
+                        <td className="px-5 py-4 text-gray-500">
+                          {summarizeProducts(combo)}
+                          {/* Di halaman produk mana paket ini muncul — pertanyaan pertama yang
+                              ditanyakan begitu cross-sell tak lagi dua arah. */}
+                          <span className="mt-1 block text-xs">
+                            {primaryItem(combo) ? (
+                              <span className="text-emerald-700">
+                                Tayang di: {primaryItem(combo)?.name}
+                              </span>
+                            ) : (
+                              <span className="text-amber-600">
+                                Belum ada produk utama — tayang di semua produknya
+                              </span>
+                            )}
+                          </span>
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-4 text-gray-400 line-through">
+                          {formatRupiah(normal)}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-4 font-semibold text-gray-900">
+                          {formatRupiah(combo.comboPrice)}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-4">
                           <span className="font-semibold text-emerald-700">{formatRupiah(savings)}</span>
                           {percent > 0 && <span className="ml-1 text-xs text-emerald-600">({percent}%)</span>}
                         </td>
-                        <td className="px-5 py-4">
+                        <td className="px-2 py-4 text-center font-semibold text-gray-900">
+                          {salesCount[combo.id] ?? 0}
+                        </td>
+                        <td className="px-2 py-4">
                           {combo.isActive ? (
                             <span className="inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
                               Aktif
@@ -206,32 +241,37 @@ export default function PaketComboPage() {
                             </span>
                           )}
                         </td>
-                        <td className="px-5 py-4">
-                          <div className="flex items-center justify-end gap-2">
+                        {/* Aksi ikon-saja: tiga tombol berlabel teks memakan lebar yang lebih
+                            dibutuhkan kolom produk. Tiap tombol tetap punya aria-label (pembaca
+                            layar) + title (tooltip), jadi yang hilang cuma tulisannya. */}
+                        <td className="px-4 py-4">
+                          <div className="flex items-center justify-end gap-1.5">
                             <Link
                               href={`/oms/dashboard/paket-combo/${combo.id}/edit`}
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50"
+                              aria-label={`Edit ${combo.name}`}
+                              title="Edit combo"
+                              className="inline-flex items-center rounded-lg border border-emerald-200 bg-white p-2 text-emerald-700 transition hover:bg-emerald-50"
                             >
-                              <Pencil className="h-3.5 w-3.5" />
-                              Edit
+                              <Pencil className="h-4 w-4" />
                             </Link>
                             <button
                               type="button"
                               onClick={() => toggleActive(combo)}
                               disabled={togglingId === combo.id}
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-600 transition hover:bg-gray-50 disabled:opacity-60"
+                              aria-label={`${combo.isActive ? 'Nonaktifkan' : 'Aktifkan'} ${combo.name}`}
+                              className="inline-flex items-center rounded-lg border border-gray-200 bg-white p-2 text-gray-600 transition hover:bg-gray-50 disabled:opacity-60"
                               title={combo.isActive ? 'Nonaktifkan combo' : 'Aktifkan combo'}
                             >
-                              {combo.isActive ? <PowerOff className="h-3.5 w-3.5" /> : <Power className="h-3.5 w-3.5" />}
-                              {togglingId === combo.id ? '…' : combo.isActive ? 'Nonaktifkan' : 'Aktifkan'}
+                              {combo.isActive ? <PowerOff className="h-4 w-4" /> : <Power className="h-4 w-4" />}
                             </button>
                             <button
                               type="button"
                               onClick={() => setDeleteTarget(combo)}
                               aria-label={`Hapus ${combo.name}`}
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-red-600 transition hover:bg-red-50"
+                              title="Hapus combo"
+                              className="inline-flex items-center rounded-lg border border-red-200 bg-white p-2 text-red-600 transition hover:bg-red-50"
                             >
-                              <Trash2 className="h-3.5 w-3.5" />
+                              <Trash2 className="h-4 w-4" />
                             </button>
                           </div>
                         </td>

@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
+import { Check } from 'lucide-react'
 import type { CartLineItem } from '@/types/cart'
 import { formatRupiah } from '@/lib/format'
 
@@ -25,6 +26,20 @@ export default function CartItemRow({
   onRemove: (productId: string, variantId?: string) => void
 }) {
   const { productId, name, imageUrl, price, originalPrice, quantity, selected, variantId, variantName } = item
+  // Minimum pembelian baris ini (dari data produk). 1 = tanpa batasan.
+  const minQty = item.minOrderQty > 1 ? item.minOrderQty : 1
+
+  // Baris anggota paket → tampil di dalam CartComboGroup, TANPA kontrol sendiri. Centang, jumlah,
+  // dan hapus berlaku untuk seluruh paket dan diatur dari kepala paketnya: mengubah satu anggota
+  // membuat isi keranjang tak lagi cocok dengan paket di database, dan server menolak pesanannya.
+  const isCombo = Boolean(item.comboId)
+
+  // Stok tak cukup untuk kuantitas baris ini. Sebelum ini keranjang tak menampilkan stok sama
+  // sekali dan tombol "+" tak punya batas — pembeli baru tahu saat checkout ditolak 409.
+  const stock = typeof item.stock === 'number' ? item.stock : null
+  // Anggota paket: kekurangan stok ditampilkan di kepala paket ("cukup untuk N paket").
+  const stokKurang = !isCombo && stock !== null && stock < quantity
+  const stokMentok = stock !== null && quantity >= stock
 
   // State teks lokal agar user bisa mengetik bebas (mis. mengosongkan field lalu ketik "10").
   // Disinkronkan bila quantity dari cookie berubah (mis. tombol +/-).
@@ -33,24 +48,30 @@ export default function CartItemRow({
     setDraft(String(quantity))
   }, [quantity])
 
-  // Commit nilai ketikan → set jumlah. Kosong/0/invalid → kembalikan ke 1 (jangan hapus item).
+  // Commit nilai ketikan → set jumlah. Kosong/0/invalid/di bawah minimum → kembalikan ke minQty
+  // (jangan hapus item, dan jangan biarkan ketikan menembus batas minimum pembelian).
   function commitDraft() {
     const parsed = parseInt(draft, 10)
-    const next = Number.isNaN(parsed) || parsed < 1 ? 1 : parsed
+    const next = Number.isNaN(parsed) || parsed < minQty ? minQty : parsed
     setDraft(String(next))
     if (next !== quantity) onSetQuantity(productId, next, variantId)
   }
 
   return (
     <div className="flex gap-3 bg-white px-4 py-4">
-      {/* Checkbox pilih item */}
-      <input
-        type="checkbox"
-        checked={selected}
-        onChange={() => onToggleSelect(productId, variantId)}
-        aria-label={`Pilih ${name}`}
-        className="mt-1 h-5 w-5 shrink-0 accent-brand-primary"
-      />
+      {/* Checkbox pilih item — box putih + border abu (unchecked), box hijau + centang putih (checked) */}
+      {!isCombo && (
+      <span className="relative mt-1 inline-flex h-5 w-5 shrink-0 items-center justify-center">
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={() => onToggleSelect(productId, variantId)}
+          aria-label={`Pilih ${name}`}
+          className="peer h-5 w-5 cursor-pointer appearance-none rounded border border-zinc-300 bg-white checked:border-brand-primary checked:bg-brand-primary"
+        />
+        <Check className="pointer-events-none absolute h-3.5 w-3.5 text-white opacity-0 peer-checked:opacity-100" strokeWidth={3} />
+      </span>
+      )}
 
       {/* Foto produk — klik menuju halaman detail produk */}
       <Link
@@ -73,6 +94,20 @@ export default function CartItemRow({
           <h3 className="line-clamp-2 text-sm leading-snug text-zinc-800">{name}</h3>
         </Link>
 
+        {/* Label minimum pembelian — hanya bila produk memang dibatasi */}
+        {minQty > 1 && (
+          <span className="mt-1 w-fit rounded bg-orange-50 px-2 py-0.5 text-xs font-medium text-orange-700">
+            Min. beli {minQty} pcs
+          </span>
+        )}
+
+        {/* Peringatan stok — muncul hanya bila stok benar-benar tak mencukupi baris ini */}
+        {stokKurang && (
+          <span className="mt-1 w-fit rounded bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700">
+            Stok tersisa {stock}, kurangi jumlahnya
+          </span>
+        )}
+
         {/* Nama varian terpilih (bila produk bervarian) */}
         {variantName && (
           <span className="mt-1 w-fit rounded bg-brand-surface px-2 py-0.5 text-xs font-medium text-brand-primary">
@@ -82,13 +117,19 @@ export default function CartItemRow({
 
         {/* Harga jual (merah) + harga coret */}
         <div className="mt-1 flex items-baseline gap-2">
-          <span className="text-base font-bold text-red-500">{formatRupiah(price)}</span>
+          <span className="text-base font-bold text-brand-primary">{formatRupiah(price)}</span>
           {originalPrice > price && (
             <span className="text-xs text-zinc-400 line-through">{formatRupiah(originalPrice)}</span>
           )}
         </div>
 
-        {/* Baris bawah: tombol hapus (kiri) + pengatur jumlah (kanan) */}
+        {/* Anggota paket: jumlahnya saja — mengikuti jumlah paket di kepala paket */}
+        {isCombo ? (
+          <div className="mt-auto flex justify-end pt-2">
+            <span className="text-sm font-semibold text-zinc-600">×{quantity}</span>
+          </div>
+        ) : (
+        /* Baris bawah: tombol hapus (kiri) + pengatur jumlah (kanan) */
         <div className="mt-auto flex items-center justify-between pt-2">
           <button
             type="button"
@@ -104,6 +145,8 @@ export default function CartItemRow({
             <button
               type="button"
               onClick={() => onDecrement(productId, variantId)}
+              // Kunci saat sudah menyentuh batas minimum pembelian produk ini
+              disabled={quantity <= minQty}
               aria-label="Kurangi jumlah"
               className="px-3 py-1 text-lg leading-none text-zinc-600 transition active:scale-95 disabled:opacity-40"
             >
@@ -127,13 +170,16 @@ export default function CartItemRow({
             <button
               type="button"
               onClick={() => onIncrement(productId, variantId)}
+              // Terkunci saat kuantitas sudah menyentuh stok tersedia.
+              disabled={stokMentok}
               aria-label="Tambah jumlah"
-              className="px-3 py-1 text-lg leading-none text-zinc-600 transition active:scale-95"
+              className="px-3 py-1 text-lg leading-none text-zinc-600 transition active:scale-95 disabled:opacity-40"
             >
               +
             </button>
           </div>
         </div>
+        )}
       </div>
     </div>
   )

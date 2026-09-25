@@ -15,14 +15,16 @@
 //   'reviews'  → review create/reply/visibility
 //   'combos'   → combo create/update/delete/toggle
 //   'sales'    → order create/cancel (jumlah terjual berubah)
+//   'settings' → admin menyimpan pengaturan toko (mis. minimum total belanja)
 
 import { unstable_cache } from 'next/cache'
 import { readProducts, getProductById } from './products'
-import { getReviewsByProduct, getProductRatingSummary } from './reviews'
-import { readCombos } from './combos'
+import { getReviewsByProduct, getProductRatingSummary, getRatingSummaryByProduct } from './reviews'
+import { readActiveCombosPublic } from './combos'
 import { getSalesCountByProduct } from './orders'
 import { getVariantsByProduct } from './variants'
-import type { Product } from '@/types/product'
+import { getMinOrderAmount } from './settings'
+import type { Product, CatalogCardProduct } from '@/types/product'
 
 // Durasi cache storefront (detik). Data e-commerce tak berubah tiap detik; 30s cukup segar.
 const REVALIDATE = 30
@@ -33,8 +35,9 @@ export const getCachedProducts = unstable_cache(readProducts, ['storefront-produ
   tags: ['products'],
 })
 
-// Combo aktif (rekomendasi paket di detail produk).
-export const getCachedCombos = unstable_cache(readCombos, ['storefront-combos'], {
+// Combo aktif (rekomendasi paket di detail produk). Anon key + RLS (SEC-031), bukan service_role.
+// Kunci cache diganti supaya hasil lama dari service_role tak terbaca setelah deploy.
+export const getCachedCombos = unstable_cache(readActiveCombosPublic, ['storefront-combos-public'], {
   revalidate: REVALIDATE,
   tags: ['combos'],
 })
@@ -44,6 +47,22 @@ export const getCachedSalesCountByProduct = unstable_cache(
   () => getSalesCountByProduct(),
   ['storefront-sales'],
   { revalidate: REVALIDATE, tags: ['sales'] },
+)
+
+// Minimum total belanja (store_settings). Jarang berubah tapi dibaca di tiap kunjungan
+// keranjang/checkout → cache + tag 'settings' (di-invalidasi saat admin menyimpan pengaturan).
+export const getCachedMinOrderAmount = unstable_cache(
+  () => getMinOrderAmount(),
+  ['storefront-min-order-amount'],
+  { revalidate: REVALIDATE, tags: ['settings'] },
+)
+
+// Peta ringkasan rating (rata-rata + jumlah) per produk untuk kartu katalog beranda.
+// Tag 'reviews' → ikut ter-invalidasi saat ada mutasi ulasan.
+export const getCachedRatingSummaryByProduct = unstable_cache(
+  () => getRatingSummaryByProduct(),
+  ['storefront-rating-all'],
+  { revalidate: REVALIDATE, tags: ['reviews'] },
 )
 
 // Satu produk berdasarkan id. keyParts menyertakan id agar tiap produk punya entri cache sendiri.
@@ -85,8 +104,12 @@ export function getCachedRatingSummary(id: string) {
 export async function getBestSellingCatalogPage(
   page: number,
   pageSize: number,
-): Promise<{ products: Product[]; hasMore: boolean; page: number }> {
-  const [all, sold] = await Promise.all([getCachedProducts(), getCachedSalesCountByProduct()])
+): Promise<{ products: CatalogCardProduct[]; hasMore: boolean; page: number }> {
+  const [all, sold, ratings] = await Promise.all([
+    getCachedProducts(),
+    getCachedSalesCountByProduct(),
+    getCachedRatingSummaryByProduct(),
+  ])
   const active = all.filter((p) => !p.archived)
 
   const sorted = active
@@ -97,8 +120,8 @@ export async function getBestSellingCatalogPage(
   const start = page * pageSize
   const slice = sorted.slice(start, start + pageSize)
 
-  // Kirim hanya field kartu produk (buang galeri/stock agar payload ringan)
-  const products: Product[] = slice.map((p) => ({
+  // Kirim field kartu produk (buang galeri/stock agar payload ringan) + sosial-proof (terjual/rating)
+  const products: CatalogCardProduct[] = slice.map((p) => ({
     id: p.id,
     name: p.name,
     originalPrice: p.originalPrice,
@@ -106,6 +129,9 @@ export async function getBestSellingCatalogPage(
     imageUrl: p.imageUrl,
     category: p.category,
     badge: p.badge,
+    soldCount: sold[p.id] ?? 0,
+    rating: ratings[p.id]?.rating ?? 0,
+    reviewCount: ratings[p.id]?.reviewCount ?? 0,
   }))
 
   return { products, hasMore: start + pageSize < sorted.length, page }

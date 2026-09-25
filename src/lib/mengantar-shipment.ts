@@ -1,0 +1,354 @@
+// src/lib/mengantar-shipment.ts
+// Booking kurir (create shipment order) ke Mengantar. SERVER ONLY — memegang MENGANTAR_API_KEY.
+//
+// ⚠️ JANGAN pernah diimpor dari komponen 'use client'. API key Mengantar berada di dalam URL
+// (segmen path), jadi satu import dari client component akan membocorkannya utuh ke tab Network.
+// Satu-satunya pemanggil yang sah: route handler (webhook pembayaran & endpoint simulasi dev).
+//
+// ── Kapan dipanggil ──
+// SETELAH pembayaran sukses. Sebelum itu belum ada kepastian uang masuk, dan resi yang terbit untuk
+// pesanan yang tak pernah dibayar akan menyisakan paket hantu di sistem kurir.
+//
+// ── Kontrak POST /order (TERVERIFIKASI terhadap sandbox) ──
+//   POST {BASE}/api/public/{API_KEY}/order
+//   { courier: "JT",
+//     pickup: { type, volume, address_id, time_id },
+//     orders: [ { goodsValue, customerName, customerPhone, customerAddress,
+//                 customerAddressDataId, parcelContent, weight, quantity } ] }
+// Respons: { success, data: [ { _id, cnote_no, ORDER_ID, SERVICE_CODE, batch_id, … } ],
+//            batch, batch_id, courier, errors: [], ordersClosedDestination: [] }
+// Nomor resi = data[0].cnote_no (mis. "JO9253592535").
+//
+// `pickup.address_id` = alamat penjemputan GUDANG PEMENUH (warehouses.mengantar_address_id), bukan
+// satu alamat global. Field inilah yang menentukan dari mana kurir mengambil paket DAN dari mana
+// Mengantar menagih ongkirnya (terbukti di sandbox, Notion Testing Mengantar MGT-58 & MGT-60).
+// `pickup.time_id` WAJIB slot milik alamat yang sama — Mengantar tidak menolak pasangan yang tak
+// cocok (MGT-57), jadi pasangan itu dijaga di sini.
+//
+// ── TIGA nomor, dan ketiganya harus disimpan ──
+// Satu pengiriman punya tiga identitas di Mengantar, dan masing-masing dipakai di tempat berbeda:
+//   cnote_no  nomor resi — untuk MELACAK (GET /order?tracking_id=…), tercetak di label paket
+//   _id       kunci basis data Mengantar — untuk MEMBATALKAN (DELETE /order, field `ids`)
+//   ORDER_ID  nomor pembukuan Mengantar — alternatif pembatalan (DELETE /order, field `orderIds`)
+//
+// DELETE /order TIDAK menerima nomor resi. Jadi menyimpan resi saja — yang dilakukan kode ini
+// sampai 2026-09-09 — membuat penjemputan mustahil dibatalkan tanpa lebih dulu menanyakan balik
+// `_id`-nya ke Mengantar. Ketiganya sudah ada di respons ini; membuangnya berarti membayar satu
+// panggilan pencarian tiap kali pembatalan terjadi, tepat saat Mengantar paling tak boleh gagal.
+//
+// KODE KURIR = "JT" KAPITAL. Huruf kecil "jt" ditolak dengan 400 {"message":"Invalid courier"} —
+// sudah diuji. Kebetulan sama dengan key kurir di respons cek ongkir, jadi satu konstanta saja.
+
+// Gagalkan BUILD bila modul ini pernah tertarik ke bundle komponen client (SEC-050).
+// Berkas ini memegang MENGANTAR_API_KEY; ia tak boleh sampai ke browser dalam keadaan apa pun.
+// Sampai sekarang yang menahannya hanyalah tree-shaking dan sebuah komentar — optimisasi dan
+// niat baik, bukan jaminan. Dengan baris ini, import dari komponen client menjadi GALAT BUILD,
+// bukan kebocoran yang baru ketahuan setelah kuncinya terbaca di tab Network.
+import 'server-only'
+
+import { JT_COURIER_ID } from '@/lib/mengantar-estimate'
+import { mengantarWriteHost } from '@/lib/mengantar-host'
+import { getTodayPickupTimeId } from '@/lib/mengantar-pickup'
+import { readProducts } from '@/lib/mock-db/products'
+import { shippingWeightKg } from '@/lib/shipping-weight'
+import { getPickupAddressIdForWarehouse } from '@/lib/warehouse'
+import type { Order } from '@/types/order'
+
+const LOG = '[mengantar-shipment]'
+
+// Booking berjalan di dalam permintaan webhook; Xendit punya batas waktu callback sendiri.
+const ORDER_REQUEST_TIMEOUT_MS = 12_000
+
+// Jenis penjemputan & kendaraan. 'scheduledPickup' = memakai slot time_id yang sudah dibuat cron
+// (lihat lib/mengantar-pickup.ts). 'volumeMotor' = paket ukuran motor; pilihan konservatif —
+// menaikkannya ke mobil tanpa perlu membuat kurir mengirim kendaraan yang lebih mahal.
+const PICKUP_TYPE = 'scheduledPickup'
+const PICKUP_VOLUME = 'volumeMotor'
+
+// Satu order kita = satu paket. Mengantar memakai `quantity` sebagai jumlah KOLI, bukan jumlah
+// barang — mengirim total pcs akan membuat kurir menagih beberapa paket untuk satu kiriman.
+const PARCEL_QUANTITY = 1
+
+// Panjang maksimal deskripsi isi paket yang dikirim ke kurir.
+const PARCEL_CONTENT_MAX = 100
+
+export type ShipmentResult =
+  | {
+      ok: true
+      trackingNumber: string // cnote_no — nomor resi
+      serviceCode: string // SERVICE_CODE (mis. 'REG')
+      // Ketiganya OPSIONAL: booking yang berhasil tanpa salah satunya tetap booking yang berhasil,
+      // dan menggagalkannya berarti membuang resi yang sudah terlanjur terbit di sisi kurir.
+      mengantarObjectId?: string // _id — dipakai DELETE /order (`ids`)
+      mengantarOrderId?: string // ORDER_ID — alternatif DELETE /order (`orderIds`)
+      mengantarBatchId?: string // batch_id — dipakai DELETE /batch
+    }
+  | { ok: false; reason: ShipmentFailureReason; detail: string }
+
+export type ShipmentFailureReason =
+  | 'not-configured' // env belum lengkap
+  | 'blocked-environment' // host produksi ditulis dari luar deployment produksi (penjaga saldo)
+  | 'no-pickup-time' // time_id tak bisa didapat (cron & fallback gagal)
+  | 'incomplete-order' // data pesanan kurang (alamat/telepon/destination_id)
+  | 'http-error' // Mengantar menolak
+  | 'partial-error' // success:true tapi ada entri di `errors`/`ordersClosedDestination`
+  | 'no-awb' // respons tanpa cnote_no
+  | 'network' // timeout / jaringan
+
+// === Penyusunan payload ===
+
+// Deskripsi isi paket dari nama produk. Kurir hanya butuh gambaran umum, bukan rincian lengkap.
+function buildParcelContent(order: Order): string {
+  const names = order.items.map((i) => i.name).filter(Boolean)
+  const joined = names.length > 0 ? names.join(', ') : 'Produk pertanian'
+  return joined.length > PARCEL_CONTENT_MAX
+    ? `${joined.slice(0, PARCEL_CONTENT_MAX - 1)}…`
+    : joined
+}
+
+// Nilai barang (rupiah, INTEGER) — dasar asuransi kurir.
+// Dihitung dari harga snapshot di order_items, BUKAN `totalAmount`: total sudah memuat ongkir dan
+// dikurangi diskon, jadi memakainya akan melaporkan nilai barang yang salah ke kurir.
+function buildGoodsValue(order: Order): number {
+  const sum = order.items.reduce((acc, i) => acc + i.price * i.quantity, 0)
+  return Math.max(0, Math.round(sum))
+}
+
+// Berat kirim (kg) DIHITUNG ULANG dari berat produk di DB.
+// Tidak ada nilai berat yang tersimpan di order_items, dan berat dari client tak pernah dipercaya —
+// lihat docs/checkout-flow.md → "Berat Kirim".
+async function buildWeightKg(order: Order): Promise<number> {
+  const products = await readProducts()
+  const beratById = new Map(products.map((p) => [p.id, p.berat]))
+  return shippingWeightKg(
+    order.items.map((i) => ({ quantity: i.quantity, berat: beratById.get(i.productId) })),
+  )
+}
+
+// Membaca nomor resi & kode layanan dari respons. null bila tak ada resi — booking tanpa resi tak
+// ada gunanya bagi pembeli, jadi diperlakukan gagal alih-alih disimpan setengah jadi.
+function extractShipment(body: unknown): {
+  trackingNumber: string
+  serviceCode: string
+  mengantarObjectId?: string
+  mengantarOrderId?: string
+  mengantarBatchId?: string
+} | null {
+  if (typeof body !== 'object' || body === null) return null
+  const b = body as Record<string, unknown>
+  const data = Array.isArray(b.data) ? b.data : []
+  const first = data[0]
+  if (typeof first !== 'object' || first === null) return null
+  const row = first as Record<string, unknown>
+
+  const awb = typeof row.cnote_no === 'string' ? row.cnote_no.trim() : ''
+  if (!awb) return null
+
+  // Nilai apa adanya bila string tak kosong. Tak ada penebakan bentuk (mis. "24 hex") — kalau
+  // Mengantar suatu saat mengubah formatnya, menyimpan nilai yang mereka kirim tetap lebih berguna
+  // daripada membuangnya karena tak lolos pola yang kita karang sendiri.
+  const teks = (v: unknown): string | undefined =>
+    typeof v === 'string' && v.trim() ? v.trim() : undefined
+
+  const objectId = teks(row._id)
+  const orderId = teks(row.ORDER_ID)
+  const batchId = teks(row.batch_id)
+
+  // Dicatat bila TAK ADA satu pun identitas pembatalan. Booking tetap dianggap berhasil (resinya
+  // sah dan paketnya akan dijemput), tapi pesanan itu hanya bisa dibatalkan lewat pencarian balik
+  // dari resi — dan itu perlu diketahui saat terjadi, bukan saat pembatalan gagal berbulan kemudian.
+  if (!objectId && !orderId) {
+    console.warn(
+      `${LOG} respons booking tanpa _id maupun ORDER_ID — pembatalan penjemputan pesanan ini akan butuh pencarian balik dari resi ${awb}`,
+    )
+  }
+
+  return {
+    trackingNumber: awb,
+    serviceCode: typeof row.SERVICE_CODE === 'string' && row.SERVICE_CODE ? row.SERVICE_CODE : 'REG',
+    ...(objectId ? { mengantarObjectId: objectId } : {}),
+    ...(orderId ? { mengantarOrderId: orderId } : {}),
+    ...(batchId ? { mengantarBatchId: batchId } : {}),
+  }
+}
+
+// Mengumpulkan pesan kegagalan sebagian. Mengantar bisa membalas success:true sambil menaruh
+// order yang bermasalah di `errors` / `ordersClosedDestination` — dianggap sukses padahal paketnya
+// tak pernah terdaftar.
+function collectPartialErrors(body: unknown): string | null {
+  if (typeof body !== 'object' || body === null) return null
+  const b = body as Record<string, unknown>
+  const parts: string[] = []
+  if (Array.isArray(b.errors) && b.errors.length > 0) {
+    parts.push(`errors=${JSON.stringify(b.errors).slice(0, 200)}`)
+  }
+  if (Array.isArray(b.ordersClosedDestination) && b.ordersClosedDestination.length > 0) {
+    parts.push(`tujuan tutup=${JSON.stringify(b.ordersClosedDestination).slice(0, 200)}`)
+  }
+  return parts.length > 0 ? parts.join(' | ') : null
+}
+
+// === Pemanggilan ===
+
+// Membuat shipment order J&T untuk sebuah pesanan yang SUDAH dibayar.
+// Tidak menyentuh DB — pemanggil yang menyimpan hasil/kegagalannya, supaya modul ini bisa diuji
+// dan supaya keputusan "apa yang dilakukan saat gagal" ada di satu tempat (route handler).
+export async function createShipmentOrder(order: Order): Promise<ShipmentResult> {
+  // Host lewat penjaga tulis (lib/mengantar-host.ts): host PRODUKSI hanya boleh dibooking dari
+  // deployment produksi. Ini dicek PALING AWAL — sebelum menyentuh DB atau membuat slot pickup —
+  // supaya lingkungan yang diblokir tak meninggalkan efek samping apa pun.
+  const writeHost = mengantarWriteHost()
+  if (!writeHost.allowed) {
+    console.warn(`${LOG} booking ${order.orderId} DIBATALKAN — ${writeHost.reason}`)
+    return { ok: false, reason: 'blocked-environment', detail: writeHost.reason }
+  }
+  const base = writeHost.host
+
+  const key = process.env.MENGANTAR_API_KEY
+  // Alamat penjemputan = milik GUDANG PEMENUH pesanan ini (orders.warehouse_id), bukan satu alamat
+  // global. Inilah satu-satunya field yang menentukan dari mana kurir mengambil paket DAN dari mana
+  // Mengantar menagih ongkirnya — `POST /order` tak punya field origin sama sekali.
+  //
+  // Pesanan LAMA (warehouse_id NULL, dibuat sebelum sistem multi-gudang) dan gudang yang belum
+  // didaftarkan alamatnya tetap terlayani: getPickupAddressIdForWarehouse jatuh ke
+  // MENGANTAR_STORE_ADDRESS_ID. Fallback itu BUKAN sisa yang bisa dibersihkan — tanpanya, pesanan
+  // warisan yang baru dibayar akan gagal dibooking padahal uangnya sudah masuk.
+  const addressId = await getPickupAddressIdForWarehouse(order.warehouseId)
+  if (!key || !addressId) {
+    return { ok: false, reason: 'not-configured', detail: 'env Mengantar belum lengkap' }
+  }
+
+  // Data wajib kurir. Dicek di sini, bukan dibiarkan ditolak Mengantar, supaya pesan
+  // kegagalannya bisa dibaca admin OMS tanpa menerjemahkan error pihak ketiga.
+  const address = order.address
+  if (!address?.destinationId) {
+    return { ok: false, reason: 'incomplete-order', detail: 'destination_id pesanan kosong' }
+  }
+  if (!order.customerPhone) {
+    return { ok: false, reason: 'incomplete-order', detail: 'nomor telepon pembeli kosong' }
+  }
+  if (!address.shippingAddress?.trim()) {
+    return { ok: false, reason: 'incomplete-order', detail: 'alamat pengiriman kosong' }
+  }
+
+  // Slot penjemputan MILIK ALAMAT DI ATAS. Tanpa time_id, `scheduledPickup` tak bisa dipakai.
+  // Slot alamat lain tak boleh dipinjam: paketnya akan terdaftar pada penjemputan di gudang
+  // yang berbeda dari tempat barangnya benar-benar berada.
+  const pickup = await getTodayPickupTimeId(addressId)
+  if (!pickup) {
+    return { ok: false, reason: 'no-pickup-time', detail: 'time_id pickup tak tersedia' }
+  }
+
+  // Pemeriksaan terakhir sebelum payload dikirim. getTodayPickupTimeId sudah dirancang hanya
+  // mengembalikan slot milik alamat yang diminta, jadi baris ini tak semestinya pernah terpicu.
+  // Tetap dipasang karena Mengantar MENERIMA pasangan address_id/time_id yang tak cocok tanpa
+  // error (MGT-57): kalau suatu saat ada perubahan yang merusak jaminan di atas, akibatnya bukan
+  // galat melainkan kurir yang datang ke gudang salah tanpa jejak. Lebih baik booking gagal
+  // terang-terangan — admin masih bisa membooking ulang — daripada salah alamat diam-diam.
+  if (pickup.addressId !== addressId) {
+    console.error(
+      `${LOG} booking ${order.orderId} DIBATALKAN — slot ${pickup.timeId} milik alamat ${pickup.addressId}, bukan ${addressId}`,
+    )
+    return {
+      ok: false,
+      reason: 'no-pickup-time',
+      detail: 'slot pickup bukan milik alamat gudang pemenuh',
+    }
+  }
+
+  const weight = await buildWeightKg(order)
+  const payload = {
+    courier: JT_COURIER_ID,
+    pickup: {
+      type: PICKUP_TYPE,
+      volume: PICKUP_VOLUME,
+      address_id: addressId,
+      time_id: pickup.timeId,
+    },
+    orders: [
+      {
+        goodsValue: buildGoodsValue(order),
+        customerName: order.customerName,
+        customerPhone: order.customerPhone,
+        // Detail jalan saja. Kota/kecamatan/kelurahan di-resolve Mengantar dari
+        // customerAddressDataId — mengulangnya di sini hanya memperpanjang label paket.
+        customerAddress: address.shippingAddress.trim(),
+        customerAddressDataId: address.destinationId,
+        parcelContent: buildParcelContent(order),
+        weight,
+        quantity: PARCEL_QUANTITY,
+      },
+    ],
+  }
+
+  console.log(
+    `${LOG} booking ${order.orderId}: kurir=${JT_COURIER_ID} berat=${weight}kg gudang=${order.warehouseId ?? 'warisan/default'} address_id=${addressId} time_id=${pickup.timeId} (sumber ${pickup.source}, tanggal ${pickup.date})`,
+  )
+
+  try {
+    // URL memuat API key → JANGAN pernah dicetak ke log.
+    const url = `${base.replace(/\/+$/, '')}/api/public/${encodeURIComponent(key)}/order`
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(ORDER_REQUEST_TIMEOUT_MS),
+    })
+    const text = await res.text()
+
+    if (!res.ok) {
+      return { ok: false, reason: 'http-error', detail: `${res.status} ${text.slice(0, 300)}` }
+    }
+
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(text)
+    } catch {
+      return { ok: false, reason: 'no-awb', detail: `respons bukan JSON: ${text.slice(0, 200)}` }
+    }
+
+    // success:false → ditolak secara logis meski HTTP 200
+    if (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      (parsed as Record<string, unknown>).success === false
+    ) {
+      return { ok: false, reason: 'http-error', detail: text.slice(0, 300) }
+    }
+
+    const partial = collectPartialErrors(parsed)
+    if (partial) return { ok: false, reason: 'partial-error', detail: partial }
+
+    const shipment = extractShipment(parsed)
+    if (!shipment) {
+      return { ok: false, reason: 'no-awb', detail: `tanpa cnote_no: ${text.slice(0, 200)}` }
+    }
+
+    // batch_id ada di DUA tempat: di dalam item, dan di akar respons. Yang di item didahulukan
+    // karena itulah batch pengiriman INI; yang di akar hanya cadangan bila item tak membawanya.
+    //
+    // ⚠️ Yang dipakai `batch_id` (ObjectId), BUKAN `batch` (kode terbaca, mis. "26013014BBQFMM").
+    // Versi sebelumnya menyimpan `batch`, dan itu bukan nilai yang diminta DELETE /batch — kolomnya
+    // akan terisi rapi tapi pembatalan batch tetap gagal, kegagalan yang paling sulit dilihat.
+    const rootBatchId =
+      typeof parsed === 'object' && parsed !== null
+        ? (parsed as Record<string, unknown>).batch_id
+        : undefined
+    const batchId =
+      shipment.mengantarBatchId ??
+      (typeof rootBatchId === 'string' && rootBatchId.trim() ? rootBatchId.trim() : undefined)
+
+    return {
+      ok: true,
+      trackingNumber: shipment.trackingNumber,
+      serviceCode: shipment.serviceCode,
+      ...(shipment.mengantarObjectId ? { mengantarObjectId: shipment.mengantarObjectId } : {}),
+      ...(shipment.mengantarOrderId ? { mengantarOrderId: shipment.mengantarOrderId } : {}),
+      ...(batchId ? { mengantarBatchId: batchId } : {}),
+    }
+  } catch (e) {
+    // Hanya `name`, bukan `message`: pesan error fetch di sebagian runtime memuat URL — yang di
+    // sini berisi API key.
+    return { ok: false, reason: 'network', detail: e instanceof Error ? e.name : 'unknown' }
+  }
+}

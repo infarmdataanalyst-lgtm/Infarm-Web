@@ -13,7 +13,11 @@ export default function CheckoutProductSummary({ items }: { items: CheckoutItem[
 
       <ul className="space-y-3">
         {items.map((item) => (
-          <li key={`${item.id}-${item.isPromoItem ? 'promo' : 'buy'}`} className="flex gap-3">
+          // Produk yang sama bisa muncul lebih dari sekali: satuan, di dalam paket, dan sebagai hadiah.
+          <li
+            key={`${item.id}-${item.variantId ?? ''}-${item.comboId ?? ''}-${item.isPromoItem ? 'promo' : 'buy'}`}
+            className="flex gap-3"
+          >
             {/* Thumbnail persegi */}
             <div
               className={`relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border bg-zinc-50 ${
@@ -32,6 +36,14 @@ export default function CheckoutProductSummary({ items }: { items: CheckoutItem[
                   🎁 Bonus Promo
                 </span>
               )}
+              {/* Anggota paket diberi penanda: harganya harga paket, bukan harga satuan, dan tanpa
+                  penanda ini pembeli yang juga membeli produk yang sama secara satuan melihat dua
+                  baris bernama sama dengan harga berbeda tanpa penjelasan. */}
+              {item.comboId && !item.isPromoItem && (
+                <span className="mb-0.5 inline-flex w-fit items-center rounded-full bg-brand-surface px-2 py-0.5 text-[11px] font-semibold text-brand-primary">
+                  Paket
+                </span>
+              )}
               <h3 className="line-clamp-2 text-sm font-medium leading-snug text-zinc-800">
                 {item.name}
               </h3>
@@ -45,9 +57,10 @@ export default function CheckoutProductSummary({ items }: { items: CheckoutItem[
 
               {/* Harga + kuantitas — item promo tertulis "Gratis" (bukan Rp0 polos) */}
               <div className="mt-auto flex items-center justify-between pt-1">
-                <span
-                  className={`text-sm font-bold ${item.isPromoItem ? 'text-brand-primary' : 'text-red-500'}`}
-                >
+                {/* Harga selalu hijau brand — sama dengan kartu produk di beranda/katalog.
+                    Item promo tetap terbedakan lewat badge "Bonus Promo" & teks "Gratis",
+                    bukan lewat warna. */}
+                <span className="text-sm font-bold text-brand-primary">
                   {item.isPromoItem ? 'Gratis' : formatRupiah(item.price)}
                 </span>
                 <span className="text-xs text-zinc-500">x{item.quantity}</span>

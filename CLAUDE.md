@@ -25,7 +25,8 @@ Lapisan data inti **sudah memakai Supabase** (PostgreSQL):
 > error `supabaseUrl is required.` / `Module not found: @supabase/ssr`.
 
 Integrasi **Mengantar (logistik)** **sudah terpasang sebagian**: pencarian alamat tujuan dan
-**cek ongkir otomatis** di halaman checkout sudah jalan (lihat bagian "Mengantar (Logistik)").
+**cek ongkir otomatis** di halaman checkout sudah jalan (detail: [docs/checkout-flow.md](docs/checkout-flow.md)
+→ "Mengantar (Logistik)").
 Tracking/booking resi masih roadmap. Integrasi **Xendit (pembayaran)** **belum diimplementasi** —
 masih roadmap; bagian Xendit di bawah adalah **target arsitektur**, bukan kondisi sekarang.
 Tandai jelas mana yang sudah ada vs masih rencana saat menulis kode.
@@ -36,16 +37,71 @@ Tandai jelas mana yang sudah ada vs masih rencana saat menulis kode.
 
 ---
 
+## Peta Dokumentasi
+
+File ini hanya memuat **aturan yang berlaku di hampir semua task**. Detail per domain dipecah ke
+`docs/` supaya tidak dimuat setiap sesi. **Baca file terkait saat task-nya menyentuh domain itu** —
+tautan di bawah sengaja tautan biasa, BUKAN `@import`, karena `@import` tetap memuat seluruh isi
+file di awal sesi sehingga tak menghemat context sama sekali.
+
+| File | Isi | Baca saat |
+|---|---|---|
+| [docs/warehouse.md](docs/warehouse.md) | Gudang cabang, stok per gudang, Kelola Stok, Riwayat Mutasi, filter gudang di Pesanan | Menyentuh stok, ongkir, gudang, atau halaman Pesanan OMS |
+| [docs/oms-dashboard.md](docs/oms-dashboard.md) | Header OMS (notifikasi & pengaturan), Revenue Dashboard, tabel/filter Produk, validasi form produk, foto multi, harga coret, produk terlaris | Mengerjakan halaman `/oms/dashboard/*` |
+| [docs/storefront-pages.md](docs/storefront-pages.md) | AppBar & search, katalog, detail produk, legal, maintenance, floating WhatsApp, recently viewed, skala z-index | Mengerjakan halaman publik / elemen mengambang |
+| [docs/checkout-flow.md](docs/checkout-flow.md) | Alur end-to-end, skema `orders`, promo & combo, minimum pembelian, Mengantar, validasi checkout, pembatalan & layanan by no. telepon, email konfirmasi | Menyentuh keranjang, checkout, order, promo, atau ongkir |
+| [docs/design-system.md](docs/design-system.md) | Palet warna brand, token Tailwind, tipografi | Menyentuh tampilan apa pun |
+| [ROADMAP.md](ROADMAP.md) | Semua pekerjaan yang belum selesai, dikelompokkan per area | Menentukan prioritas / mencari pekerjaan lanjutan |
+
+Dokumen pendukung lain yang sudah ada: `docs/security/`, `docs/design/`, `docs/testing/`,
+`docs/cache-test-*.md`, `docs/security-audit-2026-07-08.md`, `supabase/README.md`, `AGENTS.md`.
+
+---
+
 ## Sistem Belanja: Guest Checkout
 
 - Tidak ada sistem login untuk pelanggan (guest checkout)
 - Pelanggan bisa menambahkan produk ke keranjang **tanpa login**
 - Data keranjang disimpan di **cookie browser** (bukan database, bukan localStorage)
 - Tetap tersedia halaman keranjang (`/keranjang`) untuk review sebelum checkout
-- Data yang dikumpulkan saat checkout: nama, alamat, nomor HP (untuk keperluan pengiriman & notifikasi).
-  Field email **sudah dihapus dari form checkout** — fokus identitas guest kini murni no_telepon
-  (selaras lacak/batalkan/review by phone). Kolom `customer_email` masih ada di DB (nullable) untuk
-  data lama, tapi order baru selalu mengirim `customerEmail: undefined` (lihat "Email Konfirmasi Pesanan").
+- Data yang dikumpulkan saat checkout: nama, alamat, nomor HP, dan **email** — keempatnya WAJIB.
+  Email dikembalikan ke form pada 2026-08-31 dan disimpan ke kolom `orders.email`
+  (**bukan** `customer_email` — lihat peringatan di bawah).
+- ⚠️ **Nama kolom email di DB adalah `email`, BUKAN `customer_email`.** Migration
+  `20260624120000_add_orders_customer_email.sql` menyebut `customer_email`, tapi kolom itu **tak
+  pernah ada** di database — memakainya membuat PostgREST membalas `42703` (undefined_column).
+  Kolom `email` sudah ada sejak tabel dibuat dan itulah yang diisi RPC `create_order_with_items`
+  lewat parameter `p_email`. Jangan "memperbaiki" kode mengikuti file migration itu.
+- **Pesanan lama ber-email NULL.** Pesanan yang dibuat selama field email absen tak bisa dilacak
+  lewat `/track-order`; halaman itu mengarahkan mereka ke pencarian by no. telepon.
+  (Detail: [docs/checkout-flow.md](docs/checkout-flow.md) → "Email Konfirmasi Pesanan".)
+
+**Identitas guest TERBELAH menjadi dua — disengaja, jangan disatukan tanpa memindahkan semuanya:**
+
+| Layanan | Kunci PENCARIAN | Cookie auto-recognize |
+|---|---|---|
+| Lacak pesanan (`/track-order`) | **email** | `infarm_email` |
+| Batalkan (`/cancel-order`) | **email** (+ no_telepon sebagai konfirmasi kedua) | `infarm_email` |
+| Review (`/review`) | **email** | `infarm_email` |
+| Badge pesanan aktif (`ActiveOrdersSummary`) | **no_telepon** | `infarm_phone` |
+
+Ketiga halaman layanan pesanan kini **mencari dengan email**, memakai pola yang sama persis:
+validasi + normalisasi di klien untuk UX, lalu DIULANG di server sebagai yang otoritatif.
+
+**`/cancel-order` memakai DUA identitas, dan itu disengaja.** Pencariannya email (langkah 1),
+tapi pembatalannya baru jalan setelah pembeli memasukkan **no_telepon** pesanan itu (langkah 2).
+Kalau keduanya email, konfirmasi kedua tak menambah apa pun — yang lolos langkah 1 otomatis lolos
+langkah 2. Dengan telepon, aksi yang tak bisa ditarik kembali itu menuntut dua data berbeda dari
+pesanan yang sama. `/review` **tidak** punya langkah ini: memberi ulasan tak merusak apa pun.
+
+Badge pesanan aktif sengaja ditinggal di `infarm_phone`: ia cuma menghitung angka di ikon profil,
+dan memindahkannya berarti pengguna lama yang hanya punya cookie telepon kehilangan badgenya.
+
+Detail lengkap: [docs/checkout-flow.md](docs/checkout-flow.md) → "Layanan Pesanan Guest".
+
+⚠️ **Pesanan ber-`email` NULL tak bisa ditemukan di ketiga halaman itu.** Kolom `orders.email`
+baru terisi sejak field email kembali ke checkout; pesanan yang dibuat saat field itu absen tak
+punya pemilik yang bisa dibuktikan lewat jalur email, jadi tak akan pernah muncul.
 
 **Implementasi cookie keranjang (kondisi sekarang):**
 - Operasi keranjang dijalankan **sisi-klien** lewat `src/lib/cart-client.ts`
@@ -62,13 +118,26 @@ Tandai jelas mana yang sudah ada vs masih rencana saat menulis kode.
 - **Rencana:** helper baca keranjang dari Server Component (`cookies()` dari `next/headers`)
   akan ditaruh di `src/lib/cart.ts` — belum dibuat.
 
-**Cookie tambahan `infarm_phone` (auto-recognize lacak/batalkan pesanan):**
-- Ditulis setelah checkout sukses (`setGuestPhone` di `src/lib/guest-phone.ts`) — HANYA no_telepon
-  (`08xxx`), 30 hari, plain cookie (bukan base64). Bukan data sensitif kritis (no. HP milik user
-  sendiri di device-nya); TIDAK menyimpan status/alamat/isi pesanan.
-- Dibaca di `/track-order` (& nanti `/cancel-order`) untuk **auto-fill + auto-cari** (Opsi A):
-  cookie ada & valid → langsung tampil pesanan tanpa ketik; kedaluwarsa/tak ada → input manual.
-- **Cookie = sumber IDENTITAS saja; status pesanan SELALU di-fetch fresh dari server.**
+**Cookie identitas guest (auto-recognize) — ADA DUA, berdampingan:**
+
+| Cookie | Ditulis oleh | Dibaca di |
+|---|---|---|
+| `infarm_phone` | `setGuestPhone` (`src/lib/guest-phone.ts`) | badge `ActiveOrdersSummary` |
+| `infarm_email` | `setGuestEmail` (`src/lib/guest-email.ts`) | `/track-order`, `/cancel-order`, `/review` |
+
+- Keduanya ditulis setelah checkout sukses, 30 hari, plain cookie (bukan base64). Bukan data
+  sensitif kritis — no. HP & email milik user sendiri di device-nya; TIDAK menyimpan
+  status/alamat/isi pesanan.
+- Dipakai untuk **auto-fill + auto-cari** (Opsi A): cookie ada & valid → langsung tampil pesanan
+  tanpa ketik; kedaluwarsa/tak ada → input manual.
+- **Cookie = sumber IDENTITAS saja; status pesanan SELALU di-fetch fresh dari server.** Jangan
+  pernah menjadikannya dasar otorisasi.
+- **Kenapa masih dua, bukan satu**: ketiga halaman layanan pesanan sudah pindah ke `infarm_email`,
+  tapi badge pesanan aktif masih membaca `infarm_phone`. Menghapus cookie telepon berarti pengguna
+  lama yang belum checkout lagi kehilangan badgenya tanpa alasan yang sepadan.
+- **Cookie TIDAK berlaku untuk langkah konfirmasi.** Di `/cancel-order`, no_telepon langkah 2
+  selalu diketik manual dan tak pernah di-prefill dari mana pun — kalau di-prefill, konfirmasinya
+  berhenti mengonfirmasi apa pun.
 
 **Catatan sinkronisasi "Beli Langsung" vs "Checkout":**
 - Halaman `/checkout` membaca cookie **`infarm_checkout`** (bukan `infarm_cart`).
@@ -79,10 +148,13 @@ Tandai jelas mana yang sudah ada vs masih rencana saat menulis kode.
 
 ## Tech Stack
 
-- **Framework**: Next.js 16.2.7 (App Router) — bukan Pages Router
+- **Framework**: Next.js 16.3.4 (App Router) — bukan Pages Router
 - **Language**: TypeScript (strict mode)
 - **Frontend**: React 19.2, Tailwind CSS v4 (PostCSS, `@tailwindcss/postcss`)
 - **Ikon**: `lucide-react`
+- **Komponen UI headless**: `@headlessui/react` (v2) — dropdown/listbox aksesibel (mis. sort katalog),
+  agar highlight opsi ikut tema hijau (bukan biru native `<select>`). Boleh dipakai untuk dropdown/menu
+  baru; jangan tambah lib UI lain tanpa konfirmasi.
 - **Chart (OMS dashboard)**: `recharts`
 - **Database**: Supabase (PostgreSQL) — `@supabase/ssr` + `@supabase/supabase-js` **sudah terpasang**
 - **Backend**: Next.js API Routes (Route Handlers di `src/app/api/`)
@@ -94,14 +166,19 @@ Tandai jelas mana yang sudah ada vs masih rencana saat menulis kode.
 - **Analytics**: Google Analytics 4 via `@next/third-parties` — dipasang lewat
   `<GoogleAnalyticsGate>` (`src/components/analytics/`) di `src/app/layout.tsx`: render kondisional
   bila `NEXT_PUBLIC_GA_ID` terisi, dan di-gate agar TIDAK aktif di area `/oms` (tak melacak admin).
-  Event GA4 (`view_item`, `add_to_cart`) via `src/lib/analytics.ts`. Strategi load = `afterInteractive`
+  Event GA4 sisi klien (`view_item`, `add_to_cart`, `begin_checkout`, `add_shipping_info`) via
+  `src/lib/analytics.ts`. Event `purchase` TIDAK dikirim dari browser: pembayaran Xendit asinkron,
+  jadi ia dikirim dari webhook lewat Measurement Protocol (`src/lib/analytics-server.ts`, butuh
+  `GA_API_SECRET` + kolom `orders.ga_client_id` & `orders.ga_session_id`). Keduanya dititipkan
+  checkout dari cookie `_ga` dan `_ga_<measurement-id>`: `client_id` menjawab SIAPA yang membeli,
+  `session_id` menjawab dari KUNJUNGAN MANA — tanpa yang kedua seluruh pendapatan mendarat di baris
+  "Unassigned" laporan Akuisisi traffic (terukur 24 Sep 2026). Strategi load = `afterInteractive`
   (default @next/third-parties) — disengaja demi akurasi analytics (tak di-defer ke `lazyOnload`).
 
 ### Roadmap integrasi (belum terpasang)
-- **Auth admin real**: Supabase Auth (client sudah ada, login OMS belum terhubung)
-- **Payment Gateway**: Xendit
-- **Deployment**: Vercel
-- **Version Control**: GitHub
+
+Auth admin real (Supabase Auth), Xendit, Vercel, GitHub — beserta seluruh pekerjaan lain yang belum
+selesai, dikumpulkan di [ROADMAP.md](ROADMAP.md).
 
 ### ⚠️ Breaking Changes Next.js 16 yang Perlu Diperhatikan
 
@@ -113,7 +190,7 @@ Tandai jelas mana yang sudah ada vs masih rencana saat menulis kode.
   Jadi **caching yang dipakai sekarang = klasik**: `export const revalidate` (ISR) + `unstable_cache`
   + `revalidateTag`/`revalidatePath`. Lihat bagian "Caching & Revalidasi (storefront)". Bila nanti
   Cache Components diaktifkan, wrapper `unstable_cache` di `cached-reads.ts` perlu dimigrasi ke `use cache`.
-- **`revalidateTag` di Next 16.2.7 WAJIB 2 argumen**: `revalidateTag(tag, 'max')` (`'max'` =
+- **`revalidateTag` di Next 16.3.4 WAJIB 2 argumen**: `revalidateTag(tag, 'max')` (`'max'` =
   stale-while-revalidate, rekomendasi resmi). Memanggil dengan 1 argumen = error TypeScript.
 - **Turbopack aktif by default** — tidak perlu flag `--turbo`
 
@@ -148,74 +225,147 @@ src/
 ├── app/                          # Next.js App Router
 │   ├── (store)/                  # Route group: halaman publik ber-AppBar
 │   │   ├── layout.tsx
-│   │   ├── page.tsx              # Homepage (search bar autocomplete)
-│   │   ├── products/page.tsx     # Katalog produk
+│   │   ├── page.tsx              # Homepage (Hero + HeroStats count-up, ValueProp, kategori, terlaris)
+│   │   ├── products/page.tsx     # Katalog produk (ProductCatalog: sidebar filter desktop + sheet mobile)
 │   │   └── produk/[id]/page.tsx  # Detail produk
 │   ├── keranjang/page.tsx        # Halaman keranjang (data dari cookie)
 │   ├── checkout/
 │   │   ├── page.tsx              # Guest checkout
-│   │   └── success/page.tsx      # Order Confirmed (+ tombol batalkan pesanan)
+│   │   └── success/page.tsx      # Pesanan Berhasil (2 kolom di lg+, + tombol batalkan pesanan)
 │   ├── order-cancellation/page.tsx  # Pembatalan pesanan Guest (token-protected, dari link email/sukses)
-│   ├── review/page.tsx           # Beri Review by NO. TELEPON (pembeli terverifikasi; ganti flow invoice lama)
+│   ├── review/page.tsx           # Beri Review by EMAIL (pembeli terverifikasi; nama penulis diisi server)
 │   │                             #   (ReviewForm.tsx/ReviewProductCard.tsx = flow invoice lama, kini dead code)
 │   ├── track/page.tsx            # Lacak pesanan by NOMOR INVOICE (dipakai untuk detail timeline ?order=)
-│   ├── track-order/page.tsx      # Lacak pesanan by NO. TELEPON (entry utama; honeypot + auto-recognize cookie)
-│   ├── cancel-order/page.tsx     # Batalkan pesanan by NO. TELEPON — 2 langkah (verifikasi ulang phone ke DB)
+│   ├── track-order/page.tsx      # Lacak pesanan by EMAIL (entry utama; honeypot + auto-recognize cookie)
+│   ├── cancel-order/page.tsx     # Batalkan pesanan: cari by EMAIL, lalu konfirmasi NO. TELEPON ke DB (2 langkah)
 │   ├── pesanan-saya/page.tsx     # Hub "Pesanan Saya": kartu lacak / batalkan / review (ikon profil header → sini)
+│   ├── privacy-policy/page.tsx   # Kebijakan Privasi (statis, LegalPageShell) — NONAKTIF (404),
+│   │                             #   kode utuh; tuas LEGAL_PAGES_ENABLED di lib/data/legal.ts
+│   ├── terms-and-conditions/page.tsx  # Syarat & Ketentuan (idem — NONAKTIF, kode utuh)
 │   ├── dev/email-preview/        # Preview template email (route handler, isi placeholder data contoh)
 │   ├── oms/                      # OMS / back office
 │   │   ├── login/page.tsx
-│   │   └── dashboard/            # dashboard, products (+upload), orders, reviews,
-│   │       │                     #   paket-combo (+baru, [id]/edit), promosi (+baru, [id]/edit)
+│   │   └── dashboard/            # dashboard, products (+upload), orders, reviews, pengaturan,
+│   │       │                     #   gudang (Daftar Gudang + /stok Kelola Stok + /riwayat Riwayat
+│   │       │                     #   Mutasi), paket-combo (+baru, [id]/edit),
+│   │       │                     #   promosi (+baru, [id]/edit)
 │   ├── api/                      # Route Handlers (runtime nodejs)
-│   │   ├── products/             # create | update | delete | list | check-sku | best-selling |
+│   │   ├── products/             # create | update | delete | bulk (aksi massal OMS) | list |
+│   │   │                         #   check-sku | best-selling |
 │   │   │                         #   sales-count | best-selling-catalog | search (autocomplete) | by-ids (resolve keranjang)
-│   │   ├── orders/               # create | list (filter+sort+CSV OMS) | get | cancel (GET+PATCH token) |
-│   │   │                         #   track-by-phone | verify-cancel | cancel-by-phone (batalkan by no_telepon)
+│   │   ├── orders/               # create | list (filter tanggal/kurir/pembayaran/status/gudang +
+│   │   │                         #   sort + opsi dropdown; sumber tabel & CSV OMS) | get | cancel (GET+PATCH token) |
+│   │   │                         #   track-by-phone | track-by-email (lacak by email) | verify-cancel | cancel-by-phone (batalkan by no_telepon)
 │   │   ├── reviews/              # create (invoice) | list | reply | visibility | reviewed |
-│   │   │                         #   reviewable-by-phone | create-by-phone (review terverifikasi via no_telepon)
+│   │   │                         #   reviewable-by-email | create-by-email (review terverifikasi via EMAIL; nama penulis diisi server)
+│   │   │                         #   reviewable-by-phone | create-by-phone (jalur no_telepon lama, masih hidup)
 │   │   ├── combos/              # create | update | delete | toggle | list | active (storefront)
 │   │   ├── promotions/          # create | update | delete | toggle | list | active (storefront)
-│   │   └── mengantar/address/search  # Proxy search alamat Mengantar (wilayah.id CORS-blocked → proxied)
-│   ├── layout.tsx                # Root layout (font, metadata)
-│   └── globals.css               # Tailwind v4 + @config tailwind.config.ts
+│   │   ├── warehouses/         # list | create | update | set-default | toggle | delete | stock |
+│   │   │                        #   stock/matrix (matrix produk×gudang) | stock/set (tulis 1 sel)
+│   │   │                        #   (SEMUA admin-only — memuat origin id & koordinat gudang)
+│   │   ├── stock-mutations/    # list (riwayat mutasi stok, admin-only)
+│   │   ├── cron/                   # mengantar-pickup (GET, dipicu Vercel Cron, guard CRON_SECRET)
+│   │   ├── dev/                    # simulate-payment (DEV-ONLY: NODE_ENV + requireAdmin)
+│   │   └── mengantar/              # address/search (CORS-blocked → proxied) |
+│   │                               #   shipping/estimate (1 gudang) | shipping/options (POST,
+│   │                               #   perbandingan ongkir semua gudang → titik rate limit)
+│   ├── layout.tsx                # Root layout (Montserrat + Geist Sans/Mono, metadata)
+│   └── globals.css               # Tailwind v4 + @config tailwind.config.ts + token font & base h1–h4
 ├── components/
-│   ├── home/                     # Homepage (HeroSearchBar, BestSellingProducts [infinite scroll], dll)
-│   ├── product/                  # Kartu & detail produk: ProductImageSlider (galeri maks 9),
-│   │                             #   ProductInfo (harga coret + "N terjual"), TrackProductView (catat lihat)
-│   ├── cart/                     # Keranjang: CartPromoList, CartComboList, CartPaymentSummary,
-│   │                             #   CartRecentlyViewed ("Dilihat Sebelumnya"), dll
+│   ├── home/                     # Homepage: HeroSection (dual-image bg + CTA), HeroStats (3 indicator
+│   │                             #   box + count-up native), ValuePropositionBanner (grid desktop/carousel
+│   │                             #   mobile), CategoryGrid (foto latar per kategori), BestSellingProducts.
+│   │                             #   (HeroSearchBar DIHAPUS — search kini di header)
+│   ├── product/                  # ProductCard (harga hijau + coret inline + rating|terjual),
+│   │                             #   ProductCatalog (filter lengkap: sidebar/sheet, multi-kategori, harga,
+│   │                             #   sort Listbox HeadlessUI), ProductImageSlider, ProductInfo,
+│   │                             #   ProductDescription (client, lipat 5 baris + "Lihat Selengkapnya"),
+│   │                             #   StickyBuyBar (mengambang < lg, statis di lg+ bawah deskripsi),
+│   │                             #   TrackProductView. (CategoryFilterTabs DIHAPUS)
+│   ├── cart/                     # Keranjang: CartHeader (teks putih), CartItemRow & CartCheckoutBar
+│   │                             #   (checkbox custom: box putih border, centang putih di box hijau),
+│   │                             #   CartPromoList, CartRecentlyViewed ("Dilihat Sebelumnya"), dll
 │   ├── checkout/                 # AddressForm, AddressSearchCombobox, ShippingOptions (bottom sheet
 │   │                             #   cek ongkir), PaymentModal, BottomSheet, OrderSummary, dll
 │   ├── order-cancellation/       # OrderCancellationView (client)
 │   ├── review/                   # Komponen review
-│   ├── track/                    # Komponen pelacakan
-│   ├── oms/                      # Sidebar, header, chart, ComboForm, PromotionForm
-│   └── ui/                       # Komponen UI generik (AppBar, dll)
+│   ├── track/                    # Komponen pelacakan (TrackSearchForm, ShippingStepper,
+│   │                             #   TrackingTimeline, OrderItemsCard = kartu produk dipesan)
+│   ├── oms/                      # Sidebar (mendukung sub-menu), header, ComboForm,
+│   │                             #   PromotionForm, GudangTabs (sub-nav area Gudang),
+│   │                             #   WarehouseStockFields (input stok awal — HANYA form Tambah Produk),
+│   │                             #   RevenueChart (stacked bar pendapatan + tampilan tabel),
+│   │                             #   DashboardPeriodFilter (toggle periode dashboard)
+│   │                             #   (SalesChart DIHAPUS — datanya dummy)
+│   └── ui/                       # UI generik: AppBar (menu+logo+HeaderSearch tengah+cart/profil),
+│                                 #   MenuDrawer (drawer kiri: nav+kategori), ProfileIconLink
+│                                 #   (ikon akun → dropdown layanan pesanan desktop / hub mobile), HeaderSearch
+│                                 #   (search persisten: inline desktop, overlay mobile), FloatingWhatsApp
 ├── lib/
 │   ├── cart-client.ts            # Helper keranjang sisi-klien (cookie base64) + addComboToCart + removeComboFromCart + snapshot promo + clearCart
-│   ├── guest-phone.ts            # Cookie client no_telepon (infarm_phone) untuk auto-recognize lacak/batalkan
+│   ├── guest-phone.ts            # Cookie client no_telepon (infarm_phone) — badge pesanan aktif saja
+│   ├── guest-email.ts            # Cookie client email (infarm_email) — auto-recognize track/cancel/review
 │   ├── recently-viewed.ts        # Riwayat "pernah dilihat" (guest, localStorage, maks 10)
 │   ├── promo-cart.ts             # Helper murni: progres/hadiah promo + relevansi & alokasi harga combo (keranjang)
-│   ├── product-validation.ts     # Validasi form produk (SKU, nama, kategori, harga jual/asli, stok, deskripsi, foto)
-│   ├── format.ts                 # Util format (mis. rupiah)
+│   ├── product-validation.ts     # Validasi form produk (SKU, nama, kategori, harga jual/asli, stok, berat, deskripsi, foto)
+│   ├── product-image-validation.ts # SERVER-ONLY: whitelist tipe + magic bytes + batas ukuran data-URL gambar (SEC-019)
+│   ├── review-validation.ts      # Batas panjang komentar & nama penulis ulasan — dipakai server & client (SEC-042)
+│   ├── email-template.ts         # SATU PINTU isi placeholder {{key}} template email + escape HTML (SEC-027)
+│   ├── oms-redirect.ts           # sanitizeOmsRedirect — modul BEBAS SECRET, satu-satunya bagian alur sesi OMS yang boleh diimpor client (SEC-016)
+│   ├── warehouse.ts              # SATU pintu pergudangan: mode (DB), resolve gudang (fallback),
+│   │                             #   stok efektif, origin id (server-only; TANPA jarak/Haversine)
+│   ├── warehouse-shipping.ts     # Perbandingan ongkir riil antar gudang (paralel + cache 10 mnt)
+│   ├── mengantar-estimate.ts     # Pemetaan respons estimasi Mengantar (dipakai client & server)
+│   ├── mengantar-host.ts         # SATU pintu host Mengantar (MENGANTAR_BASE_URL) — ongkir+time+order
+│   ├── shipping-weight.ts        # SATU pintu berat kirim: gram (DB) -> kilogram (Mengantar), murni
+│   ├── pickup-schedule.ts        # Aturan jadwal pickup: hari kerja, cutoff 15:00 WIB, tanggal efektif (murni)
+│   ├── mengantar-pickup.ts       # SATU pintu time_id pickup: POST /time + tabel harian (server-only)
+│   ├── mengantar-shipment.ts     # SATU pintu booking kurir J&T: POST /order (server-only)
+│   ├── shipment-booking.ts       # Orkestrasi booking setelah bayar sukses + catat hasil/kegagalan
+│   ├── stock-audit.ts            # SATU pintu pencatatan riwayat stok → stock_mutations (server-only)
+│   ├── warehouse-validation.ts   # Validasi form gudang (nama, origin id 24 hex, lat/long berpasangan)
+│   ├── dashboard-period.ts       # Periode & granularity Dashboard OMS (murni, zona WIB)
+│   ├── dashboard-revenue.ts      # Klasifikasi & agregasi pendapatan per status (murni) + palet
+│   ├── format.ts                 # Util format: formatRupiah + formatSold (mis. 523 → "500+")
 │   ├── phone.ts                  # Validasi & normalisasi no. telepon ID (checkout)
-│   ├── checkout-validation.ts    # Validasi field alamat (nama/telepon/alamat) → status tombol "Bayar Sekarang"
+│   ├── email.ts                  # Validasi & normalisasi email (checkout + lacak pesanan)
+│   ├── checkout-validation.ts    # Validasi field alamat (nama/telepon/email/alamat) → status tombol "Bayar Sekarang"
 │   ├── combo-validation.ts       # Validasi server payload combo
 │   ├── promotion-validation.ts   # Validasi server payload promo
 │   ├── mengantar.ts              # Client: search alamat (via proxy) + cek ongkir (fetch langsung)
-│   ├── order-token.ts            # Token HMAC tautan pembatalan (server-only)
+│   ├── order-token.ts            # Token HMAC tautan pembatalan: exp 7 hari + nonce (server-only)
+│   ├── server-secret.ts          # SATU pintu secret HMAC dari env; production fail-fast bila kosong
 │   ├── supabase/                 # Client Supabase: server.ts (admin/SSR) + browser.ts
-│   ├── mock-db/                  # Akses data Supabase: products, orders, reviews, combos, promotions (server only)
+│   ├── mock-db/                  # Akses data Supabase: products, orders, reviews, combos, promotions,
+│   │                             #   admins, variants, settings (store_settings key-value),
+│   │                             #   warehouses (gudang + stok per gudang),
+│   │                             #   stock-mutations (riwayat stok), pickup (jadwal pickup harian)
+│   │                             #   — server only
 │   │                             #   + cached-reads.ts (wrapper unstable_cache storefront: revalidate 30s + tags)
 │   └── data/                     # Dummy data tampilan pelengkap (dummy-*.ts)
 ├── emails/                       # Template HTML email (order-confirmation.html) — placeholder {{...}}
-├── hooks/                        # use-debounce.ts, dll
-└── types/                        # product.ts, cart.ts, order.ts, combo.ts, promotion.ts
+├── hooks/                        # use-debounce.ts, use-media-query.ts (breakpoint reaktif),
+│                                 #   use-sticky-bar-height.ts (tinggi bilah bawah → CSS var --sticky-bar-h)
+└── types/                        # product.ts (+ CatalogCardProduct: rating/soldCount opsional), cart, order, combo,
+                                  #   promotion, warehouse (Warehouse, WarehouseStock, WarehouseMode),
+                                  #   stock-mutation (StockMutation + label alasan)
 
 # Root: next.config.ts, tailwind.config.ts, eslint.config.mjs, postcss.config.mjs,
 #       tsconfig.json, AGENTS.md, CLAUDE.md, .env.local (tidak di-commit)
+# scripts/migrate-data.mjs: salin DATA (bukan skema) antar project Supabase (SOURCE .env.local →
+#   TARGET .env.migration.local); urut FK, preserve id, idempotent. Jalankan: node scripts/migrate-data.mjs [--run]
 # public/images/email/: aset gambar email (mis. logo-infarm.png) — lihat README di folder tsb
+# public/images/categories/<slug>.(webp|jpg): foto latar tombol kategori beranda (CategoryGrid resolve fs)
+# public/images/icons/{cart,user}.png: ikon UI header (512px, PUTIH, transparan — latar header hijau)
+# public/images/couriers/<kode-kurir>.png: logo kurir di checkout (mis. jt.png). Nama file = kode
+#   kurir dari respons Mengantar huruf kecil; peta di src/lib/courier-logo.ts. BERWARNA (kotaknya
+#   selalu putih), transparan, bujur sangkar. Belum ada file → jatuh ke ikon truk. Lihat README
+#   di folder tsb
+# public/images/value-props/<slug>.png: ikon 4 keunggulan beranda (512px, BERWARNA, transparan —
+#   lingkaran latar #E8F5E0 terang; nama file = slug judul, lihat ValuePropositionBanner)
+# public/images/hero-background(.jpg) + hero-background-mobile.(jpg|webp|png): bg hero art-direction
+#   (desktop landscape 16:9 / mobile portrait 9:16; HeroSection resolve fs, fallback ke desktop)
 # supabase/: migrations/ (SQL, sumber kebenaran skema) + README.md (cara apply via Dashboard)
 ```
 
@@ -313,7 +463,9 @@ Cache Components (`use cache`/PPR) **belum aktif** → pakai caching klasik Next
   KHUSUS storefront (revalidate 30s + tags `products`/`reviews`/`combos`/`sales`). Tanpa ini, query
   supabase-js = `fetch` no-store → memaksa halaman jadi dynamic (revalidate diabaikan).
   Fungsi: `getCachedProducts`, `getCachedProductById`, `getCachedReviewsByProduct`,
-  `getCachedRatingSummary`, `getCachedCombos`, `getCachedSalesCountByProduct`, `getBestSellingCatalogPage`.
+  `getCachedRatingSummary`, `getCachedRatingSummaryByProduct` (agregasi rating batch — avg+count per
+  product, tag `reviews`; dipakai kartu "Produk Pilihan"), `getCachedCombos`, `getCachedSalesCountByProduct`,
+  `getBestSellingCatalogPage` (kini payload sertakan `soldCount`+`rating`+`reviewCount` per kartu).
 - **PENTING — jangan blanket-cache fungsi dasar `mock-db/*`**: API OMS & `orders/create` WAJIB baca
   data FRESH (validasi stok/harga otoritatif). Storefront pakai wrapper cached; OMS/order pakai fungsi dasar.
 - **Invalidasi saat mutasi**: tiap API tulis memanggil `revalidateTag(tag, 'max')` + `revalidatePath`:
@@ -328,6 +480,35 @@ Cache Components (`use cache`/PPR) **belum aktif** → pakai caching klasik Next
 - **Catatan**: `revalidate`/`revalidateTag`/`x-vercel-cache` hanya efektif di **production Vercel**
   (bukan `next dev`). API route handler selalu `x-vercel-cache: MISS` (tak di-CDN-cache) walau data
   internalnya cached — itu normal. Baseline & hasil uji: `docs/cache-test-*.md`.
+
+---
+
+## Region Fungsi Vercel (`vercel.json`)
+
+`"regions": ["syd1"]` — SYDNEY, **karena database Supabase project ini ada di Sydney**
+(AWS ap-southeast-2; dipastikan 2026-09-21 dengan menyelesaikan `db.<ref>.supabase.co` ke
+`2406:da1c:…` → Sydney, AU). Region fungsi WAJIB mengikuti region database, bukan mengikuti lokasi
+pembeli.
+
+── Kenapa bukan `sin1`, padahal pembeli di Indonesia ──
+Di serverless, tiap pemanggilan kerap membuka koneksi BARU ke database: DNS + TCP + TLS = tiga
+perjalanan bolak-balik sebelum satu query pun terkirim. Ongkos itu dibayar per query, sedangkan
+jarak pembeli→fungsi hanya dibayar sekali per permintaan. `POST /api/orders/create` memanggil DB
+sepuluh kali lebih berurutan, jadi kedekatan ke DB menang telak.
+
+Terukur di endpoint satu-query (`/api/combos/active`), setelah fungsi panas:
+  iad1 (Virginia) → 0,87–1,67 dtk   ·   sin1 (Singapura) → ~0,55 dtk   ·   syd1 → lihat catatan PR
+Lonjakan 2–9 detik yang sesekali muncul adalah COLD START (trafik masih sepi), bukan query lambat:
+Supabase sendiri menjawab dalam 2 ms (`x-envoy-upstream-service-time: 2`).
+
+⚠️ JANGAN menyimpulkan region database dari header `CF-Ray: …-SIN`. Itu menunjukkan edge Cloudflare
+terdekat dengan PENGUKUR, bukan lokasi database — kekeliruan yang sempat terjadi dan membuat region
+pertama kali disetel ke Singapura.
+
+Kalau database kelak dipindah (mis. ke Singapura supaya dekat pembeli DAN fungsi), region di sini
+WAJIB ikut. Nilai yang keliru membuat seluruh aplikasi lambat tanpa satu pun galat yang terlihat.
+
+Paket Hobby hanya boleh SATU region. Cron di berkas yang sama ikut berjalan di region ini.
 
 ---
 
@@ -349,16 +530,51 @@ middleware). Login diverifikasi ke **tabel Supabase `admin_users`** (bukan lagi 
 sesi disimpan sebagai **cookie httpOnly bertanda tangan HMAC** (bukan lagi penanda `"1"` forgeable).
 
 - **Tabel `admin_users`**: `username` (unik), `password_hash` (scrypt, format `saltHex:hashHex`),
-  `name`, `is_active`. RLS aktif tanpa policy publik → akses hanya server (service_role).
-  Migration `supabase/migrations/20260708120000_init_admin_users.sql` (+ seed admin awal).
+  `name`, `is_active`, **`role`**. RLS aktif tanpa policy publik → akses hanya server (service_role).
+  Migration `supabase/migrations/20260708120000_init_admin_users.sql` (seed **nonaktif, tanpa
+  password yang bisa dipakai**) & `20260814120000_add_admin_users_role.sql`.
 - **Verifikasi password**: `src/lib/mock-db/admins.ts` (server-only, `node:crypto` scrypt +
-  `timingSafeEqual`). `authenticateAdmin(username, password)`.
+  `timingSafeEqual`). `authenticateAdmin(username, password)` & `getAdminById(id)` — keduanya
+  mengembalikan `AdminIdentity { id, name, role }`. `admin_users` **tak punya kolom email**; nama
+  tampilan = `name`, fallback `username`.
+- **Daftar hitam kredensial bocor** (`KNOWN_COMPROMISED_HASHES` di `admins.ts`, temuan SEC-011):
+  seed awal dulu ditulis lengkap dengan password DAN hash-nya di file yang ikut ter-commit. Rotasi
+  di database saja tidak menutupnya — hash lama tetap hidup di riwayat Git dan di setiap backup,
+  jadi satu restore sudah cukup menghidupkannya lagi. Karena itu penolakan dipasang **di jalur
+  login**: `authenticateAdmin` menolak lebih dulu, sebelum password diperiksa, bila `password_hash`
+  tersimpan ada di daftar. Yang disimpan **sidik jari SHA-256 dari hash-nya**, bukan hash itu
+  sendiri — menaruh hash aslinya di sini sama saja memindahkan kebocoran ke berkas lain.
+  Menambah entri: `node -e "console.log(require('node:crypto').createHash('sha256').update('<password_hash>').digest('hex'))"`.
+  Migration `20260901120000_nonaktifkan_kredensial_admin_bocor.sql` melakukan hal setara di sisi
+  data (cocokkan sidik jari → `'DISABLED'` + nonaktif), idempoten, untuk database lain/backup lama.
+  **Konsekuensi yang disengaja**: akun yang masih memakai hash bocor TERKUNCI TOTAL sampai
+  passwordnya dirotasi lewat SQL — satu-satunya password yang berfungsi adalah yang sudah bocor,
+  jadi terkunci memang keadaan yang benar. Langkahnya ada di komentar migration `20260708120000`.
+- **Peran (`role`)** — hanya DUA nilai, dijaga CHECK constraint (menambah nilai baru = ubah
+  constraint juga):
+  | Peran | Wewenang |
+  |---|---|
+  | `admin` | akses penuh, termasuk **menulis stok gudang** |
+  | `staff` | boleh melihat stok & halaman OMS; **tak boleh menulis stok** |
+  - `DEFAULT 'admin'` disengaja supaya akun yang sudah ada tak kehilangan akses saat migration jalan.
+  - Kolom belum di-migrate (`42703`) → dianggap `'admin'`. Menambahkan sistem peran tak boleh
+    mengunci admin dari pekerjaannya.
+  - **Peran SELALU dibaca ulang dari DB** (`getAdminIdentity()` di `oms-guard.ts`), tidak disimpan di
+    cookie sesi — menurunkan peran seseorang langsung berlaku tanpa menunggu sesinya kedaluwarsa.
+  - Guard tulis stok: **`requireStockEditor()`** → `401` bila tak login, **`403`** bila peran salah
+    (ia sudah login; yang kurang wewenang). Dipakai `POST /api/warehouses/stock/set`.
+    `canEdit` yang dikirim endpoint matrix HANYA untuk menyembunyikan tombol — UI bukan penjagaan.
 - **Token sesi**: `src/lib/oms-auth.ts` — `createSessionToken`/`verifySessionToken`
   (HMAC-SHA256 via Web Crypto, jalan di edge & node), `sanitizeOmsRedirect`,
-  `OMS_SESSION_COOKIE`. Secret dari env `OMS_SESSION_SECRET` (fallback dev).
-- **Login**: `POST /api/oms/login` (runtime nodejs) — verifikasi kredensial + **rate limit**
-  in-memory (5 percobaan/menit per IP+username) → set cookie sesi `httpOnly`, `secure` (prod),
-  `SameSite=Lax`, `maxAge` (12 jam; 30 hari bila "Ingat Saya").
+  `OMS_SESSION_COOKIE`. Secret diambil **malas** lewat `requireServerSecret('OMS_SESSION_SECRET')`
+  (`src/lib/server-secret.ts`) — **tanpa fallback**; production dengan env kosong melempar.
+  Malas, bukan konstanta tingkat modul, karena berkas ini juga mengekspor `sanitizeOmsRedirect`
+  yang diimpor halaman login `'use client'`.
+- **Login**: `POST /api/oms/login` (runtime nodejs) — verifikasi kredensial + **rate limit tiga
+  lapis** (`OMS_LOGIN_*` di `RATE_LIMITS`, lihat tabel di bawah) → set cookie sesi `httpOnly`,
+  `secure` (prod), `SameSite=Lax`, `maxAge` (12 jam; 30 hari bila "Ingat Saya").
+  **Hanya percobaan GAGAL yang dihitung** — login berhasil tak pernah menghabiskan jatah, jadi
+  admin tak bisa mengunci dirinya sendiri.
 - **Guard** (`proxy.ts`, `matcher: '/oms/dashboard/:path*'`): `verifySessionToken` cookie →
   invalid/kedaluwarsa → `307` ke `/oms/login?redirect=<tujuan asli>`. `/oms/login` tak diproteksi.
 - **Logout**: tombol "Keluar" di `Sidebar` → `POST /api/oms/logout` (hapus cookie httpOnly) +
@@ -366,293 +582,172 @@ sesi disimpan sebagai **cookie httpOnly bertanda tangan HMAC** (bukan lagi penan
 - **Catatan**: proxy hanya menjaga **halaman** dashboard. Route handler mutasi OMS
   (`/api/products|combos|promotions|reviews/...`, `/api/orders/list`) **belum** dijaga per-endpoint
   (lihat temuan K-1 di `docs/security-audit-2026-07-08.md`) — roadmap berikutnya.
-- **Roadmap**: pertimbangkan Supabase Auth penuh bila butuh multi-peran/reset password.
+- **Roadmap**: pertimbangkan Supabase Auth penuh bila butuh peran lebih banyak/reset password.
+  Belum ada UI kelola akun admin — membuat akun `staff` masih lewat SQL (`insert into admin_users`
+  dengan `role = 'staff'` + `password_hash` dari `hashPassword()`).
 
-## Pembatalan Pesanan Guest (token-protected)
+## Rate Limiting (anti bot / brute-force / scraping) — sudah terpasang
 
-- Karena guest tidak login, tautan pembatalan diamankan dengan **token HMAC** dari `orderId`
-  (`src/lib/order-token.ts`, server-only). `generateCancelToken` dipakai saat menyusun tautan
-  di halaman Order Confirmed; `verifyCancelToken` dicek di API
-- Endpoint `src/app/api/orders/cancel/route.ts`:
-  - `GET ?id=&token=` → verifikasi token, kembalikan detail order (tanpa data pribadi)
-  - `PATCH` → verifikasi token + validasi status di server, set status `Dibatalkan`,
-    lalu `restoreStock` (lepas stok kembali). Status yang boleh dibatalkan: `Menunggu Pembayaran`,
-    `Diproses`. Status `Dikirim`/`Selesai` ditolak (terkunci)
-- Halaman `src/app/order-cancellation/page.tsx` (server tipis) → `OrderCancellationView` (client)
+Semua ambang batas terkumpul di **`src/lib/rate-limit.ts`** (konstanta `RATE_LIMITS`) — ubah angka
+di situ, jangan hardcode di route. Implementasi: **in-memory `Map` per-instance** (pola sama dengan
+`/api/oms/login`), best-effort. **Belum terpusat lintas-instance Vercel** — kandidat migrasi ke tabel
+Supabase atau Redis bila traffic/serangan naik. Helper: `enforceRateLimit(key, rule)` → `NextResponse`
+429 siap-kirim atau `null`; `isOverLimit`/`recordAttempt` untuk pencatatan tertunda; `getClientIp`.
+Respons limit = **HTTP 429** + pesan generik `RATE_LIMIT_MESSAGE` (tanpa membocorkan angka limit) +
+header `Retry-After`. Map disapu berkala tiap 500 penulisan agar tak bocor memori.
 
-## Layanan Pesanan Guest by No. Telepon (lacak / batalkan / review) — sudah terpasang
+| Aturan | Batas | Dipakai di |
+|---|---|---|
+| `PHONE_LOOKUP_IP` | 20 / 15 mnt / IP | `track-by-phone`, `verify-cancel`, `reviewable-by-phone` |
+| `PHONE_LOOKUP_PHONE` | 15 / jam / nomor | idem (cegah serangan 1 nomor dari banyak IP) |
+| `PHONE_LOOKUP_IP_PHONE_MISS` | 5 / 15 mnt / (IP+nomor) | idem — **hanya percobaan GAGAL** yang dihitung |
+| `EMAIL_LOOKUP_IP` | 20 / 15 mnt / IP | `track-by-email`, `reviewable-by-email` |
+| `EMAIL_LOOKUP_EMAIL` | 15 / jam / email | idem (cegah serangan 1 email dari banyak IP) |
+| `EMAIL_LOOKUP_IP_MISS` | 8 / 15 mnt / **IP** | idem — **hanya percobaan GAGAL** yang dihitung (kunci sengaja bukan IP+email, lihat SEC-039 di bawah) |
+| `PHONE_WRITE_IP` | 8 / 15 mnt / IP | `cancel-by-phone` |
+| `PHONE_WRITE_PHONE` | 5 / jam / **pesanan** | `cancel-by-phone` (kunci = invoice), `create-by-phone` (kunci = nomor) |
+| `EMAIL_WRITE_EMAIL` | 5 / jam / email | `reviews/create-by-email` |
+| `CANCEL_VERIFY_ORDER_MISS` | 10 gagal / jam / **pesanan** | `verify-cancel` |
+| `MENGANTAR_IP` | 40 / menit / IP | proxy search alamat & cek ongkir |
+| `ORDER_CREATE_IP` | 3 / menit / IP | `POST /api/orders/create` |
+| `ORDER_GET_IP` | 30 / 15 mnt / IP | `GET /api/orders/get` |
+| `ORDER_GET_IP_MISS` | 10 / 15 mnt / IP | idem — **hanya invoice yang TIDAK ditemukan** yang dihitung |
+| `REVIEW_CREATE_IP` | 3 / 10 mnt / IP | `reviews/create`, `create-by-phone`, **dan** `create-by-email` — satu bucket bersama, supaya bot tak bisa memecah spamnya ke tiga endpoint |
+| `PAYMENT_CREATE_IP` | 6 / 5 mnt / IP | pembuatan invoice/VA Xendit — tiap panggilan menembus ke API Xendit |
+| `PAYMENT_CREATE_INVOICE` | 5 / 30 mnt / nomor invoice | idem — satu pesanan tak butuh belasan VA |
+| `OMS_LOGIN_IP` | 10 / 15 mnt / IP | `POST /api/oms/login` — **hanya login GAGAL** yang dihitung |
+| `OMS_LOGIN_IP_USER` | 5 / 15 mnt / (IP+username) | idem — satu penyerang menebak satu akun |
+| `OMS_LOGIN_USER` | 20 / jam / username | idem — **lintas IP**, menutup brute-force terdistribusi |
 
-Keluarga fitur guest yang mengidentifikasi pesanan lewat **no_telepon** (bukan login). Entry lewat
-**hub `/pesanan-saya`** (ikon profil header → hub; badge dot merah bila cookie `infarm_phone` ada).
-Semua berbagi pola: input phone → `getOrdersByPhone` (`mock-db/orders.ts`, `.eq('no_telepon')`) →
-output NON-SENSITIF; **honeypot** field `website`; **auto-recognize** cookie `infarm_phone` (Opsi A:
-auto-cari tanpa ketik). **Rate-limit sudah terpasang** di semua endpoint ini via `src/lib/rate-limit.ts`
-(in-memory Map per-instance, sama pola dengan `/api/oms/login` — belum terpusat lintas-instance Vercel,
-kandidat migrasi ke tabel Supabase/Redis nanti). Dua lapis: per-IP (throttle umum) + per-nomor-telepon
-dinormalisasi (cegah brute-force tertarget dari banyak IP ke satu nomor). Endpoint baca (`track-by-phone`,
-`verify-cancel`, `reviewable-by-phone`): 20/IP/15 menit + 15/nomor/jam. Endpoint tulis/destruktif
-(`cancel-by-phone`, `create-by-phone`): 8/IP/15 menit + 5/nomor/jam (lebih ketat). Balas `429` + pesan
-generik saat limit tercapai. Menutup temuan K-1 di `docs/security/audit-2026-07-24.md`.
+- **Kenapa "hanya percobaan gagal" untuk kunci IP+nomor**: penebak nomor orang lain hampir selalu
+  meleset (0 pesanan / nomor tak cocok), sedangkan pemilik nomor selalu dapat hasil. Menghitung
+  yang gagal saja = brute-force tetap terhenti di 5 tebakan, tapi user normal yang reload halaman
+  atau mengulang pencarian nomornya sendiri **tidak pernah** kena limit.
+- **⚠️ Konfirmasi pembatalan dikunci pada PESANAN, bukan pada tebakan** (`CANCEL_VERIFY_ORDER_MISS`,
+  menutup SEC-038). Versi lama mengunci ember pada no_telepon yang sedang *dicoba*. Penebak
+  mengganti nomor tiap percobaan, jadi ia selalu mendapat ember baru dan lapis itu tak pernah
+  menyentuhnya — terukur: 14 percobaan dengan nomor berbeda lolos semua, sementara 6 percobaan
+  dengan nomor sama berhenti di percobaan keenam. Pembatasnya bekerja persis untuk pola yang
+  **tidak** dipakai penyerang. Yang tetap sama sepanjang serangan adalah **pesanan** yang diincar.
+  - **IP sengaja TIDAK ikut jadi kunci**: penyerang yang berganti IP akan mendapat ember baru
+    lagi, persis kelemahan yang ditutup. Jatah itu milik pesanannya, bukan pemanggilnya.
+  - **Angkanya melawan ruang tebak sebenarnya**: `/track` menyamarkan telepon jadi `0812****7890`,
+    jadi yang perlu ditebak cuma 4 digit tengah — 10.000 kemungkinan. 10 per jam ⇒ ±42 hari untuk
+    menyapu seluruhnya, jauh melewati masa pesanan masih boleh dibatalkan.
+  - **Tradeoff yang diterima**: penyerang bisa membakar jatah sebuah pesanan dan menunda pembatalan
+    mandiri pemiliknya selama satu jam. Jalur tautan bertoken (`/order-cancellation`) tak terpengaruh.
+  - Jangan mengembalikannya ke kunci per-nomor atau per-IP+nomor.
+- **⚠️ Pencarian by email: ember gagal dikunci pada IP, BUKAN pada email yang ditebak**
+  (`EMAIL_LOOKUP_IP_MISS`, menutup cacat pembatas laju pada SEC-039). Versi lama memakai kunci
+  `{ip}:{email}` — cacat yang sama persis dengan SEC-038, hanya di jalur email: nilai yang sedang
+  *ditebak* ikut menjadi bagian kunci, jadi tiap email baru mendapat ember yang masih kosong dan
+  lapis ini tak pernah menyentuh siapa pun. Terukur: 12 email berbeda dulu lolos semua; sesudah
+  perbaikan, 429 muncul di percobaan ke-9. Yang tetap sama sepanjang penyisiran adalah **sumber**
+  permintaannya, jadi itulah kuncinya. Pemilik email asli selalu mendapat hasil, sehingga ia tak
+  pernah menambah hitungan ini sama sekali.
+  - Aturan umumnya, berlaku untuk seluruh tabel di atas: **kunci ember = hal yang DISERANG, bukan
+    nilai yang ditebak.** Setiap kali keduanya tertukar, pembatasnya berhenti membatasi.
+- **Kenapa `EMAIL_LOOKUP_*` dibuat terpisah, bukan memakai ulang `PHONE_LOOKUP_*`**: ambangnya
+  memang identik hari ini (ancamannya sama — menebak identitas orang lain untuk mengintip
+  pesanannya), tapi email jauh lebih mudah ditebak daripada nomor telepon (alamat kerja berpola
+  `nama@perusahaan.com`). Konstanta terpisah berarti angka email bisa diturunkan tanpa ikut
+  memperketat jalur telepon.
+- **Catatan UX**: `REVIEW_CREATE_IP` 3/10 menit berarti pembeli yang mengulas >3 produk sekaligus
+  akan tertahan. Naikkan konstanta itu bila keluhan muncul.
+- **Kenapa `OMS_LOGIN_USER` (per-akun, lintas IP) wajib ada**: dua lapis pertama dikunci per-IP,
+  dan IP itu murah. Tanpa lapis ketiga, penyerang cukup berganti IP (atau memakai botnet) untuk
+  memperoleh jatah 5 tebakan baru berulang kali — pembatasan per-IP jadi tak membatasi apa pun bagi
+  lawan yang serius. Sengaja **bukan** penguncian akun permanen: itu justru membuka penolakan
+  layanan, siapa pun bisa mengunci akun admin hanya dengan sengaja salah ketik.
+- **`ORDER_GET_IP_MISS` dikunci per-IP saja, bukan per (IP+invoice)** — dan itu disengaja. Kunci
+  per-invoice tak berguna melawan enumerasi, sebab setiap tebakan memakai invoice yang berbeda
+  sehingga selalu mendapat bucket baru. Konsekuensi yang diterima: IP yang sudah 10 kali meleset
+  ikut ditolak saat membawa nomor yang BENAR selama 15 menit. Dampaknya kecil (pembeli sah jarang
+  salah nomor sampai sepuluh kali) tapi kantor/warnet ber-IP bersama bisa terkena.
+- **Sumber IP tak lagi memercayai `x-forwarded-for` mentah.** `getClientIp()` dulu membaca entri
+  PERTAMA header itu — dan entri paling kiri ditulis oleh KLIEN, karena proxy menambahkan IP asli
+  di kanan, bukan menimpanya. Penyerang cukup mengganti nilainya tiap permintaan untuk mendapat
+  kunci rate-limit baru terus-menerus. Urutan sekarang: `x-vercel-forwarded-for` (header `x-vercel-*`
+  dari klien dibuang di perbatasan Vercel) → `x-real-ip` → entri **TERAKHIR** `x-forwarded-for`.
+  Perbaikan ada di helper bersama, jadi berlaku untuk **seluruh** aturan di tabel ini.
+- Menutup temuan K-1 di `docs/security/audit-2026-07-24.md`, serta SEC-007 & SEC-010 di database
+  Audit Security (Notion).
 
-### Lacak — `/track-order` (berdampingan dengan `/track` by invoice)
-- `POST /api/orders/track-by-phone`: kembalikan info non-sensitif (invoice, status, resi, kurir, tanggal,
-  item nama+qty+foto), nama **di-mask** (`lib/mask.ts`). Detail timeline lengkap tetap via `/track?order=INV-…`.
-
-### Batalkan — `/cancel-order` (2 LANGKAH)
-- LANGKAH 1: cari by phone (reuse `track-by-phone`) → daftar ringkas → pilih satu.
-- LANGKAH 2: **ketik ULANG no_telepon** (tak di-prefill) → `POST /api/orders/verify-cancel` (query ulang
-  DB: cocokkan phone↔order + cek status cancellable) → cocok & boleh → tombol "Ya, Batalkan Pesanan".
-- Eksekusi: `POST /api/orders/cancel-by-phone` — **RE-verifikasi phone↔order ke DB** (tak percaya client),
-  status boleh cancel (`Menunggu Pembayaran`/`Diproses`; tolak `Dikirim`/`Selesai`/`Dibatalkan`),
-  `updateOrderStatus('Dibatalkan')` + `restoreStock` + revalidate/tag. (Alur token `/order-cancellation` tetap ada.)
-
-### Review terverifikasi — `/review` (GANTI flow invoice lama)
-- `/review` kini **by no_telepon** (pembeli terverifikasi lewat riwayat beli). `POST /api/reviews/reviewable-by-phone`:
-  kumpulkan produk BELUM diulas dari semua pesanan phone (exclude `Dibatalkan` & yang sudah diulas via
-  `getReviewedProductIds` per invoice). Pilih produk → form rating/komentar/nama (auto-fill, editable).
-- `POST /api/reviews/create-by-phone`: **verifikasi server phone↔order (query ulang DB)** + produk∈order +
-  not cancelled + dedup (`order_invoice`+product, unique index). Submit lama `create` (invoice) masih ada.
-- **Badge "Pembeli Terverifikasi"**: `ProductReview.verified = Boolean(order_invoice)` (`getReviewsByProduct`),
-  dirender di `ProductReviews.tsx` (`BadgeCheck`). Ulasan lama `order_invoice` NULL → tanpa badge.
-- **Schema**: TANPA kolom baru — reuse `order_invoice` (TEXT) + unique index yang sudah ada (bukan `order_id` UUID).
-- Halaman sukses & hub mengarah ke `/review` polos (phone auto-fill cookie). `ReviewForm.tsx`/`ReviewProductCard.tsx`
-  (flow invoice `?order=` lama) kini **dead code** (tak di-link).
-
-## Mengantar (Logistik) — sudah terpasang sebagian
-
-Semua helper client ada di **`src/lib/mengantar.ts`** (file, bukan folder). Endpoint Mengantar
-bersifat publik (tanpa API key) → dipanggil dari client, KECUALI search alamat yang diproksi karena CORS.
-
-- **Search alamat** (`searchAddress`): UI di `AddressSearchCombobox` (debounce 500ms, min 3 karakter).
-  Host alamat (wilayah) **tidak mengirim header CORS** → request diproksi lewat route handler internal
-  `src/app/api/mengantar/address/search/route.ts` (BUKAN server action). `_id` kelurahan terpilih
-  disimpan sebagai **`destination_id`** di state form alamat (dipakai cek ongkir).
-- **Cek ongkir** (`fetchShippingEstimate`): endpoint estimasi **mengizinkan CORS (`*`)** → di-fetch
-  **langsung dari client**. Origin toko dari env **`NEXT_PUBLIC_MENGANTAR_ORIGIN_ID`** (jangan hardcode).
-  Param: `origin_id`, `destination_id`, `weight` (kg). Response = object per-kurir; ambil
-  `estimatedSpecialPrice` (ongkir) & `estimatedDate` (estimasi), **sembunyikan** kurir `unsupported: true`,
-  urutkan termurah→termahal.
-- **UI cek ongkir**: `ShippingOptions` (tombol trigger → bottom sheet `BottomSheet`, pola seperti
-  `PaymentModal`): skeleton saat loading, pesan + tombol retry saat gagal, "Belum ada kurir tersedia
-  ke alamat tujuan" bila semua unsupported. Kurir terpilih disimpan ke state `selected_courier`,
-  ongkir ditambahkan ke total. Tombol "Bayar Sekarang" baru aktif setelah kurir dipilih.
-- **Roadmap (belum ada)**: booking kurir + tracking resi otomatis (via webhook pembayaran).
-
-## Validasi Form Checkout (client-side)
-
-Section Alamat Pengiriman divalidasi di client sebelum request order dikirim. Logika terpusat di
-`src/lib/checkout-validation.ts` (`validateAddress`) + helper `phone.ts` & `email.ts`:
-
-- **Nama**: min 3 karakter. **Alamat lengkap**: min 10 karakter.
-- **Telepon** (`phone.ts`): hanya angka (non-digit diblok saat mengetik via onKeyDown/onChange),
-  wajib diawali `08`, panjang 10–12 digit. Disimpan sebagai angka bersih `08xxxxxxxxx`.
-- **Email**: field ini **sudah dihapus dari form checkout** (`src/lib/email.ts` ikut dihapus, dead code).
-  `AddressFieldKey`/`AddressValidationInput` (`checkout-validation.ts`) tidak lagi punya `email`.
-- **Alamat**: wajib dipilih dari search Mengantar (`destination_id` tidak boleh kosong).
-- **Kurir**: wajib dipilih (`selected_courier`).
-- Tombol "Bayar Sekarang": disabled-visual + **guard di handler** (bukan hanya atribut `disabled`).
-  Saat ditekan tapi belum lengkap → toast + auto-scroll ke field pertama yang invalid + border merah.
-
-## Email Konfirmasi Pesanan
-
-> **Update**: form checkout **tidak lagi mengumpulkan email pembeli** (dihapus dari `AddressForm`;
-> fokus identitas guest = no_telepon). Order baru selalu mengirim `customerEmail: undefined` ke
-> `/api/orders/create`, jadi kolom `customer_email` akan **selalu NULL** untuk order baru. Fitur
-> kirim email otomatis di bawah ini masih roadmap dan sekarang **tidak punya alamat tujuan** kecuali
-> flow pengumpulan email dihidupkan kembali di kanal lain — tandai ini saat mengerjakan integrasi Xendit.
-
-- Template HTML: **`src/emails/order-confirmation.html`** — table-based + inline CSS (kompatibel
-  Gmail/Outlook/Mail iOS), fluid `max-width:600px; margin:0 auto`, palet brand (`#46b33c`).
-- Placeholder backend: `{{logo_url}}`, `{{order_id}}`, `{{item_list}}`, `{{total_price}}`,
-  `{{tracking_url}}`, `{{cancel_url}}`. **Email wajib URL absolut** (path relatif hanya untuk preview).
-- Aset gambar email di **`public/images/email/`** (mis. `logo-infarm.png`; lihat README folder tsb).
-- Preview lokal: **`/dev/email-preview`** (route handler membaca file template + isi placeholder
-  dengan data contoh). Hanya untuk development.
-- Kolom **`customer_email`** (TEXT, nullable) masih ada di tabel `orders`
-  (migration `supabase/migrations/20260624120000_add_orders_customer_email.sql`) untuk data lama —
-  **tidak perlu dihapus manual** (nullable, semua kode sudah memperlakukannya opsional). `saveOrder`
-  punya fallback aman bila kolom belum di-migrate (cek kode error `PGRST204`/`42703`).
-
-## Paket & Combo dan Promosi (OMS + Storefront)
-
-Dua fitur OMS yang sudah Supabase + tampil real di storefront keranjang. Pola data sama seperti
-produk/order: tipe di `src/types/*`, akses di `src/lib/mock-db/*` (server-only via `createAdminClient`),
-validasi server di `src/lib/*-validation.ts`, UI lewat API Routes (BUKAN server action).
-
-### Paket & Combo
-- **Tabel**: `product_combos` + `product_combo_items` (FK `combo_id` ON DELETE CASCADE).
-  Item menyimpan **snapshot** `name`/`unit_price` (tanpa FK ke products). Harga normal TIDAK
-  disimpan — dihitung dari `calcNormalPrice(items)` (`src/types/combo.ts`).
-- **OMS**: `/oms/dashboard/paket-combo` (daftar), `.../baru`, `.../[id]/edit` (form bersama `ComboForm`).
-  Data via `src/lib/mock-db/combos.ts` + API `/api/combos/{create,update,delete,toggle,list}`.
-
-### Promosi
-- **Tabel**: `promotions` (kolom: `type`, `min_purchase`, `free_product_id`/`free_product_name`
-  [snapshot], `discount_value`, `start_at`/`end_at`, `progress_message`, `is_active`).
-  `type` ∈ `free_shipping | free_product | discount_nominal | discount_percent`.
-  Status **Kedaluwarsa TIDAK disimpan** — dihitung dari `end_at` (`isPromotionExpired`).
-- **OMS**: `/oms/dashboard/promosi` (daftar + filter Aktif/Nonaktif/Kedaluwarsa, badge "Stok Habis"
-  bila produk hadiah free_product stoknya 0), `.../baru`, `.../[id]/edit` (form bersama `PromotionForm`,
-  detail hadiah kondisional + preview pesan `{sisa}`). Data via `src/lib/mock-db/promotions.ts` +
-  API `/api/promotions/{create,update,delete,toggle,list}`.
-
-### Tampil di keranjang (storefront)
-- Endpoint **publik server-filtered**: `GET /api/promotions/active` (hanya `is_active` & belum
-  kedaluwarsa, urut `min_purchase` ASC) dan `GET /api/combos/active` (hanya `is_active`).
-  Query Supabase tetap server-only di route handler → tidak ter-expose ke client.
-- Logika promo/combo keranjang murni di `src/lib/promo-cart.ts`:
-  - `computePromoProgress` (progress bar + pesan `{sisa}` → rupiah; tercapai → pesan sukses)
-  - `computePromoRewards` (agregasi hadiah tercapai: free_shipping → ongkir GRATIS,
-    discount_nominal/percent → kurangi total, free_product → produk hadiah)
-  - `selectRelevantCombos` (combo aktif, semua produk stok > 0, minimal 1 produk di keranjang,
-    bukan yang semua produknya sudah di keranjang; urut relevansi, maks 3)
-  - `allocateComboPrices` (bagi `combo_price` ke tiap produk; total ≈ harga combo)
-- UI: `CartPromoList`, `CartComboList`, `CartPaymentSummary`. Tombol "Tambah Paket ke Keranjang"
-  memakai `addComboToCart` (`cart-client.ts`) — produk yang sudah ada quantity-nya DISESUAIKAN,
-  harga = harga combo, item ditandai `comboId`.
-- **Section "Beli Kombo Lebih Hemat" di DETAIL produk** (`BundleOffer`, `components/product/`):
-  tiap kartu combo punya **checkbox pojok kiri atas** — centang = seluruh produk combo masuk keranjang
-  (`addComboToCart`, harga combo); uncheck = `removeComboFromCart(comboId)` (`cart-client.ts`).
-  Status checked **disinkron reaktif** dengan isi keranjang (`useSyncExternalStore`) → tetap sinkron
-  setelah reload. Rincian isi paket (nama ×qty) tampil di `<details>` collapsible (kartu tetap ringkas).
-  Checkmark kanan = indikator status (hijau bila sudah di keranjang).
-- Saat menuju checkout, snapshot promo/combo disimpan ke cookie `infarm_checkout_promo`
-  (`setCheckoutPromo`, tipe `CheckoutPromoSnapshot`) untuk diteruskan ke order nanti *(wiring ke
-  tabel orders masih roadmap)*.
-
-## Skema Order & Checkout (Supabase) — sudah diperbarui
-
-Tabel `orders` **memakai kolom Bahasa Indonesia** + tabel anak `order_items`. Enum di DB
-Inggris, dipetakan ke label Indonesia di data layer (`rowToOrder`), jadi UI dashboard/track/cancel
-tidak perlu berubah saat skema DB berganti.
-
-- **`orders`** (kolom utama): `nomor_invoice` (unik), `email`, `no_telepon`, `nama_customer`,
-  `jumlah_total`, `shipping_address`, `provinsi`/`kota`/`kecamatan`/`kelurahan`/`kodepos`,
-  `nama_ekspedisi`, `jenis_layanan`, `no_tracking`, `id_transaksi`, `destination_id`,
-  `status_pembayaran`, `order_status`, `created_at`.
-- **`order_items`**: `order_id` → `orders.id`, `product_id` (nullable — dummy non-UUID → null),
-  `quantity`, `price_at_purchase` (**snapshot harga saat beli**, bukan harga produk sekarang).
-- **Enum ↔ label**:
-  - `status_pembayaran` `PENDING|PAID|FAILED` ↔ `Menunggu|Lunas|Gagal`
-  - `order_status` `PENDING|PROCESSING|SHIPPED|COMPLETED|CANCELLED` ↔
-    `Menunggu Pembayaran|Diproses|Dikirim|Selesai|Dibatalkan`
-- **Checkout atomik**: `POST /api/orders/create` → `saveOrder` (`src/lib/mock-db/orders.ts`) memanggil
-  **RPC `create_order_with_items`** (`supabase/migrations/20260702120000_...`, plpgsql `security definer`):
-  dalam SATU transaksi — insert `orders` + `order_items` + kurangi `products.stock`. Stok salah satu
-  produk kurang → `raise exception 'INSUFFICIENT_STOCK:<nama>'` → **seluruh transaksi rollback**;
-  app melempar `OrderStockError` ("Stok produk … tidak mencukupi").
-- **Nomor invoice**: `generateInvoiceNumber()` = `INV-{YYYYMMDD}-{4 digit acak}`. Unik via index
-  `orders_nomor_invoice_key`; `saveOrder` retry beberapa kali bila tabrakan (unique violation).
-- **Baris warisan**: `rowToOrder` pakai `orderId: nomor_invoice ?? id` (aman untuk baris lama
-  tanpa `nomor_invoice`).
-
-## Foto Produk Multi (Galeri, maks 9)
-
-- **Kolom** `products.images` (`jsonb`, default `[]`) — migration `20260701120000_add_products_images.sql`.
-  `image_url` tetap = foto utama (`images[0]`). Batas maks 9 selaras slider + validasi app.
-- App: `StoredProduct.images: string[]`; `mock-db/products.ts` punya `sanitizeGallery` + **fallback aman**
-  bila kolom `images` belum di-migrate (kode error `PGRST204`/`42703`).
-- OMS upload + **modal edit** bisa tambah/ganti/hapus foto (bukan hanya ganti 1).
-- **Foto disimpan sebagai URL Supabase Storage, BUKAN base64.** Bucket **`product-images`** (public).
-  Client OMS tetap kirim data-URL base64; `saveProduct`/`updateProduct` (`mock-db/products.ts`)
-  otomatis **decode → upload ke Storage → simpan URL** (`uploadImageIfDataUrl`/`uploadGallery`).
-  Kolom `image_url`/`images` = URL `https://<proj>.supabase.co/storage/v1/object/public/product-images/...`.
-  **Jangan pernah simpan base64 ke `image_url`/`images`** (dulu bikin payload `products/list` ~5MB;
-  setelah pindah Storage jadi ~20KB). Migrasi data lama: `scripts/migrate-product-images-to-storage.mjs`.
-- Detail produk: `ProductImageSlider` (thumbnail clickable desktop+mobile, dots); fallback ke
-  `imageUrl` bila galeri kosong.
-
-## Harga Coret (Diskon)
-
-- Dua kolom eksisting: **`original_price`** (harga asli/coret) & **`promo_price`** (harga jual). **Tanpa**
-  kolom `is_on_sale`/tanggal sale — status diskon dihitung: `isProductOnSale(p)` = `originalPrice > promoPrice`
-  (`src/types/product.ts`).
-- OMS form: field **Harga Jual** (= `promoPrice`) + **Harga Asli** opsional (`validateOriginalPrice`
-  wajib > harga jual bila diisi). `saveProduct` set `original = originalPrice` bila > promo, else = promo.
-- Tampil coret di: `ProductCard`, `ProductInfo`, `CartRecentlyViewed` (kondisional lewat `isProductOnSale`).
-
-## Produk Terlaris & "N Terjual"
-
-- Agregasi di `src/lib/mock-db/orders.ts` (`aggregateSales`): jumlah `order_items.quantity` per produk.
-  **Sementara** hanya mengecualikan `order_status = CANCELLED` (`.neq`). **TODO**: setelah Xendit,
-  ketatkan ke `status_pembayaran = PAID` (order baru masih `PENDING` sampai pembayaran real).
-- Fungsi: `getBestSellingProducts({limit, from, to})` dan `getSalesCountByProduct({from, to})`.
-- **OMS** halaman produk: kolom "Terjual" + selektor rentang waktu.
-- **Storefront**: section "Produk Terlaris" homepage (`BestSellingProducts`). **Halaman pertama
-  di-render SERVER** (props `initialProducts` dari `getBestSellingCatalogPage`, cached) → jadi bagian
-  HTML ISR, tak flash saat kembali ke beranda. Halaman berikutnya = infinite scroll client via
-  `IntersectionObserver` native + `/api/products/best-selling-catalog` (cached). "N terjual"
-  di detail produk (di samping rating).
-
-## Validasi Form Produk (OMS)
-
-Logika terpusat di `src/lib/product-validation.ts`, dipakai form upload **dan** modal edit + dicek ulang
-di server (`/api/products/{create,update}`). Konstanta: `SKU_REGEX` (`^[A-Z0-9-]+$`), nama 3–200,
-deskripsi 20–2000, harga 100–99.999.999, stok 0–999.999, `MAX_PRODUCT_IMAGES=9`,
-`MAX_IMAGE_BYTES=2MB`, `ACCEPTED_IMAGE_TYPES` (jpg/png/webp).
-
-- **SKU**: format wajib huruf besar/angka/strip + **cek duplikat** server (`/api/products/check-sku`,
-  dukung `excludeId` saat edit).
-- Foto: min 1, maks 9, tiap file ≤ 2MB & tipe diterima (`validateImageFile`).
-- Error tampil per-field + auto-scroll ke field invalid pertama (`PRODUCT_FIELD_ORDER`).
-
-## Riwayat "Dilihat Sebelumnya" (Recently Viewed)
-
-- **localStorage** (guest, sisi-klien) key `recently_viewed_products` — `src/lib/recently-viewed.ts`
-  (`trackProductView`, `getRecentlyViewedIds`). Array `{ product_id, viewed_at }`, terbaru di depan,
-  maks 10, anti-duplikat, semua akses `try/catch` (aman saat disabled/penuh).
-- Dicatat saat buka detail produk via `TrackProductView` (komponen null, `'use client'`).
-- Ditampilkan di **keranjang** (`CartRecentlyViewed`): resolve id → data produk **terbaru** (OMS+dummy),
-  buang produk diarsipkan atau yang sudah ada di keranjang, maks 6; section disembunyikan bila kosong.
-
-## Roadmap Integrasi (target arsitektur — belum diimplementasi)
-
-### Xendit (Payment Gateway)
-- Semua logika pembayaran di `src/lib/xendit/`
-- Webhook diterima di `src/app/api/webhooks/xendit/route.ts`
-- Verifikasi webhook signature sebelum memproses event apapun
-- **Jangan expose** Xendit secret key di frontend
 
 ---
 
-## Domain: Ecommerce & OMS
+## Alur Pesanan, Promo & Ongkir → `docs/checkout-flow.md`
 
-### Ecommerce (Storefront)
-- [x] Halaman beranda (homepage) — dengan search bar autocomplete
-- [x] Halaman katalog produk (`/products`)
-- [x] Halaman detail produk (`/produk/[id]`)
-- [x] Halaman keranjang (`/keranjang`) — data dari cookie + section "Dilihat Sebelumnya" (localStorage)
-- [x] Katalog & "Produk Terlaris" pure produk OMS (infinite scroll); "N terjual" di detail produk
-- [x] Detail produk: galeri foto multi (maks 9) + harga coret
-- [x] Promo & paket combo REAL di keranjang (dari Supabase via `/api/{promotions,combos}/active`)
-- [x] Halaman guest checkout (`/checkout` + `/checkout/success`)
-- [x] Hub "Pesanan Saya" (`/pesanan-saya`) — kartu lacak/batalkan/review; ikon profil header + badge cookie
-- [x] Beri Review Produk by no_telepon (`/review`) — pembeli terverifikasi (riwayat beli) + badge "Pembeli Terverifikasi"
-- [x] Halaman lacak pesanan by nomor invoice (`/track`) + by no_telepon (`/track-order`, honeypot + auto-recognize cookie)
-- [x] Halaman pembatalan pesanan Guest (`/order-cancellation` token) + by no_telepon 2 langkah (`/cancel-order`)
-- [x] Rate-limit untuk lacak/batalkan/review by no_telepon — in-memory per-IP + per-nomor (`src/lib/rate-limit.ts`); belum terpusat lintas-instance (kandidat migrasi Supabase/Redis)
-- [x] Search alamat + **cek ongkir** Mengantar di checkout (client; ongkir masuk ke total)
-- [x] Validasi form checkout (nama/telepon/email/alamat/kurir) + gating tombol "Bayar Sekarang"
-- [x] Template email konfirmasi pesanan (`src/emails/`, preview di `/dev/email-preview`)
-- [ ] Integrasi Xendit (pembayaran) — masih UI/mock
-- [ ] Mengantar: booking kurir & tracking resi otomatis — masih roadmap
+**Berat produk disimpan GRAM di `products.berat`, tapi Mengantar meminta KILOGRAM** — konversi HANYA
+lewat `src/lib/shipping-weight.ts` (salah satuan = ongkir 1000× lebih mahal). Jangan membulatkan kg
+sendiri (Mengantar sudah menerapkan aturan `ceil(kg − 0,3)`), dan jangan memakai nilai `weight` dari
+client sebagai dasar tagihan — server menghitung ulang dari berat di DB.
 
-### OMS (Back Office)
-- [x] Login OMS (`/oms/login`) — verifikasi ke tabel `admin_users` (scrypt) + cookie sesi httpOnly
-      bertanda tangan HMAC + rate limit (`proxy.ts` verifikasi tanda tangan)
-- [x] Dashboard OMS (`/oms/dashboard`)
-- [x] Manajemen produk (list, upload/create, update, delete) via API + Supabase — multi-foto (maks 9),
-      harga jual/asli (coret), validasi form, kolom "Terjual" + rentang waktu
-- [x] Manajemen order (`/oms/dashboard/orders`) — filter tanggal (range + shortcut)/kurir/status pembayaran,
-      sort Total & Tanggal, kombinasi filter tersimpan di URL query params, Reset Filter, ekspor CSV
-      (server-side via `readOrdersFiltered`/`getDistinctCouriers`, `OrderFilterOptions`)
-- [x] Manajemen review (`/oms/dashboard/reviews`) — create/list/reply/visibility
-- [x] Manajemen Paket & Combo (`/oms/dashboard/paket-combo`) — create/list/update/delete/toggle
-- [x] Manajemen Promosi (`/oms/dashboard/promosi`) — create/list/update/delete/toggle
-- [~] Autentikasi admin: sudah DB-backed (`admin_users` + scrypt + sesi HMAC httpOnly); Supabase Auth
-      penuh (multi-peran/reset password) + proteksi per-endpoint API OMS masih menyusul
-- [~] Stok berkurang atomik saat checkout (RPC `create_order_with_items`); alokasi/rilis stok penuh
-      (mis. saat pembayaran gagal/expired) menyusul bareng Xendit
+**Kurir dibatasi J&T saja** — daftar putih `ALLOWED_COURIER_IDS` di `src/lib/mengantar-estimate.ts`,
+disaring **di server**. Kode kurirnya `'JT'` (kapital, tanpa `&`) untuk cek ongkir **maupun** booking;
+`"jt"` huruf kecil ditolak Mengantar. Booking kurir dipicu setelah pembayaran sukses dan
+**kegagalannya wajib ditandai** (`shipment_status='FAILED'`), jangan silent fail — uang pembeli sudah
+masuk.
+
+**Halaman `/checkout` membaca cookie `infarm_checkout`, BUKAN `infarm_cart`** — setiap aksi menuju
+checkout (tombol Checkout di keranjang maupun "Beli Langsung") WAJIB memanggil `setCheckoutItems(...)`
+lebih dulu. Checkout bersifat atomik lewat RPC `create_order_with_items`, dan minimum pembelian
+(per produk + total belanja) **wajib dicek ulang di server**, jangan mengandalkan client.
+Detail lengkap (skema `orders`, promo/combo, Mengantar, validasi checkout, pembatalan & layanan
+by no. telepon, email konfirmasi, flowchart end-to-end): [docs/checkout-flow.md](docs/checkout-flow.md)
+
+---
+
+## Pergudangan (Gudang Cabang) → `docs/warehouse.md`
+
+**Mode multi-gudang adalah mode resmi sistem — jangan pernah berasumsi hanya ada satu gudang.**
+Jangan membaca mode, stok mentah, atau `origin_id` di luar `src/lib/warehouse.ts` (satu pintu,
+server-only); pemilihan gudang memakai **perbandingan ongkir riil**, bukan jarak. Stok hanya boleh
+diedit dari OMS → Gudang → Kelola Stok, dan **setiap titik tulis stok baru WAJIB ikut mencatat lewat
+`src/lib/stock-audit.ts`** — kalau bolong, riwayat berbohong.
+Detail lengkap: [docs/warehouse.md](docs/warehouse.md)
+
+---
+
+## OMS: Header, Dashboard & Halaman Produk → `docs/oms-dashboard.md`
+
+**Pendapatan WAJIB tetap dipecah per status pembayaran** (Lunas / Pending / Dibatalkan) selama Xendit
+belum terpasang — order baru selalu `PENDING` padahal stok sudah dipotong, jadi satu angka gabungan
+menyesatkan. **Ambang "stok menipis" bukan konstanta**: baca `getLowStockThreshold()` (server) atau
+`GET /api/settings/low-stock-threshold` (client). Notifikasi header dihitung real-time (tanpa tabel
+`notifications`) dan memakai polling, bukan Supabase Realtime.
+Detail lengkap: [docs/oms-dashboard.md](docs/oms-dashboard.md)
+
+---
+
+## Halaman Storefront → `docs/storefront-pages.md`
+
+**Patuhi skala z-index**: apa pun yang menutupi layar dan menerima klik WAJIB ≥ `z-[70]`, di atas
+tombol mengambang `z-[60]` — pernah terjadi bottom-sheet `z-50` tertutup tombol WhatsApp. Halaman
+baru yang punya bilah aksi bawah cukup memanggil `useStickyBarHeight`, jangan hardcode tinggi atau
+daftar route di `FloatingWhatsApp`. Halaman legal sedang **dinonaktifkan** lewat satu tuas
+`LEGAL_PAGES_ENABLED` — kodenya utuh, jangan dihapus.
+Detail lengkap: [docs/storefront-pages.md](docs/storefront-pages.md)
+
+---
+
+## Brand Colors & Design System → `docs/design-system.md`
+
+**Semua halaman wajib memakai palet brand**: hijau utama `#00843b` (`brand-primary`), background
+halaman `#F5FFEF` (`brand-surface`), dan **harga jual SELALU `text-brand-primary`** (hijau, bukan
+merah). **Jangan menggunakan warna biru atau ungu tanpa konfirmasi.** Heading `h1`–`h4` sudah otomatis
+memakai font merek lewat `@layer base` — jangan menambahkan `font-sans` di heading (utility menang
+atas base dan font merek akan luput).
+Detail lengkap (palet, token Tailwind, tipografi): [docs/design-system.md](docs/design-system.md)
+
+---
+
+## Pekerjaan yang Belum Selesai → `ROADMAP.md`
+
+Integrasi Xendit, booking/tracking kurir Mengantar, Supabase Auth penuh, transfer stok antar gudang,
+perbaikan akurasi `aggregateSales`, dan temuan keamanan yang menunggu keputusan — semuanya
+dikelompokkan per area di [ROADMAP.md](ROADMAP.md). Anotasi inline (`TODO`, "masih roadmap") tetap
+ada di tempat aslinya; ROADMAP.md adalah indeks + penunjuknya.
 
 ---
 
@@ -676,27 +771,203 @@ Jangan di-commit (sudah diabaikan `.gitignore`). Di production, set lewat Vercel
 NEXT_PUBLIC_SUPABASE_URL
 NEXT_PUBLIC_SUPABASE_ANON_KEY
 SUPABASE_SERVICE_ROLE_KEY        # server-only (dipakai mock-db via createAdminClient)
-ORDER_CANCEL_SECRET              # server-only, opsional (HMAC token pembatalan; ada fallback dev)
-OMS_SESSION_SECRET               # server-only (HMAC tanda tangan cookie sesi OMS; ada fallback dev
-                                 # — WAJIB di-set di production, jangan pakai fallback)
+ORDER_CANCEL_SECRET              # server-only, WAJIB DI PRODUCTION (HMAC token tautan pembatalan).
+                                 # SEJAK 2026-09-01 TIDAK ADA LAGI FALLBACK. Bila kosong di
+                                 # production, requireServerSecret() MELEMPAR dan jalur pembatalan
+                                 # menolak melayani — disengaja: lebih baik satu endpoint mati keras
+                                 # dan langsung terlihat daripada seluruh sistem menandatangani
+                                 # dengan kunci yang tertulis di repo. Di dev, nilai kosong diganti
+                                 # secret ACAK per proses (tautan pembatalan hangus tiap restart).
+OMS_SESSION_SECRET               # server-only, WAJIB DI PRODUCTION (HMAC tanda tangan cookie sesi
+                                 # OMS). Perlakuan sama persis dengan ORDER_CANCEL_SECRET di atas —
+                                 # tanpa fallback. Bila kosong di production, login OMS berhenti
+                                 # bekerja alih-alih memakai kunci yang bisa ditempa siapa pun.
+                                 # Keduanya diambil lewat SATU PINTU src/lib/server-secret.ts.
+                                 # ROTASI: nilai bawaan lama ('infarm-dev-…') sempat tertulis di
+                                 # riwayat repo, jadi anggap keduanya sudah bocor dan ganti baru.
 
 # Sudah dipakai sekarang (Mengantar — cek ongkir)
-NEXT_PUBLIC_MENGANTAR_ORIGIN_ID  # PUBLIC/client; _id kelurahan toko (asal pengiriman). WAJIB di-set
-                                 # di Vercel juga (var NEXT_PUBLIC_* di-inline saat build → perlu redeploy)
+NEXT_PUBLIC_MENGANTAR_ORIGIN_ID  # _id kelurahan toko (asal pengiriman). WAJIB di-set di Vercel juga
+                                 # (var NEXT_PUBLIC_* di-inline saat build → perlu redeploy)
+MENGANTAR_ORIGIN_ID              # server-only, OPSIONAL; alias non-public dari var di atas (dipakai
+                                 # proxy cek ongkir; bila diisi, nilainya menang & tak bocor ke bundel)
+                                 # CATATAN: sejak fitur pergudangan, origin_id BERSUMBER DARI TABEL
+                                 # warehouses; kedua var di atas kini hanya FALLBACK bila kolom
+                                 # warehouses.mengantar_origin_id kosong.
+
+# Sudah dipakai sekarang (Pergudangan)
+# (DIHAPUS) WAREHOUSE_MODE       # Mode gudang TIDAK lagi dari env. Sumber kebenarannya baris DB
+                                 # store_settings.warehouse_mode, diubah lewat toggle di OMS →
+                                 # Gudang (berlaku seketika, tanpa redeploy). Jangan hidupkan
+                                 # kembali env ini — dua sumber kebenaran = bug menunggu terjadi.
 
 # Sudah dipakai sekarang (Google Analytics 4)
 NEXT_PUBLIC_GA_ID                # PUBLIC/client; Measurement ID GA4 (format G-XXXXXXXXXX). Dipasang di
                                  # src/app/layout.tsx via <GoogleAnalytics> (@next/third-parties). Render
                                  # kondisional — GA hanya jalan bila terisi. Set di Vercel juga + redeploy.
+GA_API_SECRET                    # server-only, OPSIONAL. API secret Measurement Protocol GA4 (Admin →
+                                 # Data Streams → pilih stream → Measurement Protocol API secrets).
+                                 # Dipakai POST /api/webhooks/xendit untuk mengirim event `purchase`
+                                 # dari SERVER — event itu tak bisa dikirim dari browser karena
+                                 # VA/QRIS sering lunas berjam-jam kemudian tanpa pembeli kembali ke
+                                 # halaman sukses. Kosong = event purchase dilewati diam-diam (dicatat
+                                 # di log); pesanannya sendiri tidak terpengaruh sama sekali.
+                                 # Dipasangkan dengan NEXT_PUBLIC_GA_ID di atas — keduanya harus ada.
 
-# Roadmap (belum dipakai)
-XENDIT_SECRET_KEY                # server-only
-XENDIT_WEBHOOK_TOKEN             # server-only
-MENGANTAR_API_KEY                # server-only (untuk booking/tracking nanti; cek ongkir tak butuh key)
+# Sudah dipakai sekarang (Webhook Xendit)
+XENDIT_CALLBACK_TOKEN            # server-only, WAJIB. Dibandingkan waktu-konstan dengan header
+                                 # `x-callback-token` di POST /api/webhooks/xendit. Xendit TIDAK
+                                 # menandatangani body-nya (tak ada HMAC seperti Stripe), jadi token
+                                 # ini satu-satunya pembeda callback asli vs palsu. Ambil dari
+                                 # Xendit Dashboard → Settings → Webhooks. Tanpa var ini endpoint
+                                 # membalas 500 (bukan 401) — salah konfigurasi kita, bukan serangan.
+                                 # CATATAN: dulu didokumentasikan sebagai XENDIT_WEBHOOK_TOKEN;
+                                 # namanya diselaraskan ke header Xendit yang sebenarnya.
+
+# Sudah dipakai sekarang (Jadwal pickup harian Mengantar)
+MENGANTAR_BASE_URL               # server-only, WAJIB. Host API Mengantar untuk POST /time,
+                                 # POST /order, DAN cek ongkir (allEstimatePublic) — satu pintu
+                                 # di src/lib/mengantar-host.ts. Saat ini masih
+                                 # https://sandbox.mengantar.com — GANTI ke
+                                 # https://app.mengantar.com sebelum go-live.
+                                 # PENTING: cek ongkir & booking WAJIB satu host. Tabel tarif
+                                 # sandbox berbeda jauh dari produksi (J&T 1kg Jakarta->Jakarta:
+                                 # produksi Rp8.000 vs sandbox Rp25.520) dan sandbox mengalikan
+                                 # berat linear, bukan ceil(kg-0,3). Kalau host-nya beda, harga
+                                 # yang DIKUTIP ke pembeli tak akan pernah cocok dengan biaya
+                                 # booking. Search alamat SENGAJA tetap ke app.mengantar.com
+                                 # (master data wilayah & _id identik di kedua host).
+MENGANTAR_API_KEY                # server-only, WAJIB untuk POST /time & POST /order.
+                                 # PERHATIAN: key ini menjadi SEGMEN PATH URL
+                                 # ({BASE}/api/public/{KEY}/time), bukan header. Jadi URL-nya
+                                 # rahasia — jangan pernah di-log, dan JANGAN dipakai dari
+                                 # komponen klien (akan terbaca utuh di tab Network).
+                                 # Cek ongkir & search alamat tetap tak butuh key.
+MENGANTAR_STORE_ADDRESS_ID       # server-only, WAJIB. _id alamat gudang/toko di Mengantar (ObjectId
+                                 # 24 hex) — dikirim sebagai address_id saat membuat slot pickup.
+                                 # BEDA dari MENGANTAR_ORIGIN_ID (itu _id kelurahan untuk ongkir).
+MENGANTAR_PICKUP_ORIGIN_ID       # server-only, OPSIONAL tapi SANGAT DISARANKAN selama akun Mengantar
+                                 # hanya punya SATU alamat pickup. _id kelurahan alamat pickup itu
+                                 # (mis. CENGKARENG BARAT). Bila di-set, SELURUH kutipan ongkir
+                                 # memakai origin ini — bukan origin per gudang — sehingga harga yang
+                                 # dilihat pembeli = harga yang benar-benar ditagih saat booking.
+                                 # KENAPA PERLU: POST /order tak punya field origin; Mengantar
+                                 # menagih dari pickup.address_id. Tanpa env ini pembeli bisa dikutip
+                                 # tarif Surabaya lalu ditagih tarif Cengkareng — selisihnya keluar
+                                 # dari saldo Mengantar tanpa jejak di tabel orders.
+                                 # Dibaca HANYA oleh getQuoteOriginId() di src/lib/warehouse.ts.
+                                 # Konsekuensi: semua gudang berharga sama → pemilihan gudang tak
+                                 # lagi berbasis ongkir (jatuh ke gudang ber-stok, default dulu).
+                                 # Cabut setelah tiap gudang punya mengantar_address_id sendiri.
+MENGANTAR_PICKUP_TIME_ID         # server-only, OPSIONAL. Slot pickup STATIS dari era sebelum tabel
+                                 # mengantar_daily_pickup ada. Kini hanya CADANGAN LAPIS TERAKHIR di
+                                 # getTodayPickupTimeId() bila tabel kosong DAN panggilan POST /time
+                                 # gagal. Jangan dijadikan sumber utama: satu id untuk selamanya
+                                 # berarti semua paket terdaftar di slot penjemputan yang sama.
+CRON_SECRET                      # server-only, WAJIB. Vercel otomatis menyisipkan header
+                                 # `Authorization: Bearer $CRON_SECRET` saat memanggil cron bila var
+                                 # ini ada. Dibandingkan waktu-konstan di
+                                 # GET /api/cron/mengantar-pickup. Tanpa guard ini siapa pun yang
+                                 # tahu URL-nya bisa memicu pembuatan slot pickup baru di Mengantar.
+                                 # Tanpa var ini endpoint membalas 500 (bukan 401) — salah
+                                 # konfigurasi kita, bukan serangan.
+
+NEXT_PUBLIC_SITE_URL             # PUBLIC/client, OPSIONAL. Asal URL situs (mis.
+                                 # https://infarm.id) untuk menyusun success/failure redirect
+                                 # Xendit. Bila kosong, endpoint menurunkannya dari header
+                                 # x-forwarded-host/proto — cukup benar di Vercel. WAJIB di-set
+                                 # bila memakai domain kustom di depan Vercel, kalau tidak pembeli
+                                 # bisa dipulangkan ke domain *.vercel.app alih-alih domain toko.
+
+# Sudah dipakai sekarang (Pembuatan Invoice / Virtual Account Xendit)
+XENDIT_SECRET_KEY                # server-only, WAJIB agar pembayaran bisa dibuat. JANGAN pernah
+                                 # diberi prefix NEXT_PUBLIC_ — key ini bisa membuat invoice,
+                                 # menarik dana, dan membaca transaksi.
+                                 # Autentikasi Xendit = HTTP Basic dengan key sebagai USERNAME dan
+                                 # password KOSONG → base64("{KEY}:"), titik dua wajib ada.
+                                 # Dibaca HANYA oleh xenditCredentials() di lib/xendit/config.ts.
+                                 # PENJAGA LINGKUNGAN: kunci LIVE (xnd_production_…) DITOLAK bila
+                                 # dijalankan di luar deployment produksi. Kunci test
+                                 # (xnd_development_…) jalan di mana saja dan tak menyentuh uang
+                                 # sungguhan. Format tak dikenal dianggap LIVE (menolak-dengan-aman).
+                                 # Host sama untuk test & live (api.xendit.co) — yang membedakan
+                                 # lingkungan adalah KUNCINYA, beda dari Mengantar yang punya host
+                                 # sandbox tersendiri.
 ```
 
 > Cara dapat `NEXT_PUBLIC_MENGANTAR_ORIGIN_ID`: panggil endpoint search alamat Mengantar dengan
 > nama kelurahan toko, ambil `_id` yang cocok. Jangan hardcode di kode.
+
+---
+
+## ⛔ Panggilan API Berbayar — WAJIB Konfirmasi Pemilik Proyek
+
+**Jangan pernah memanggil endpoint pihak ketiga yang menghabiskan uang atau menerbitkan dokumen
+nyata tanpa persetujuan eksplisit pemilik proyek lebih dulu.** Ini berlaku untuk siapa pun/apa pun
+yang bekerja di repo ini, termasuk asisten AI.
+
+Yang termasuk **panggilan TULIS berbayar**:
+
+| Panggilan | Akibatnya |
+|---|---|
+| `POST {host}/api/public/{KEY}/order` | Memotong saldo Mengantar + menerbitkan resi nyata |
+| `POST {host}/api/public/{KEY}/time` | Membuat slot penjemputan di akun Mengantar |
+| `DELETE {host}/api/public/{KEY}/order` | Menghapus pengiriman di Mengantar. Tak menagih, tapi **permanen** dan resinya ikut mati |
+| `DELETE {host}/api/public/{KEY}/batch` | Sama, untuk satu batch sekaligus |
+| `POST /api/dev/simulate-payment` | Menandai LUNAS lalu **memicu booking kurir** — sama mahalnya dengan pembayaran sungguhan |
+| Xendit `api.xendit.co` | Membuat invoice/charge = uang sungguhan |
+
+> **Koreksi 2026-09-09.** Baris `POST /order` di atas dulu berbunyi *"Tak bisa dibatalkan dari sisi
+> kita"*. **Itu keliru** — Mengantar menyediakan `DELETE /order`, dan dokumentasinya sudah ada sejak
+> awal. Kekeliruan itu sempat menjadi dasar untuk menyerah pada satu celah nyata: `docs/checkout-flow.md`
+> menyebut pembatalan penjemputan sebagai "langkah yang tidak punya jaring pengaman" justru karena
+> mengutip kalimat ini. Bila menemukan klaim "tak bisa dilakukan" tentang API pihak ketiga di repo
+> ini, periksa dokumentasinya lebih dulu sebelum membangun penanganan manual di atasnya.
+>
+> Yang **belum** dipastikan: sampai kapan Mengantar masih menerima penghapusan (setelah paket
+> dijemput kurir, kemungkinan ditolak) dan apakah saldonya dikembalikan. Dokumentasi diam soal
+> keduanya untuk J&T. Karena itu `DELETE` tetap masuk daftar wajib-konfirmasi di atas.
+
+Yang **bebas dipanggil** (gratis, tanpa API key, tanpa efek samping): cek ongkir
+`allEstimatePublic`, search alamat `/api/public/test/address/search`, seluruh endpoint lokal
+`/api/...` milik app ini yang hanya membaca, dan pelacakan
+`GET {host}/api/public/{KEY}/order?tracking_id=` — `GET` pada path itu adalah operasi BACA, hanya
+saja hook `guard-paid-api.cjs` ikut memblokirnya karena mencocokkan path tanpa melihat method.
+
+**Verifikasi kontrak API dilakukan dengan MEMBACA** — kode, dokumen, respons yang sudah pernah
+tercatat di `docs/` — **bukan** dengan memanggil endpoint berbayar berulang kali sampai bentuknya
+ketemu. Kalau memang harus memanggil: jelaskan dulu apa yang akan dipanggil dan berapa biayanya,
+lalu biarkan pemilik proyek yang menjalankannya.
+
+**Latar belakang (kenapa aturan ini ada):** saat integrasi booking kurir dikerjakan, verifikasi
+kontrak API dijalankan dengan 4 kali booking sungguhan ke sandbox tanpa bertanya lebih dulu.
+Saldo terpotong oleh kiriman uji yang **bercampur** dengan pengujian pemilik proyek, dan dashboard
+Mengantar tak punya penanda apa pun untuk membedakan keduanya — angka yang terpotong jadi tak bisa
+dijelaskan. Di sandbox itu kerugian yang bisa ditoleransi. Dengan kunci produksi, itu uang nyata
+dan paket nyata yang akan dijemput kurir.
+
+### Tiga lapis penegaknya (jangan dilemahkan tanpa diminta)
+
+1. **Penjaga lingkungan** — `mengantarWriteHost()` di `src/lib/mengantar-host.ts`. Host PRODUKSI
+   Mengantar hanya boleh ditulis dari deployment produksi (`NODE_ENV=production` dan bukan preview
+   Vercel). SETIAP titik `POST /order` / `POST /time` **wajib** lewat fungsi ini; membaca
+   `MENGANTAR_BASE_URL` langsung untuk panggilan tulis = memutar balik penjaganya.
+   **Sengaja tanpa jalan pintas** — tuas "izinkan sekali ini" selalu berakhir menyala di tempat
+   yang salah. Mau menguji booking? Sandbox di lokal, atau di deployment produksi sungguhan.
+2. **Hook blokir** — `.claude/hooks/guard-paid-api.cjs` (terdaftar sebagai `PreToolUse` di
+   `.claude/settings.json`). Memblokir perintah shell yang menyentuh endpoint berbayar, **termasuk
+   yang disembunyikan di dalam file skrip** (hook ikut membaca isi file yang disebut di perintah).
+   Jangan mencari jalan lain untuk melewatinya — mengganti nama file, merangkai perintah, atau
+   menyamarkan URL melanggar maksud aturannya.
+3. **Kunci produksi tidak disimpan di mesin lokal** — `MENGANTAR_API_KEY` & `XENDIT_SECRET_KEY`
+   produksi HANYA di environment variable Vercel, tidak pernah di `.env.local`. Ini lapisan
+   terkuat: tanpa kredensial produksi di lokal, tak ada cara menghabiskan uang sungguhan dari sini.
+
+**Lubang yang masih terbuka & sengaja dibiarkan:** `npm run build && npm run start` di mesin lokal
+ber-`NODE_ENV=production` tanpa `VERCEL_ENV`, jadi lapis 1 mengizinkannya menulis ke host produksi.
+Mengetatkannya sampai mewajibkan `VERCEL_ENV=production` akan membuat booking **gagal senyap** bila
+app kelak di-host sendiri (VPS) — pembeli sudah bayar tapi resi tak pernah terbit, jauh lebih buruk.
+Lubang ini ditutup oleh lapis 3, bukan oleh kode.
 
 ---
 
@@ -708,112 +979,120 @@ MENGANTAR_API_KEY                # server-only (untuk booking/tracking nanti; ce
   jangan dari komponen klien. Browser pakai anon key + RLS
 - Validasi input & **status order** di sisi server, bukan hanya frontend
   (mis. pembatalan: status dicek ulang di `PATCH /api/orders/cancel`, bukan percaya UI)
-- Tautan aksi guest (pembatalan) wajib diverifikasi token (`verifyCancelToken`) sebelum diproses
+- Tautan aksi guest (pembatalan) wajib diverifikasi token (`verifyCancelToken`) sebelum diproses.
+  Token kini berformat `exp.nonce.signature` dengan masa berlaku **7 hari yang ikut ditandatangani**
+  — jangan "menyederhanakannya" kembali ke HMAC(orderId) polos: itu membuat tautan berlaku selamanya
+  dan satu-satunya cara mencabutnya adalah merotasi secret, yang sekaligus mematikan token seluruh
+  pesanan lain. Format lama sengaja DITOLAK, bukan diterima demi kompatibilitas.
+- **Endpoint publik jangan mengembalikan nama pelanggan.** `GET /api/orders/get` dulu mengembalikan
+  `customerName` utuh padahal terbuka tanpa token dan nomor invoicenya mudah ditebak — nama
+  pelanggan bisa dipanen massal. Kini field itu dihapus dari respons, dan `reviews/create` mengisi
+  nama penulis sendiri dari pesanan yang sudah diverifikasinya. Aturan turunannya: **nilai identitas
+  jangan dipercaya dari client bila server sudah memegang datanya** — `authorName` dari body kini
+  diabaikan, karena dulu ulasan bisa dikirim atas nama orang lain.
+- **Jangan pernah menaruh kredensial di file yang ikut ter-commit — plaintext MAUPUN hash-nya.**
+  Migration seed `admin_users` dulu memuat keduanya, jadi setiap pemegang salinan repo memegang
+  akun back-office berfungsi penuh (SEC-011). Hash bukan pengaman di sini: password seed selalu
+  pendek dan bisa ditebak, dan hash-nya sendiri sudah cukup untuk mencocokkan secara offline.
+  Seed sekarang membuat akun **nonaktif tanpa password yang bisa dipakai**; operator memberi
+  password lewat SQL manual, dan yang berpindah hanya hash-nya. Konsekuensi yang perlu diingat:
+  sekali sebuah kredensial masuk Git, merotasinya **belum** cukup — ia tetap hidup di riwayat dan
+  di backup, jadi tutup juga di lapisan aplikasi (lihat `KNOWN_COMPROMISED_HASHES`).
+- **Jaga `npm audit` tetap bersih.** Cek sebelum rilis; `next` menyeret `postcss` dan `sharp`,
+  jadi satu bump `next` biasanya menutup sebagian besar temuan sekaligus. Setelah bump: `npx tsc
+  --noEmit` + `npm run build` + smoke test guard `/oms/dashboard` (307 ke login) — advisory bypass
+  proxy/middleware pernah muncul di jalur itu, jadi jangan cuma mengandalkan build hijau.
+- **HTTP security header ada di `next.config.ts`, bukan di proxy.** `X-Frame-Options: DENY`,
+  `nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy`, HSTS, dan
+  CSP **report-only** — berlaku untuk semua path (SEC-012). Dua hal yang jangan diubah tanpa sadar:
+  `Referrer-Policy` menahan token pembatalan di query string agar tak ikut terkirim lewat header
+  `Referer`; dan CSP sengaja masih report-only karena hidrasi Next memakai inline script serta
+  Turbopack dev memakai `eval` — menegakkannya butuh pipeline nonce per-request lebih dulu.
+  `preload` pada HSTS sengaja tidak dipasang: mendaftarkannya sulit dibatalkan dan itu keputusan
+  pemilik domain.
+- **Setiap angka berdampak-uang berasal dari server.** Harga item, ongkir, DAN diskon. `discount`
+  yang dikirim client kini **ditolak 422** (`DISCOUNT_NOT_ACCEPTED`), bukan di-clamp seperti dulu —
+  clamp lama `Math.min(discount, subtotal)` berarti satu permintaan curl bisa membayar nyaris nol
+  tanpa promo apa pun tercapai (SEC-013). Penolakannya sengaja diletakkan **sebelum** verifikasi
+  ongkir, supaya permintaan yang pasti ditolak tak lebih dulu menghabiskan panggilan Mengantar
+  berbayar. Saat promo `discount_nominal`/`discount_percent` di-wire nanti, hitung nilainya di
+  server dari tabel `promotions` — jangan pernah menerima nominalnya dari client.
+- **Gambar produk divalidasi di server, isinya bukan cuma klaimnya** (`@/lib/product-image-validation`,
+  SEC-019): tipe diadu ke whitelist, **isi berkas diadu ke magic bytes**, dan ukuran diperkirakan
+  dari panjang base64 **sebelum** di-decode. Dipanggil di route (agar admin dapat pesan 422 yang
+  jelas) DAN diulang di `uploadImageIfDataUrl` sebagai lapis kedua — fungsi itu satu-satunya pintu
+  ke Storage publik. Dulu mime dari data-URL dipakai apa adanya sebagai `contentType`.
+- **`products/update` wajib memakai validator yang sama dengan `products/create`** (SEC-018).
+  Tanpa itu, produk yang tak mungkin dibuat lewat create bisa lahir dengan membuatnya seadanya lalu
+  mengeditnya.
+- **Pembatalan pesanan wajib compare-and-swap** (SEC-020): `updateOrderStatus(..., expectedFrom)`
+  memasukkan status lama ke `WHERE`, sehingga dua permintaan kembar (double-click, retry, dua tab)
+  tak bisa dua-duanya lolos dan mengembalikan stok dua kali. Terukur: tanpa CAS, dua permintaan
+  serentak sama-sama 200 dan stok naik **+6** untuk pesanan berisi 3 item; dengan CAS, 200 + 409
+  dan stok naik +3. Penyesuaian stok juga memakai **increment atomik** lewat RPC
+  (`adjust_warehouse_stock_atomic` / `adjust_product_stock_atomic`), dengan jalur cadangan
+  baca-lalu-tulis bila migration-nya belum dijalankan.
+- **Jangan membedakan bentuk respons antara "tidak ada" dan "identitas salah"** (SEC-040). Pada
+  `verify-cancel` dan `cancel-by-phone`, kedua (dan ketiga) kegagalan kini menjawab **identik** —
+  selisih sekecil 404-vs-403 sudah cukup menjadikan endpoint itu oracle untuk memastikan sebuah
+  nomor invoice nyata. Pastikan pembatas lajunya juga mencatat **semua** kegagalan; kalau hanya
+  sebagian, selisih waktu sampai 429 menghidupkan kembali oracle yang baru ditutup. Prinsip ini
+  sudah lama dipegang `/api/oms/login`.
+- **Endpoint OMS wajib `requireAdmin()` sendiri** — `proxy.ts` hanya menjaga HALAMAN
+  `/oms/dashboard/*`, route `/api/*` tak tersentuh. `reviews/list` sempat terlewat dan membuka
+  ulasan yang sudah disembunyikan moderator ke publik (SEC-015).
+- **Modul pembawa secret wajib `import 'server-only'`.** `oms-auth.ts` memegang kunci penanda tangan
+  cookie sesi admin; helper yang perlu diimpor komponen client (`sanitizeOmsRedirect`) sudah
+  dipindah ke `@/lib/oms-redirect` yang bersih dari rahasia (SEC-016). Sebelumnya yang menahan
+  secret agar tak ikut ke bundle browser hanyalah tree-shaking — optimisasi, bukan jaminan.
+  Terverifikasi: mengembalikan import lama membuat **build gagal**, bukan lolos diam-diam.
+- **Jangan memakai `ilike` untuk pencocokan yang seharusnya persis.** `%` dan `_` bermakna wildcard,
+  jadi username berisi satu tanda persen dulu cocok dengan baris admin **mana pun** (SEC-023).
+  Pakai `escapeLikeWildcards()` di `admins.ts` — ia juga meng-escape `*`, karena PostgREST
+  menerjemahkannya menjadi `%` sebelum query sampai ke SQL. Input login juga dibatasi panjangnya
+  (254/1024) supaya scrypt tak bisa dijadikan beban CPU.
+- **Endpoint publik jangan mengembalikan identitas yang tak dipakai UI.** `reviewable-by-phone` dulu
+  mengembalikan `customerName` utuh tanpa mask (SEC-021); field itu dihapus, bukan di-mask, karena
+  sejak nama penulis diisi server tak ada lagi yang memakainya. Ketiga endpoint submit ulasan kini
+  mengisi `authorName` dari pesanan terverifikasi dan **tak pernah membaca** `body.authorName`
+  (SEC-007, SEC-041), serta membatasi panjang `comment` lewat `@/lib/review-validation` (SEC-042).
+- **Format `no_telepon` & `email` divalidasi di server saat checkout** (SEC-022). Keduanya tetap
+  opsional; yang ditolak hanya nilai yang diisi tapi malformed. Ini bukan sekadar kebersihan data:
+  keduanya satu-satunya pegangan pembeli tamu atas pesanannya, dan nilai malformed membuat pesanan
+  itu tak pernah bisa dilacak, dibatalkan, maupun diulas oleh pemiliknya sendiri.
+- **Endpoint OMS menolak permintaan LINTAS SITUS, bukan hanya yang tak terautentikasi** (SEC-026).
+  `requireAdmin()` dan `requireAdminRole()` memeriksa `Sec-Fetch-Site`/`Origin` lebih dulu dan
+  membalas **403 `CROSS_SITE_DENIED`**; cookie sesi OMS memakai `sameSite: 'strict'`.
+  ⚠️ Jangan pernah lagi menyebut "Content-Type application/json memicu preflight CORS" sebagai
+  peredam CSRF di project ini — itu KELIRU dan sempat tercatat di register temuan. Tak ada satu pun
+  route yang memvalidasi Content-Type, dan `request.json()` mengabaikan header itu, jadi form
+  lintas-situs ber-`enctype="text/plain"` lolos tanpa preflight sama sekali. Guard-nya kini
+  eksplisit; kalau menambah jalur admin baru, lewati salah satu dari kedua fungsi itu.
+- **Harga paket/combo dihitung ULANG di server dari tabel `product_combos`** (SEC-033). `comboId`
+  ikut dikirim dari keranjang → checkout → `orders/create`, tapi ia **hanya petunjuk**, bukan harga:
+  server mencari paketnya di DB, memastikan produk & kuantitasnya cocok persis, lalu mengalokasikan
+  harga dengan `allocateComboPrices` — fungsi yang SAMA dengan yang dipakai klien, sehingga
+  pembulatannya identik dan total server = total di layar. Kalau tak cocok, item jatuh ke harga
+  satuan (bukan 422 — pembeli yang mengubah kuantitas memang keluar dari paket). Terukur
+  2026-09-07: tanpa perbaikan `jumlah_total` 43.661, dengan perbaikan 34.161 untuk keranjang yang
+  sama; selisih Rp9.500 itu dulu ditagihkan ke pembeli tanpa ia tahu.
+- **Baca publik memakai `createPublicClient()` (anon, TUNDUK RLS), bukan service_role.** Sebelumnya
+  SETIAP baca Supabase di app berjalan sebagai service_role dan client anon-nya dead code, sehingga
+  RLS tak pernah menjadi lapisan pertahanan kedua di jalur publik (SEC-031, SEC-032). Sudah
+  dipindahkan: tiga fungsi baca ulasan di `mock-db/reviews.ts`. `createClient()` yang lama TIDAK
+  bisa dipakai di jalur ini — ia memanggil `cookies()`, dan Next.js melarang API dinamis di dalam
+  `unstable_cache` yang membungkus baca storefront.
+- **Setiap migration yang dijalankan WAJIB dicatat di `public.schema_migrations`** (SEC-036).
+  Tanpa CLI, migration dijalankan copy-paste manual dan tak ada yang tahu file mana sudah jalan —
+  itulah yang membuat RLS `order_items` mati berbulan-bulan tanpa terdeteksi. Cara mencatat ada di
+  `supabase/README.md`. Kalau ragu sebuah file sudah jalan: jangan dicatat. Ledger yang berbohong
+  lebih buruk daripada ledger kosong.
+- **Gerbang CI wajib hijau sebelum merge**: `.github/workflows/ci.yml` menjalankan `npm run lint`,
+  `npm run typecheck`, dan `npm audit --audit-level=high` (SEC-035). Playwright SENGAJA tidak ikut
+  di gerbang PR (butuh browser + server hidup + kredensial). `react-hooks/set-state-in-effect`
+  sengaja diturunkan ke **warning** — kesebelas kemunculannya sudah ditelusuri dan semuanya pola
+  yang benar (animasi rAF, IntersectionObserver, siklus objectURL, fetch ber-abort); alasannya
+  ditulis lengkap di `eslint.config.mjs`.
 - Verifikasi webhook signature Xendit sebelum memproses event apapun (saat integrasi)
 - Cookie keranjang tidak boleh menyimpan data sensitif — hanya ID produk, quantity, price
 
----
-
-## Brand Colors & Design System
-
-Semua halaman wajib menggunakan palet warna berikut. Jangan menggunakan warna di luar palet ini tanpa konfirmasi.
-
-### Palet Warna Utama
-
-| Nama | HEX | Kegunaan |
-|------|-----|----------|
-| `green-primary` | `#46B33C` | Background section, tombol utama, navbar, footer |
-| `green-light` | `#96D296` | Background card, badge, hover state |
-| `green-surface` | `#F5FFEF` | Background halaman (putih kehijauan), input background |
-| `white` | `#FFFFFF` | Teks di atas background hijau, card background |
-| `text-dark` | `#1A1A1A` | Teks utama di atas background putih/terang |
-| `text-muted` | `#6B7280` | Teks sekunder, harga asli (coret), placeholder |
-| `red-promo` | `#EF4444` | Badge promo, harga diskon, notifikasi error |
-
-### Aturan Penggunaan Warna
-
-- Background halaman default: `#F5FFEF` (bukan pure white `#FFFFFF`)
-- Tombol primary: background `#46B33C`, teks `#FFFFFF`
-- Tombol hover: background sedikit lebih gelap dari `#46B33C` (gunakan `brightness-90`)
-- Card produk: background `#FFFFFF` dengan border atau shadow tipis
-- Section banner (value proposition, footer): background `#46B33C`, teks `#FFFFFF`
-- Card fitur di dalam section hijau: background `#96D296`
-- **Jangan** menggunakan warna biru, ungu, atau warna brand lain tanpa konfirmasi
-- **Pengecualian fungsional** (sudah disepakati): aksi destruktif memakai `rose` (mis. tombol
-  "Batalkan Pesanan"), tombol sekunder netral `slate-100`, banner peringatan `orange`, dan
-  badge status order (amber/emerald/rose). Tetap hindari biru/ungu.
-
-### Token Brand (sudah dikonfigurasi)
-
-Token brand sudah didefinisikan di `tailwind.config.ts` dan di-load lewat directive
-`@config` di `src/app/globals.css` (Tailwind v4):
-
-```ts
-// tailwind.config.ts
-theme: {
-  extend: {
-    colors: {
-      brand: {
-        primary: '#46B33C',   // hijau utama
-        light: '#96D296',     // hijau muda / card
-        surface: '#F5FFEF',   // background halaman
-      }
-    }
-  }
-}
-```
-
-Gunakan class `bg-brand-primary`, `text-brand-primary`, `bg-brand-light`, `bg-brand-surface` di seluruh project.
-
----
-
-## Flowchart Sistem Ecommerce (target end-to-end)
-
-Alur lengkap sistem sebagai acuan saat membangun fitur. Data produk/order/review sudah Supabase;
-search alamat + **cek ongkir Mengantar sudah real**; bagian Xendit (pembayaran) & booking/tracking
-resi masih roadmap (dijalankan dengan mock).
-
-### Alur Browsing & Keranjang
-1. User membuka web → data produk diambil via `GET /api/products/list` (Supabase; katalog & terlaris pure OMS)
-2. Server menyiapkan tampilan halaman (Server Component)
-3. User klik "Tambah ke Keranjang" → disimpan ke cookie (`infarm_cart`) via `cart-client.ts`
-4. Angka keranjang di navbar update (+1) tanpa reload (custom event)
-5. User akses `/keranjang` → render item berdasarkan ID di cookie
-6. Keranjang tampilkan: progres promo aktif (`/api/promotions/active`), rekomendasi combo relevan
-   (`/api/combos/active`), dan ringkasan pembayaran (subtotal − diskon promo, ongkir GRATIS bila tercapai)
-
-### Alur Checkout & Pembayaran
-7. User klik "Checkout" / "Beli Langsung" → item terpilih disimpan ke cookie `infarm_checkout`
-   (keduanya WAJIB `setCheckoutItems`); snapshot promo/combo tercapai → `infarm_checkout_promo`
-8. Halaman `/checkout`: form Nama, No. HP, Alamat (search Mengantar → `destination_id`),
-   lalu **cek ongkir otomatis** (pilih kurir → `selected_courier`, ongkir masuk total), Metode
-   Pembayaran. Semua field & kurir divalidasi client; tombol "Bayar Sekarang" aktif hanya bila valid.
-   (Field email sudah dihapus dari form — lihat "Email Konfirmasi Pesanan".)
-9. User isi form → klik "Bayar Sekarang" → `POST /api/orders/create` → RPC atomik `create_order_with_items`
-   (insert `orders` + `order_items` + kurangi stok; rollback bila stok kurang; nomor invoice `INV-…`)
-10. Backend **buat invoice** → hubungi Xendit API untuk generate link pembayaran *(roadmap)*
-11. Xendit kirim balik URL invoice *(roadmap)*
-12. User di-redirect ke halaman pembayaran Xendit *(roadmap)*
-13. User melakukan pembayaran
-
-### Alur Post-Payment (Webhook) — roadmap
-14. Xendit kirim notifikasi ke webhook (`/api/webhooks/xendit`)
-15. Backend verifikasi signature → update tabel `orders` + update stok produk
-16. Kirim data ke API Mengantar untuk proses booking kurir
-17. Mengantar kirim balik no. resi / booking ID resmi
-18. Update tabel order dengan no. resi
-19. **Hapus cookie keranjang** (`infarm_cart` + `infarm_checkout`)
-20. Kirim email otomatis ke user berisi no. pesanan & link pelacakan
-21. User kembali ke web → tampil halaman "Order Confirmed" (`/checkout/success`)
-22. User bisa tracking pesanan via no. resi (`/track`), atau **membatalkan** lewat
-    `/order-cancellation?id=&token=` selama status masih `Menunggu Pembayaran`/`Diproses`
-
-### Catatan Implementasi Penting
-- Langkah 3 & 7: operasi cookie via `src/lib/cart-client.ts`
-- Langkah 8: cek ongkir Mengantar via `src/lib/mengantar.ts` (`fetchShippingEstimate`), UI `ShippingOptions` *(sudah real)*
-- Langkah 9 & 22: data order via `src/lib/mock-db/orders.ts` (Supabase)
-- Langkah 10-12: logika Xendit di `src/lib/xendit/`, jangan di frontend *(roadmap)*
-- Langkah 14-20: semua terjadi di `src/app/api/webhooks/xendit/route.ts` *(roadmap)*
-- Langkah 16-17: booking/tracking kurir Mengantar (pakai `MENGANTAR_API_KEY`) *(roadmap)*
-- Langkah 19: pastikan cookie dihapus **hanya setelah** webhook dikonfirmasi sukses, bukan setelah redirect
-- Langkah 20: template email ada di `src/emails/order-confirmation.html` (preview `/dev/email-preview`); pengiriman email otomatis *(roadmap)*

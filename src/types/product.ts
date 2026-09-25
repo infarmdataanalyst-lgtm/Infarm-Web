@@ -20,6 +20,15 @@ export type Product = {
   badge?: string
 }
 
+// Produk untuk kartu katalog/listing yang butuh info sosial-proof (rating + jumlah terjual).
+// Superset Product; field tambahan OPSIONAL → kartu degradasi rapi bila data tak tersedia
+// (mis. katalog /products yang belum mem-plumb rating/terjual). Diisi oleh getBestSellingCatalogPage.
+export type CatalogCardProduct = Product & {
+  soldCount?: number // total unit terjual (dari agregasi order)
+  rating?: number // rata-rata rating (0–5, 1 desimal)
+  reviewCount?: number // jumlah ulasan tampil (0 = belum ada → sembunyikan bintang)
+}
+
 // Produk yang disimpan via OMS ke mock database (superset Product + data gudang).
 // Tetap kompatibel dengan Product agar bisa langsung dipakai kartu produk ecommerce.
 export type StoredProduct = Product & {
@@ -29,6 +38,12 @@ export type StoredProduct = Product & {
   images: string[] // galeri foto (maks 9); images[0] = foto utama (mirror imageUrl)
   archived?: boolean // true = tetap tersimpan di OMS tapi disembunyikan dari ecommerce
   createdAt: string // ISO date, untuk urutan terbaru
+  minOrderQty: number // minimum pembelian per baris keranjang (pcs). 1 = tanpa batasan
+  // Berat satuan dalam GRAM (integer, konvensi sama dengan harga). undefined = admin BELUM
+  // mengisi → pemakai wajib memakai DEFAULT_WEIGHT_GRAM sebagai cadangan (lihat lib/shipping-weight.ts).
+  // Sengaja opsional, BUKAN diisi angka default di sini: hanya dengan begitu OMS bisa membedakan
+  // "belum diisi" dari "beratnya memang sebesar itu".
+  berat?: number
 }
 
 // Payload dari form upload produk OMS (sebelum disimpan).
@@ -43,6 +58,8 @@ export type CreateProductInput = {
   description?: string
   imageUrl?: string // foto utama; bila kosong diambil dari images[0]
   images?: string[] // galeri foto (maks 9), data URL base64 atau URL
+  minOrderQty?: number // minimum pembelian (pcs); kosong = 1 (tanpa batasan)
+  berat?: number // berat satuan (GRAM); wajib diisi form OMS, kosong hanya untuk data lama
 }
 
 // Apakah produk sedang diskon (harga asli > harga jual) → dasar tampil harga coret.
@@ -61,7 +78,6 @@ export type ProductReview = {
   category: string // kategori filter ulasan, mis. 'Kualitas' | 'Pengiriman'
   imageUrls?: string[] // foto ulasan (opsional)
   reply?: string // balasan admin (opsional)
-  verified?: boolean // true bila ulasan terikat ke pesanan (order_invoice terisi) → "Pembeli Terverifikasi"
 }
 
 // Produk lengkap untuk Halaman Detail Produk — memperluas Product dengan galeri foto,
@@ -73,4 +89,5 @@ export type ProductDetail = Product & {
   reviewCount: number // jumlah ulasan
   description: string // penjelasan / spesifikasi detail produk
   reviews: ProductReview[]
+  minOrderQty?: number // minimum pembelian (pcs); undefined/1 = bebas. Produk dummy tak punya.
 }

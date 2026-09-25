@@ -6,6 +6,8 @@ import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/oms-guard'
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { saveProduct } from '@/lib/mock-db/products'
+import { parseStockPerWarehouse, writeStockPerWarehouse } from '@/lib/warehouse'
+import { recordAdminStockChanges } from '@/lib/stock-audit'
 import { PRODUCT_CATEGORIES } from '@/lib/data/categories'
 import {
   validateName,
@@ -13,10 +15,13 @@ import {
   validatePrice,
   validateOriginalPrice,
   validateStock,
+  validateMinOrderQty,
+  validateBerat,
   validateDescription,
   validateImages,
   MAX_PRODUCT_IMAGES,
 } from '@/lib/product-validation'
+import { validateProductImages } from '@/lib/product-image-validation'
 import type { CreateProductInput, ProductCategory } from '@/types/product'
 
 // 'fs' butuh runtime Node.js (bukan Edge)
@@ -53,6 +58,16 @@ function validatePayload(body: unknown): { input: CreateProductInput } | { error
   const stockErr = validateStock(typeof b.stock === 'number' ? b.stock : '')
   if (stockErr) return { error: stockErr }
 
+  // Minimum pembelian: opsional di payload (produk lama/klien lama) → default 1 = tanpa batasan
+  const minOrderQty = typeof b.minOrderQty === 'number' ? b.minOrderQty : 1
+  const minQtyErr = validateMinOrderQty(minOrderQty)
+  if (minQtyErr) return { error: minQtyErr }
+
+  // Berat (gram): WAJIB untuk produk baru — tak ada alasan produk baru lahir tanpa berat, dan
+  // membiarkannya kosong berarti buyer dikutip ongkir dari berat cadangan, bukan berat sebenarnya.
+  const beratErr = validateBerat(typeof b.berat === 'number' ? b.berat : '')
+  if (beratErr) return { error: beratErr }
+
   if (typeof b.description !== 'string') return { error: 'Deskripsi wajib diisi.' }
   const descErr = validateDescription(b.description)
   if (descErr) return { error: descErr }
@@ -73,6 +88,8 @@ function validatePayload(body: unknown): { input: CreateProductInput } | { error
       price: b.price as number,
       originalPrice,
       stock: b.stock as number,
+      minOrderQty,
+      berat: b.berat as number,
       description: (b.description as string).trim(),
       imageUrl: typeof b.imageUrl === 'string' ? b.imageUrl : undefined,
       images: b.images as string[],
@@ -98,7 +115,37 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: result.error }, { status: 422 })
   }
 
+  // Tipe, ukuran, dan ISI tiap gambar diperiksa di server (menutup SEC-019). validatePayload di
+  // atas hanya memastikan gambar berupa array string dan jumlahnya wajar — ia sama sekali tidak
+  // melihat APA isi string itu.
+  const imageError = validateProductImages(result.input)
+  if (imageError) return NextResponse.json({ error: imageError }, { status: 422 })
+
+  // Rincian stok per gudang (mode multi). Divalidasi SEBELUM produk dibuat agar payload cacat
+  // tidak meninggalkan produk tanpa stok yang benar.
+  const perWarehouse = parseStockPerWarehouse((body as Record<string, unknown>).stockPerWarehouse)
+  if (perWarehouse.error) {
+    return NextResponse.json({ error: perWarehouse.error }, { status: 422 })
+  }
+
   const saved = await saveProduct(result.input)
+
+  // saveProduct sudah menaruh `stock` ke gudang default; rincian per gudang menimpanya bila ada.
+  if (perWarehouse.entries && perWarehouse.entries.length > 0) {
+    await writeStockPerWarehouse(saved.id, perWarehouse.entries)
+
+    // Stok AWAL produk baru ikut dicatat ke riwayat: tanpa ini, baris pertama riwayat sebuah produk
+    // akan seolah muncul dari angka yang tak pernah diisi siapa pun. Produk baru → stok sebelum = 0.
+    await recordAdminStockChanges(
+      perWarehouse.entries.map((entry) => ({
+        productId: saved.id,
+        warehouseId: entry.warehouseId,
+        stokBefore: 0,
+        stokAfter: entry.stok,
+      })),
+      'product_form',
+    )
+  }
 
   // Segarkan cache halaman storefront agar produk baru langsung tampil saat navigasi.
   // '/produk/[id]' butuh arg 'page' karena route dinamis (revalidasi semua halaman detail).

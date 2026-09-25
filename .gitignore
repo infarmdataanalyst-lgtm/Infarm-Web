@@ -47,3 +47,15 @@ src/data/products.json
 # skill + setting lokal Claude Code (khusus mesin ini, tidak dibagikan ke repo)
 .claude/skills/
 .claude/settings.local.json
+
+# Playwright (E2E) — artefak hasil uji, jangan di-commit
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+
+# Keluaran sementara pemeriksaan API pihak ketiga — memuat data pembayaran pelanggan
+# (payer_email, payment_destination, customer). JANGAN pernah masuk repo.
+# Pola, bukan satu nama: tiap pemeriksaan kontrak API cenderung memakai nama file baru.
+inv-*.json
+xendit-*.json

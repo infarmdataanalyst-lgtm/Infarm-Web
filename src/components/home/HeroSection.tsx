@@ -8,19 +8,35 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import HeroSearchBar from './HeroSearchBar'
+import HeroStats from './HeroStats'
 
-// Path gambar background hero. Taruh file di: public/images/hero-background.jpg
-const HERO_IMAGE_PATH = '/images/hero-background.jpg'
+// Basis nama file hero (art-direction). Taruh file di public/images/ dengan salah satu ekstensi
+// jpg/webp/png:
+//   Desktop/tablet (landscape 16:9)  → hero-background.(jpg|webp|png)
+//   Mobile (portrait 9:16)           → hero-background-mobile.(jpg|webp|png)
+// Bila file mobile belum ada, foto desktop dipakai juga di mobile (fallback).
+const HERO_DESKTOP_BASE = 'hero-background'
+const HERO_MOBILE_BASE = 'hero-background-mobile'
+
+// Cari file hero di public/images/ dengan basis nama tertentu; coba jpg→webp→png.
+// Kembalikan path publik yang ada, atau null. Server-only (Server Component) → aman pakai fs.
+function resolveHeroImage(base: string): string | null {
+  for (const ext of ['jpg', 'webp', 'png'] as const) {
+    const rel = `/images/${base}.${ext}`
+    if (existsSync(join(process.cwd(), 'public', rel))) return rel
+  }
+  return null
+}
 
 // Menampilkan bagian hero teratas homepage: background, kolom pencarian, judul marketing,
 // dan tiga trust badge. Menyesuaikan diri dari mobile hingga layar lebar.
 // Catatan: saran pencarian kini diambil client-side on-type via /api/products/search
 // (dulu seluruh katalog dikirim sebagai prop → payload beranda berat). Hero tak perlu fetch produk lagi.
 export default function HeroSection() {
-  // Cek ketersediaan file gambar hero agar tidak muncul broken image bila belum di-upload.
-  // Jika file ada → tampilkan <Image> responsive; jika belum → fallback ke gradient.
-  const heroImageExists = existsSync(join(process.cwd(), 'public', HERO_IMAGE_PATH))
+  // Resolusi path tiap gambar hero (jpg/webp/png). Tak ada satupun → fallback ke gradient.
+  // Mobile absen → foto desktop dipakai di semua ukuran.
+  const desktopImage = resolveHeroImage(HERO_DESKTOP_BASE)
+  const mobileImage = resolveHeroImage(HERO_MOBILE_BASE)
 
   return (
     <section className="relative isolate flex min-h-[80vh] flex-col overflow-hidden">
@@ -30,76 +46,64 @@ export default function HeroSection() {
         aria-hidden
         className="absolute inset-0 -z-20 bg-gradient-to-b from-brand-soil/30 via-brand-cream to-brand-light"
       />
-      {/* Gambar background responsive: `fill` + `object-cover` mengisi penuh section dan
-          crop proporsional di semua ukuran layar (mobile/tablet/desktop). `object-center`
-          mengatur titik fokus — ganti ke object-top/object-bottom bila perlu.
-          Tampil otomatis begitu file public/images/hero-background.jpg tersedia. */}
-      {heroImageExists && (
+      {/* Foto MOBILE (portrait) — hanya tampil < sm. Sembunyi bila file belum ada (pakai desktop). */}
+      {mobileImage && (
         <Image
-          src={HERO_IMAGE_PATH}
+          src={mobileImage}
           alt=""
           fill
           priority
+          unoptimized
           sizes="100vw"
-          className="-z-10 object-cover object-center"
+          className="-z-10 object-cover object-center sm:hidden"
         />
       )}
-      {/* Overlay gelap tipis agar teks tetap kontras di atas gambar/gradient */}
-      <div aria-hidden className="absolute inset-0 -z-10 bg-black/10" />
-
+      {/* Foto DESKTOP/TABLET (landscape) — tampil sm+. Bila file mobile absen, tampil juga di
+          mobile (tanpa `hidden`) sebagai fallback. `object-center` = titik fokus crop. */}
+      {desktopImage && (
+        <Image
+          src={desktopImage}
+          alt=""
+          fill
+          priority
+          unoptimized
+          sizes="100vw"
+          className={`-z-10 object-cover object-center ${mobileImage ? 'hidden sm:block' : ''}`}
+        />
+      )}
       {/* === Konten hero === */}
-      {/* flex-col + justify-between membagi ruang vertikal: grup atas (search+judul), CTA di tengah,
-          dan kartu statistik menempel di bawah. Dengan 3 grup, jarak antar grup sama → CTA persis
-          di tengah antara judul dan kartu. Berlaku di semua ukuran layar.
+      {/* flex-col + justify-between: headline (atas), CTA (tengah), statistik (bawah).
           pt besar memberi ruang untuk AppBar fixed. */}
       <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col justify-between px-4 pt-20 pb-12 sm:px-6 sm:pt-24 lg:px-8">
-        {/* Grup atas: search + headline */}
+        {/* Headline marketing — putih, drop-shadow agar tetap terbaca di atas background */}
         <div>
-          {/* Floating search input — autocomplete: saran produk diambil on-type dari server */}
-          <HeroSearchBar />
-
-          {/* Marketing headline — putih, dengan drop-shadow agar tetap terbaca di atas background */}
-          <h1 className="mt-8 max-w-2xl font-sans text-4xl font-extrabold leading-tight tracking-tight text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.45)] sm:text-5xl lg:text-6xl">
+          <h1 className="max-w-2xl font-heading text-4xl font-extrabold leading-tight tracking-tight text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.45)] sm:text-5xl lg:text-6xl">
             Berkebun Jadi Mudah
             <br />
             Pasti Panen
           </h1>
         </div>
 
-        {/* CTA utama (di tengah) — wrapper agar tombol tetap selebar kontennya & rata kiri */}
+        {/* CTA utama — wrapper agar tombol tetap selebar kontennya & rata kiri */}
         <div>
           <Link
             href="/products"
-            className="inline-flex items-center gap-2 rounded-full bg-brand-primary px-7 py-3 text-base font-bold text-white shadow-md transition hover:brightness-90 active:scale-[0.98]"
+            className="inline-flex items-center gap-2 rounded-full bg-brand-primary px-7 py-3 font-heading text-base font-bold text-white shadow-md transition hover:brightness-90 active:scale-[0.98]"
           >
             Belanja Sekarang
             <ArrowRightIcon />
           </Link>
         </div>
 
-        {/* Trust badges (di bawah) — grid 3 kolom sejajar sejak mobile, selaras lebar dengan search */}
-        <ul className="grid max-w-xl grid-cols-3 gap-2 sm:gap-3">
-          <TrustBadge highlight="3,4 Juta +" label="Pembeli Puas" />
-          <TrustBadge highlight="4.9" label="Rating Produk" />
-          <TrustBadge highlight="100%" label="Produk Original" />
-        </ul>
+        {/* Trust indicators (di bawah) — tanpa box, di atas foto hero, dipisah garis vertikal,
+            angka beranimasi count-up saat mount (client component) */}
+        <HeroStats />
       </div>
     </section>
   )
 }
 
 // === Sub-komponen ===
-
-// Satu kotak trust badge frosted-glass dengan angka highlight (abu gelap) dan label kompak di bawahnya
-function TrustBadge({ highlight, label }: { highlight: string; label: string }) {
-  return (
-    <li className="rounded-2xl bg-white/80 px-2 py-3 text-center shadow-sm backdrop-blur-md">
-      <p className="text-base font-bold text-gray-800 sm:text-xl">{highlight}</p>
-      {/* whitespace-nowrap: jaga label tetap satu baris di HP mini */}
-      <p className="whitespace-nowrap text-[10px] text-gray-600 sm:text-xs">{label}</p>
-    </li>
-  )
-}
 
 // Ikon panah ke kanan (inline SVG) untuk tombol CTA "Belanja Sekarang"
 function ArrowRightIcon() {

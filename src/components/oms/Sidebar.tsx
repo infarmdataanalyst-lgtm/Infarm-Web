@@ -17,6 +17,9 @@ import {
   Megaphone,
   ShoppingCart,
   Star,
+  Warehouse,
+  Undo2,
+  Settings,
   HelpCircle,
   LogOut,
   X,
@@ -25,6 +28,9 @@ import {
 import { useSidebar } from './SidebarContext'
 
 // === Definisi Menu Navigasi ===
+// Sengaja TANPA sub-menu. Sub-halaman Gudang (Daftar / Kelola Stok / Riwayat Mutasi) dinavigasi
+// lewat tab di dalam halamannya sendiri (`GudangTabs`) — menampilkannya di dua tempat sekaligus
+// membuat pengguna harus memilih dua kali untuk tujuan yang sama.
 type NavItem = {
   label: string
   href: string
@@ -37,7 +43,12 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Paket & Combo', href: '/oms/dashboard/paket-combo', icon: Boxes },
   { label: 'Promosi', href: '/oms/dashboard/promosi', icon: Megaphone },
   { label: 'Pesanan', href: '/oms/dashboard/orders', icon: ShoppingCart },
+  // Tepat di bawah Pesanan: daftar kerja ini SELALU berasal dari pembatalan pesanan, dan admin
+  // biasanya sampai ke sini persis setelah membatalkan salah satunya.
+  { label: 'Pengembalian Dana', href: '/oms/dashboard/refund', icon: Undo2 },
   { label: 'Ulasan', href: '/oms/dashboard/reviews', icon: Star },
+  { label: 'Gudang', href: '/oms/dashboard/gudang', icon: Warehouse },
+  { label: 'Pengaturan', href: '/oms/dashboard/pengaturan', icon: Settings },
 ]
 
 export default function Sidebar() {

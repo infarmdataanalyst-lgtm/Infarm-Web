@@ -6,9 +6,17 @@
 
 import { NextResponse } from 'next/server'
 import { revalidatePath, revalidateTag } from 'next/cache'
-import { getOrderByOrderId, updateOrderStatus } from '@/lib/mock-db/orders'
+import {
+  getOrderByOrderId,
+  getOrderUuidByInvoice,
+  markRefundNeeded,
+  updateOrderStatus,
+} from '@/lib/mock-db/orders'
 import { restoreStock } from '@/lib/mock-db/products'
+import { recordOrderStockChanges } from '@/lib/stock-audit'
 import { verifyCancelToken } from '@/lib/order-token'
+import { evaluateBuyerCancel } from '@/lib/order-cancellation'
+import { expireInvoiceForCancelledOrder } from '@/lib/order-invoice-expiry'
 import type { Order, OrderFulfillmentStatus } from '@/types/order'
 
 // createAdminClient (Supabase) butuh runtime Node.js, bukan Edge
@@ -47,7 +55,9 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Pesanan tidak ditemukan.' }, { status: 404 })
   }
 
-  return NextResponse.json({ order: toPublicOrder(order) })
+  // Vonis ikut dikirim supaya halaman pembatalan tahu harus menampilkan tombol batal atau jalur CS,
+  // tanpa perlu menebak sendiri dari status, dan tanpa perlu diberi nomor resi yang tak dipakainya.
+  return NextResponse.json({ order: toPublicOrder(order), cancel: evaluateBuyerCancel(order) })
 }
 
 // PATCH: batalkan pesanan setelah memverifikasi token & memastikan status masih bisa dibatalkan.
@@ -79,31 +89,75 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: 'Pesanan tidak ditemukan.' }, { status: 404 })
   }
 
-  const current = order.status ?? 'Diproses'
-  if (current === 'Dibatalkan') {
+  // Validasi di SERVER (jangan percaya UI). Aturannya di `evaluateBuyerCancel` — dipakai bersama
+  // dengan /api/orders/cancel-by-phone DAN dengan halaman pembatalan, supaya ketiganya mustahil
+  // berbeda pendapat. Termasuk pagar terpenting: pesanan yang resinya sudah terbit TIDAK bisa
+  // dibatalkan sendiri, meski statusnya masih 'Diproses'.
+  const verdict = evaluateBuyerCancel(order)
+  if (!verdict.ok) {
     return NextResponse.json(
-      { error: 'Pesanan ini sudah dibatalkan sebelumnya.', order: toPublicOrder(order) },
+      { error: verdict.message, code: verdict.code, order: toPublicOrder(order) },
       { status: 409 },
     )
   }
-  // Validasi status di SERVER (jangan percaya UI): tolak bila sudah lewat tahap aman.
-  if (!CANCELLABLE_STATUSES.includes(current)) {
+
+  // COMPARE-AND-SWAP: status lama ikut menjadi syarat UPDATE (SEC-020). Pemeriksaan status di atas
+  // hanya melihat keadaan pada SAAT ITU — dua permintaan kembar (double-click, retry jaringan, dua
+  // tab, atau tautan pembatalan yang diklik dua kali) sama-sama bisa melewatinya. Hanya satu yang
+  // akan mendapat baris kembali dari sini; sisanya berhenti sebelum stok dikembalikan dua kali.
+  const updated = await updateOrderStatus(orderId, 'Dibatalkan', undefined, CANCELLABLE_STATUSES)
+  if (!updated) {
     return NextResponse.json(
       {
-        error: 'Pesanan tidak dapat dibatalkan karena sudah dalam proses pengemasan/pengiriman.',
+        error: 'Pesanan ini sudah dibatalkan atau statusnya berubah. Muat ulang halaman.',
         order: toPublicOrder(order),
       },
       { status: 409 },
     )
   }
 
-  const updated = await updateOrderStatus(orderId, 'Dibatalkan')
-  if (!updated) {
-    return NextResponse.json({ error: 'Gagal memperbarui status pesanan.' }, { status: 500 })
-  }
-
   // Lepaskan kembali stok yang dialokasikan untuk pesanan ini (produk OMS).
-  await restoreStock(order.items.map((i) => ({ productId: i.productId, quantity: i.quantity })))
+  // Stok dikembalikan ke GUDANG pemenuh pesanan (order.warehouseId); kosong → gudang default.
+  await restoreStock(
+    order.items.map((i) => ({
+      productId: i.productId,
+      quantity: i.quantity,
+      variantId: i.variantId ?? undefined,
+    })),
+    order.warehouseId,
+  )
+
+  // Riwayat mutasi: stok kembali karena pembatalan. Pelakunya PEMBELI (bukan admin), jadi kolom
+  // "diubah oleh" di riwayat dibiarkan kosong dan ditampilkan sebagai "Sistem (pembeli)".
+  const orderUuid = await getOrderUuidByInvoice(order.orderId)
+  await recordOrderStockChanges({
+    items: order.items.map((i) => ({
+      productId: i.productId,
+      ...(i.variantId ? { variantId: i.variantId } : {}),
+      quantity: i.quantity,
+    })),
+    ...(order.warehouseId ? { warehouseId: order.warehouseId } : {}),
+    orderInvoice: order.orderId,
+    ...(orderUuid ? { orderId: orderUuid } : {}),
+    direction: 'in',
+  })
+
+  // Matikan tagihan Xendit yang mungkin masih hidup.
+  //
+  // Jalur INI yang paling sering menemuinya: pembeli membatalkan sendiri hampir selalu terjadi
+  // pada pesanan yang BELUM dibayar — persis keadaan yang tagihannya masih bisa dibayar. Tanpa ini,
+  // pembeli yang berubah pikiran lalu membuka email tagihan lamanya tetap bisa membayar pesanan
+  // yang sudah batal, dan uang lewat VA tak bisa dikembalikan Xendit.
+  //
+  // Kegagalannya TIDAK dilaporkan ke pembeli: pembatalannya sudah berhasil dan tak ada yang bisa
+  // pembeli lakukan soal ini. Yang perlu tahu adalah admin — dan itu tercatat di kolom
+  // invoice_expire_error.
+  await expireInvoiceForCancelledOrder(order)
+
+  // Pesanan LUNAS yang dibatalkan = uang pembeli masih di kita, dan harus dikembalikan manual.
+  // Jalur pembeli hampir selalu menyentuh pesanan yang belum dibayar — tapi 'Diproses tanpa resi'
+  // juga boleh dibatalkan sendiri, dan itu SUDAH lunas. Jadi penandaannya tetap perlu di sini.
+  if (order.paymentStatus === 'Lunas') await markRefundNeeded(order.orderId)
 
   // Stok kembali → segarkan cache storefront agar stok tampil akurat.
   revalidatePath('/')

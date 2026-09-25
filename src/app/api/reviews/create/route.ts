@@ -1,11 +1,20 @@
 // src/app/api/reviews/create/route.ts
-// API menulis ulasan baru ke Supabase. Dipanggil POST dari form /review.
+// API menulis ulasan baru ke Supabase (flow lama: verifikasi lewat nomor invoice).
+//
+// Perlindungan: rate limit submit per-IP (lihat @/lib/rate-limit) untuk mencegah spam ulasan bot.
 
 import { NextResponse } from 'next/server'
+import { RATE_LIMITS, enforceRateLimit, getClientIp } from '@/lib/rate-limit'
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { createReview, DuplicateReviewError } from '@/lib/mock-db/reviews'
 import type { CreateReviewInput } from '@/lib/mock-db/reviews'
 import { getOrderByOrderId } from '@/lib/mock-db/orders'
+import {
+  REVIEW_COMMENT_MAX,
+  REVIEW_COMMENT_TOO_LONG,
+  clampAuthorName,
+} from '@/lib/review-validation'
+import { evaluateReviewEligibility } from '@/lib/review-eligibility'
 
 export const runtime = 'nodejs'
 
@@ -34,6 +43,13 @@ function isValidPayload(body: unknown): body is CreateReviewPayload {
 
 // Menyimpan ulasan baru dari pelanggan
 export async function POST(request: Request) {
+  // Rate limit per-IP: cegah spam ulasan (dicek sebelum pekerjaan DB apa pun)
+  const limited = enforceRateLimit(
+    `reviews-create:ip:${getClientIp(request)}`,
+    RATE_LIMITS.REVIEW_CREATE_IP,
+  )
+  if (limited) return limited
+
   let body: unknown
   try {
     body = await request.json()
@@ -47,6 +63,10 @@ export async function POST(request: Request) {
       { status: 422 },
     )
   }
+  // Batas panjang komentar — lihat @/lib/review-validation (bagian batas panjang pada SEC-042).
+  if (body.comment.length > REVIEW_COMMENT_MAX) {
+    return NextResponse.json({ error: REVIEW_COMMENT_TOO_LONG }, { status: 422 })
+  }
 
   // === Verifikasi pesanan di server (otoritatif) ===
   // Ambil pesanan asli lalu tolak bila: tidak ada, sudah dibatalkan, atau produk yang
@@ -56,11 +76,16 @@ export async function POST(request: Request) {
   if (!order) {
     return NextResponse.json({ error: 'Pesanan tidak ditemukan.' }, { status: 404 })
   }
-  if (order.status === 'Dibatalkan') {
-    return NextResponse.json(
-      { error: 'Pesanan sudah dibatalkan, tidak dapat diberi ulasan.' },
-      { status: 409 },
-    )
+  // Aturan statusnya dipusatkan di evaluateReviewEligibility — fungsi yang SAMA dipakai daftar
+  // /review, jadi mustahil ada celah antara apa yang ditawarkan layar dan apa yang diterima di sini.
+  // Sebelumnya pemeriksaan ini hanya menolak 'Dibatalkan', sehingga pesanan yang belum dibayar pun
+  // bisa diulas.
+  const kelayakan = evaluateReviewEligibility({
+    status: order.status,
+    deliveredAt: order.deliveredAt,
+  })
+  if (!kelayakan.ok) {
+    return NextResponse.json({ error: kelayakan.message, code: kelayakan.code }, { status: 409 })
   }
   if (!order.items.some((it) => it.productId === body.productId)) {
     return NextResponse.json(
@@ -69,8 +94,33 @@ export async function POST(request: Request) {
     )
   }
 
+  // Nama penulis diambil dari PESANAN, bukan dari body permintaan.
+  //
+  // Dua sebab. Pertama, keamanan: `authorName` dari client bisa diisi apa saja, termasuk nama orang
+  // lain — ulasan atas nama pembeli lain bisa dipalsukan tanpa perlu menembus apa pun. Server sudah
+  // memegang pesanannya di sini, jadi tak ada alasan mempercayai kiriman client.
+  // Kedua, ini yang memungkinkan `orders/get` berhenti mengembalikan `customerName` sama sekali
+  // (temuan SEC-007): form ulasan tak lagi perlu tahu namanya, karena server yang mengisinya.
+  //
+  // Fallback dipakai hanya bila pesanan lama benar-benar tak punya nama tersimpan.
+  const authorName = clampAuthorName(order.customerName?.trim() || 'Pelanggan Infarm')
+
   try {
-    const id = await createReview({ ...body, orderInvoice: invoice })
+    // Field EKSPLISIT, bukan `{ ...body }` (SEC-014). Versi lama menyebar seluruh body permintaan,
+    // sehingga field yang tak pernah divalidasi ikut tersimpan apa adanya — terutama `imageUrls`,
+    // yang dirender sebagai <img src> di halaman produk publik (URL eksternal sembarang tampil di
+    // storefront), dan `category` tanpa batas panjang. Kedua endpoint ulasan lain (create-by-email,
+    // create-by-phone) sejak awal memakai daftar eksplisit; yang ini disamakan.
+    //
+    // Menambah field baru ke ulasan = tambahkan di sini SETELAH divalidasi di atas. Jangan kembali
+    // ke penyebaran body: ia diam-diam menerima setiap field yang kelak ditambahkan ke tipe input.
+    const id = await createReview({
+      productId: body.productId,
+      authorName,
+      rating: body.rating,
+      comment: body.comment,
+      orderInvoice: invoice,
+    })
     // Segarkan halaman detail produk agar ulasan baru langsung tampil
     revalidatePath(`/produk/${body.productId}`)
     revalidateTag('reviews', 'max')

@@ -7,26 +7,24 @@
 
 import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Download, ChevronLeft, ChevronRight, Inbox, Eye } from 'lucide-react'
+import { Download, ChevronLeft, ChevronRight, Inbox, Eye, AlertTriangle } from 'lucide-react'
 import OmsHeader from '@/components/oms/OmsHeader'
 import OrderStatusModal from '@/components/oms/OrderStatusModal'
+import WarehouseMultiFilter from '@/components/oms/WarehouseMultiFilter'
+import DateRangePicker from '@/components/oms/DateRangePicker'
+import { paymentMethodLabel } from '@/lib/payment-method'
+import { ORDER_ISSUE_META, isOrderIssueKind } from '@/lib/order-issues'
 import type {
   Order,
   OrderFulfillmentStatus,
   OrderPaymentStatus,
 } from '@/types/order'
 
-// Shortcut tanggal untuk filter range
-type DateShortcut = {
-  label: string
-  days: number
-  isMonthStart?: boolean
-}
-const DATE_SHORTCUTS: DateShortcut[] = [
-  { label: 'Hari Ini', days: 0 },
-  { label: '7 Hari', days: 7 },
-  { label: 'Bulan Ini', days: 0, isMonthStart: true },
-]
+// Jeda polling sinkronisasi status kurir selama tab OMS dibuka.
+// 90 detik: cukup rapat untuk terasa hidup bagi admin yang sedang memantau, cukup longgar untuk
+// tidak menghujani API kurir. Scan kurir sendiri tertunda menit-an, jadi memperkecil angka ini
+// tak membuat datanya lebih segar — hanya menambah panggilan.
+const SYNC_INTERVAL_MS = 90_000
 
 // === Konfigurasi Tab & Pagination ===
 
@@ -42,10 +40,18 @@ const TABS: Array<'Semua' | OrderFulfillmentStatus> = [
 
 const PAGE_SIZE = 10
 
+// Nilai filter gudang untuk pesanan lama yang belum punya gudang pemenuh (warehouse_id NULL).
+// Harus sama dengan WAREHOUSE_FILTER_NONE di src/lib/mock-db/orders.ts.
+const WAREHOUSE_NONE = 'none'
+
+// Label kolom Gudang untuk pesanan tanpa gudang pemenuh (pesanan sebelum fitur multi-gudang,
+// atau gudangnya sudah dihapus).
+const WAREHOUSE_UNSET_LABEL = 'Belum ditentukan'
+
 // Wrapper: useSearchParams (di OrdersContent) wajib dibungkus <Suspense> agar build Next.js tidak error.
 export default function OrdersPage() {
   return (
-    <Suspense fallback={<OmsHeader title="Pesanan" notificationCount={3} />}>
+    <Suspense fallback={<OmsHeader title="Pesanan" />}>
       <OrdersContent />
     </Suspense>
   )
@@ -58,19 +64,33 @@ function OrdersContent() {
   // === State ===
   const [orders, setOrders] = useState<Order[]>([])
   const [couriers, setCouriers] = useState<string[]>([])
+  // Gudang aktif untuk dropdown filter (dari endpoint list, bukan /api/warehouses/list — supaya
+  // halaman ini tetap satu request).
+  const [warehouses, setWarehouses] = useState<{ id: string; nama: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
   const [toast, setToast] = useState('')
+  // Waktu sinkronisasi terakhir dengan kurir. null = belum pernah (atau gagal terus).
+  const [syncedAt, setSyncedAt] = useState<Date | null>(null)
 
   // === Filter State (baca dari URL searchParams) ===
   const activeTab = (searchParams.get('status') as (typeof TABS)[number]) || 'Semua'
   const dari = searchParams.get('dari') || ''
   const sampai = searchParams.get('sampai') || ''
   const kurir = searchParams.get('kurir') || ''
+  // Gudang = MULTI-SELECT. Di URL disimpan sebagai daftar berkoma (`gudang=id1,id2`), pola sama
+  // dengan `?category=a,b` di katalog. Array kosong = "Semua gudang" (tanpa filter).
+  const gudang = searchParams.get('gudang') || ''
+  const gudangList = gudang ? gudang.split(',').filter(Boolean) : []
   const pembayaran = (searchParams.get('pembayaran') as OrderPaymentStatus | null) || null
   const sortBy = (searchParams.get('sortBy') as 'total' | 'tanggal' | null) || null
   const order = (searchParams.get('order') as 'asc' | 'desc' | null) || null
+  // Pesanan bermasalah — tujuan tautan dari kotak "Perlu tindakan" di dashboard & notifikasi.
+  // Nilai asing diabaikan di sini juga (bukan hanya di server) supaya chip-nya tak menampilkan
+  // label kosong untuk URL yang usang.
+  const rawMasalah = searchParams.get('masalah')
+  const masalah = isOrderIssueKind(rawMasalah) ? rawMasalah : null
 
   // Auto-sembunyikan toast
   useEffect(() => {
@@ -78,6 +98,97 @@ function OrdersContent() {
     const t = setTimeout(() => setToast(''), 3000)
     return () => clearTimeout(t)
   }, [toast])
+
+  // Invoice yang penghapusan penjemputannya sedang dicoba ulang (tombol di kolom No. Resi).
+  const [mengulangHapus, setMengulangHapus] = useState('')
+
+  // Mencoba menghapus lagi penjemputan pesanan ber-CANCEL_FAILED (MGT-66).
+  //
+  // Sampai 22 Sep 2026 satu-satunya jalan keluar dari keadaan ini adalah menjalankan curl DELETE
+  // dari terminal — jadi pesanan yang penjemputannya masih hidup bergantung pada seseorang yang
+  // ingat membaca kolom galat, lalu tahu perintahnya. Endpointnya sudah ada sejak lama; yang belum
+  // ada hanyalah tombolnya, dan pencatatan hasilnya ke database.
+  async function cobaHapusLagi(target: Order) {
+    if (mengulangHapus) return
+    setMengulangHapus(target.orderId)
+    try {
+      const res = await fetch('/api/oms/shipments/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoice: target.orderId }),
+      })
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string
+        hasil?: { ok?: boolean; reason?: string; detail?: string; attempts?: number }
+      }
+
+      if (res.ok && data.hasil?.ok) {
+        // Baris diperbarui di tempat, tanpa memuat ulang seluruh tabel: filter, halaman, dan posisi
+        // gulir admin tetap seperti semula.
+        setOrders((prev) =>
+          prev.map((o) =>
+            o.orderId === target.orderId
+              ? { ...o, shipmentStatus: 'CANCELLED', shipmentError: undefined }
+              : o,
+          ),
+        )
+        setToast(`Penjemputan ${target.orderId} berhasil dihapus di Mengantar.`)
+        return
+      }
+
+      const alasan = data.hasil?.reason ?? data.error ?? 'tidak diketahui'
+      setToast(
+        `Penghapusan ${target.orderId} masih gagal (${alasan}). Hapus manual di dashboard Mengantar, lalu tekan "Sudah dihapus manual".`,
+      )
+    } catch {
+      setToast('Gagal menghubungi server. Coba lagi.')
+    } finally {
+      setMengulangHapus('')
+    }
+  }
+
+  // Menandai bahwa admin sudah menghapus pengirimannya sendiri di dashboard Mengantar.
+  //
+  // KENAPA ini tak bisa disimpulkan sistem: Mengantar menjawab "Orders already deleted" untuk
+  // pengiriman yang sudah terhapus MAUPUN untuk `_id` yang tak pernah ada (terukur 9 Sep 2026), jadi
+  // jawabannya tak membuktikan apa pun. Tanpa tombol ini, penghapusan manual — jalan terakhir yang
+  // disarankan sistem sendiri — tak punya cara membersihkan tandanya, dan baris yang sudah beres
+  // terus menampilkan alarm. Alarm palsu yang dibiarkan membuat alarm berikutnya ikut diabaikan.
+  async function tandaiSudahDihapus(target: Order) {
+    if (mengulangHapus) return
+    const yakin = window.confirm(
+      `Tandai penjemputan ${target.orderId} sudah dihapus?\n\n` +
+        'Tekan OK hanya kalau Anda SUDAH memastikan pengirimannya hilang di dashboard Mengantar. ' +
+        'Sistem tidak memeriksanya — yang dicatat adalah pernyataan Anda.',
+    )
+    if (!yakin) return
+
+    setMengulangHapus(target.orderId)
+    try {
+      const res = await fetch('/api/oms/shipments/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoice: target.orderId, tandaiManual: true }),
+      })
+      const data = (await res.json().catch(() => ({}))) as { error?: string }
+
+      if (!res.ok) {
+        setToast(data.error ?? 'Gagal menandai penjemputan.')
+        return
+      }
+
+      setOrders((prev) =>
+        prev.map((o) =>
+          o.orderId === target.orderId ? { ...o, shipmentStatus: 'CANCELLED' } : o,
+        ),
+      )
+      setToast(`Penjemputan ${target.orderId} ditandai sudah dihapus manual.`)
+    } catch {
+      setToast('Gagal menghubungi server. Coba lagi.')
+    } finally {
+      setMengulangHapus('')
+    }
+  }
 
   // Ganti data order di tabel (in-place) setelah update sukses, lalu tutup modal + toast
   function handleUpdated(updated: Order) {
@@ -96,20 +207,23 @@ function OrdersContent() {
     if (dari) params.set('dari', dari)
     if (sampai) params.set('sampai', sampai)
     if (kurir) params.set('kurir', kurir)
+    if (gudang) params.set('gudang', gudang)
     if (pembayaran) params.set('pembayaran', pembayaran)
     if (sortBy) params.set('sortBy', sortBy)
     if (order) params.set('order', order)
     if (activeTab !== 'Semua') params.set('status', activeTab)
+    if (masalah) params.set('masalah', masalah)
 
     const queryString = params.toString()
     const url = `/api/orders/list${queryString ? '?' + queryString : ''}`
 
     fetch(url)
       .then((res) => res.json())
-      .then((data: { orders?: Order[]; couriers?: string[] }) => {
+      .then((data: { orders?: Order[]; couriers?: string[]; warehouses?: { id: string; nama: string }[] }) => {
         if (active) {
           setOrders(data.orders ?? [])
           if (data.couriers) setCouriers(data.couriers)
+          if (data.warehouses) setWarehouses(data.warehouses)
         }
       })
       .catch(() => {
@@ -122,7 +236,7 @@ function OrdersContent() {
     return () => {
       active = false
     }
-  }, [dari, sampai, kurir, pembayaran, sortBy, order, activeTab])
+  }, [dari, sampai, kurir, gudang, pembayaran, sortBy, order, activeTab, masalah])
 
   // Pesanan untuk halaman saat ini (orders sudah di-filter di server)
   const totalPages = Math.max(1, Math.ceil(orders.length / PAGE_SIZE))
@@ -132,25 +246,87 @@ function OrdersContent() {
     currentPage * PAGE_SIZE,
   )
 
-  // === Helper: Date Shortcuts ===
-  function applyDateShortcut(days: number, isMonthStart: boolean = false) {
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
+  // === Sinkronisasi status dari kurir ===
+  //
+  // Dipicu otomatis saat baris yang tampil berubah (buka halaman, refresh, ganti halaman/filter) —
+  // TANPA tombol manual. Admin butuh data benar saat ia melihat layar, dan menyuruhnya mengklik
+  // untuk itu hanya memindahkan pekerjaan ke orangnya.
+  //
+  // Dependensi effect ini sengaja `pageInvoices` (string nomor invoice), BUKAN `pageOrders`:
+  // sinkronisasi mengubah `orders` → `pageOrders` jadi objek baru → effect jalan lagi → tak
+  // berujung. Nomor invoice tak berubah saat status naik, jadi rantai itu putus.
+  const pageInvoices = pageOrders.map((o) => o.orderId).join(',')
 
-    let fromDate = new Date(today)
-    if (isMonthStart) {
-      fromDate.setDate(1)
-    } else {
-      fromDate.setDate(today.getDate() - days)
+  useEffect(() => {
+    if (!pageInvoices) return
+    let active = true
+
+    async function sync() {
+      try {
+        const res = await fetch('/api/orders/sync-tracking', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ invoices: pageInvoices.split(',') }),
+        })
+        if (!res.ok || !active) return
+        const data: { updated?: { orderId: string; status: OrderFulfillmentStatus }[] } =
+          await res.json()
+        if (!active) return
+
+        setSyncedAt(new Date())
+        const changes = data.updated ?? []
+        if (changes.length === 0) return
+
+        // Baris di-patch di tempat, bukan memuat ulang seluruh tabel: memuat ulang akan
+        // mengembalikan scroll & membuat layar berkedip untuk perubahan beberapa sel saja.
+        // Konsekuensi yang disengaja: baris yang naik status bisa jadi tak lagi cocok dengan tab
+        // filter aktif dan tetap tampil sampai muat ulang berikutnya — itu lebih jujur daripada
+        // membuatnya hilang tepat saat admin sedang melihatnya.
+        setOrders((prev) =>
+          prev.map((o) => {
+            const hit = changes.find((c) => c.orderId === o.orderId)
+            return hit ? { ...o, status: hit.status } : o
+          }),
+        )
+      } catch {
+        // Gangguan jaringan: biarkan tabel apa adanya. Data DB tetap tampil, cuma tak sesegar
+        // mungkin — jauh lebih baik daripada pesan error untuk sesuatu yang tak bisa
+        // ditindaklanjuti admin.
+      }
     }
 
-    const formatDate = (d: Date) => d.toISOString().split('T')[0]
-    return { dari: formatDate(fromDate), sampai: formatDate(today) }
-  }
+    sync()
+
+    // Polling ringan selama tab dibuka, supaya admin yang sedang memantau tak perlu me-refresh.
+    // Dilewati saat tab tersembunyi: tak ada yang melihat = tak perlu memanggil kurir.
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') sync()
+    }, SYNC_INTERVAL_MS)
+
+    return () => {
+      active = false
+      clearInterval(timer)
+    }
+  }, [pageInvoices])
 
   // === Helper: Check if ANY filter is active ===
   function hasActiveFilters() {
-    return !!(dari || sampai || kurir || pembayaran || sortBy || (activeTab !== 'Semua'))
+    return !!(
+      dari ||
+      sampai ||
+      kurir ||
+      gudang ||
+      pembayaran ||
+      sortBy ||
+      masalah ||
+      activeTab !== 'Semua'
+    )
+  }
+
+  // Nama gudang untuk ditampilkan di kolom tabel. warehouseName di-resolve server; kosong berarti
+  // pesanan lama (warehouse_id NULL) atau gudangnya sudah dihapus.
+  function warehouseLabel(o: Order): string {
+    return o.warehouseName ?? WAREHOUSE_UNSET_LABEL
   }
 
   // === Helper: Reset all filters ===
@@ -201,8 +377,13 @@ function OrdersContent() {
       'Kurir',
       'Layanan',
       'No. Resi',
+      'Status Booking Kurir',
       'Pembayaran',
+      // Dipakai saat merekap pesanan yang perlu pengembalian dana: jalur transfer bank dan
+      // e-wallet ditangani sangat berbeda, dan tanpa kolom ini rekapnya harus dicocokkan manual.
+      'Metode Bayar',
       'Status',
+      'Gudang',
       'Tanggal',
     ]
 
@@ -215,8 +396,11 @@ function OrdersContent() {
         o.logistics?.courier ?? '',
         o.logistics?.service ?? '',
         o.trackingNumber ?? '',
+        o.shipmentStatus === 'FAILED' ? `GAGAL: ${o.shipmentError ?? ''}` : (o.shipmentStatus ?? ''),
         o.paymentStatus,
+        paymentMethodLabel(o.paymentMethod) ?? '',
         o.status ?? '',
+        warehouseLabel(o),
         formatDate(o.date),
       ]
         .map(esc)
@@ -239,7 +423,7 @@ function OrdersContent() {
 
   return (
     <>
-      <OmsHeader title="Pesanan" notificationCount={3} />
+      <OmsHeader title="Pesanan" />
 
       <main className="p-6 md:p-8">
         {/* === Header Section === */}
@@ -249,6 +433,13 @@ function OrdersContent() {
             <p className="mt-1 text-sm text-gray-500">
               Kelola seluruh alur pesanan masuk dari berbagai channel penjualan.
             </p>
+            {/* Penanda kesegaran data — menggantikan tombol "perbarui": admin cukup tahu data ini
+                sesegar apa, tak perlu disuruh mengkliknya. */}
+            {syncedAt && (
+              <p className="mt-1 text-xs text-gray-400">
+                Status kurir disinkronkan {formatClock(syncedAt)}
+              </p>
+            )}
           </div>
           <button
             type="button"
@@ -264,50 +455,15 @@ function OrdersContent() {
         {/* === Filter Section === */}
         <div className="mt-6 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {/* Tanggal Dari */}
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Tanggal Dari
-              </label>
-              <input
-                type="date"
-                value={dari}
-                onChange={(e) => updateFilters({ dari: e.target.value || null })}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
-              />
-              {/* Date shortcuts */}
-              <div className="mt-2 flex gap-1.5 flex-wrap">
-                {DATE_SHORTCUTS.map((shortcut) => (
-                  <button
-                    key={shortcut.label}
-                    type="button"
-                    onClick={() => {
-                      const { dari: d, sampai: s } = applyDateShortcut(
-                        shortcut.days,
-                        shortcut.isMonthStart,
-                      )
-                      updateFilters({ dari: d, sampai: s })
-                    }}
-                    className="text-xs px-2 py-1 rounded bg-emerald-50 text-emerald-700 hover:bg-emerald-100 font-medium transition"
-                  >
-                    {shortcut.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Tanggal Sampai */}
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Tanggal Sampai
-              </label>
-              <input
-                type="date"
-                value={sampai}
-                onChange={(e) => updateFilters({ sampai: e.target.value || null })}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
-              />
-            </div>
+            {/* Rentang tanggal — SATU kalender, bukan lagi dua kolom terpisah.
+                Pintasan (Hari ini / 7 hari / 30 hari / Bulan ini) kini hidup di dalam kalender,
+                jadi deretan chip yang dulu menempel di bawah kolom "Tanggal Dari" tak perlu lagi. */}
+            <DateRangePicker
+              label="Rentang Tanggal"
+              from={dari}
+              to={sampai}
+              onApply={(f, t) => updateFilters({ dari: f || null, sampai: t || null })}
+            />
 
             {/* Filter Kurir */}
             <div>
@@ -343,6 +499,20 @@ function OrdersContent() {
                 <option value="Lunas">Lunas</option>
                 <option value="Gagal">Gagal</option>
               </select>
+            </div>
+
+            {/* Filter Gudang — MULTI-SELECT, bisa dikombinasikan dengan filter lain
+                (semua disaring di server). Bukan <select> native: elemen itu tak bisa memuat
+                checkbox dan highlight opsinya digambar OS (biru), tak bisa diwarnai lewat CSS. */}
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Gudang</label>
+              <WarehouseMultiFilter
+                warehouses={warehouses}
+                value={gudangList}
+                onChange={(next) => updateFilters({ gudang: next.length > 0 ? next.join(',') : null })}
+                noneValue={WAREHOUSE_NONE}
+                noneLabel={WAREHOUSE_UNSET_LABEL}
+              />
             </div>
           </div>
 
@@ -381,6 +551,27 @@ function OrdersContent() {
           </div>
         </div>
 
+        {/* === Chip filter "pesanan bermasalah" ===
+            Filter ini tidak punya kontrol di panel filter di atas — ia hanya bisa datang dari
+            tautan (dashboard/notifikasi). Tanpa chip, admin yang mendarat di sini melihat daftar
+            pendek tanpa tahu kenapa, dan mengira pesanan lainnya hilang. */}
+        {masalah && (
+          <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-900">
+            <AlertTriangle className="h-4 w-4 flex-none text-orange-600" aria-hidden />
+            <span>
+              Hanya menampilkan: <span className="font-semibold">{ORDER_ISSUE_META[masalah].label}</span>
+              <span className="text-orange-800/80"> — {ORDER_ISSUE_META[masalah].tindakan}</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => updateFilters({ masalah: null })}
+              className="ml-auto rounded-full border border-orange-300 px-2.5 py-0.5 text-xs font-semibold text-orange-800 transition hover:bg-orange-100"
+            >
+              Tampilkan semua
+            </button>
+          </div>
+        )}
+
         {/* === Tabs Status === */}
         <div className="mt-6 flex gap-6 overflow-x-auto border-b border-gray-200">
           {TABS.map((tab) => {
@@ -415,6 +606,8 @@ function OrdersContent() {
                   <th className="px-5 py-3.5">No. Resi</th>
                   <th className="px-5 py-3.5">Pembayaran</th>
                   <th className="px-5 py-3.5">Status</th>
+                  {/* Ditaruh setelah Status agar status pesanan & gudang pemenuhnya terbaca sekali scan */}
+                  <th className="px-5 py-3.5">Gudang</th>
                   <th className="px-5 py-3.5">Tanggal</th>
                   <th className="px-5 py-3.5 text-right">Aksi</th>
                 </tr>
@@ -423,13 +616,13 @@ function OrdersContent() {
                 {/* Loading / kosong */}
                 {loading ? (
                   <tr>
-                    <td colSpan={9} className="px-5 py-12 text-center text-sm text-gray-400">
+                    <td colSpan={10} className="px-5 py-12 text-center text-sm text-gray-400">
                       Memuat pesanan…
                     </td>
                   </tr>
                 ) : pageOrders.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="px-5 py-16 text-center">
+                    <td colSpan={10} className="px-5 py-16 text-center">
                       <Inbox className="mx-auto h-8 w-8 text-gray-300" />
                       <p className="mt-2 text-sm font-medium text-gray-500">
                         Belum ada pesanan
@@ -472,13 +665,100 @@ function OrdersContent() {
                           <span className="text-gray-300">—</span>
                         )}
                       </td>
-                      {/* No. Resi */}
+                      {/* No. Resi — plus penanda bila booking kurir GAGAL.
+                          Pembayaran sudah masuk pada titik itu, jadi baris seperti ini WAJIB
+                          terlihat: tanpa penanda, resi kosong tak bisa dibedakan dari pesanan
+                          yang memang belum waktunya dibooking. */}
                       <td className="px-5 py-4 font-mono text-xs text-gray-500">
-                        {order.trackingNumber ?? '—'}
+                        {order.trackingNumber ? (
+                          // Tautan ke halaman lacak INTERNAL, bukan ke situs J&T (menutup API-MGT-034).
+                          //
+                          // Tiga alasan memilih halaman sendiri:
+                          //   1. Admin melihat PERSIS yang dilihat pembeli, jadi ia bisa menjawab
+                          //      pertanyaan tanpa menebak apa yang tampil di layar penanya.
+                          //   2. Tak bergantung pada URL pelacakan pihak ketiga yang bisa berubah
+                          //      sewaktu-waktu tanpa pemberitahuan.
+                          //   3. Sejak 2026-09-07 halaman itu membaca `status` paket terkini dari
+                          //      Mengantar (bukan cuma riwayat scan), jadi tautannya langsung
+                          //      berguna tanpa integrasi tambahan apa pun.
+                          //
+                          // Kuncinya nomor invoice, BUKAN nomor resi: /track mencari pesanan lewat
+                          // `?order=`, lalu resinya diambil dari baris pesanan itu.
+                          <a
+                            href={`/track?order=${encodeURIComponent(order.orderId)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={`Lacak paket ${order.trackingNumber}`}
+                            className="text-brand-primary underline decoration-dotted underline-offset-2 transition hover:decoration-solid"
+                          >
+                            {order.trackingNumber}
+                          </a>
+                        ) : order.shipmentStatus === 'FAILED' ? (
+                          <span
+                            title={order.shipmentError ?? 'Booking kurir gagal'}
+                            className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-red-50 px-2 py-1 font-sans text-[11px] font-semibold text-red-700"
+                          >
+                            <AlertTriangle className="h-3 w-3" />
+                            Booking gagal
+                          </span>
+                        ) : (
+                          '—'
+                        )}
+
+                        {/* Penjemputan yang GAGAL DIHAPUS saat pesanan dibatalkan (MGT-66).
+                            Ditampilkan TERPISAH dari cabang di atas, bukan sebagai gantinya:
+                            pesanan seperti ini justru PUNYA nomor resi, jadi di cabang itu ia
+                            tampil sebagai baris yang tampak normal — dan satu-satunya jejak
+                            masalahnya hanya ada di kolom database yang tak pernah dibuka.
+                            Akibatnya nyata: kurir tetap datang menjemput paket yang stoknya sudah
+                            dikembalikan, dan saldo Mengantar tetap terpotong. */}
+                        {order.shipmentStatus === 'CANCEL_FAILED' && (
+                          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                            <span
+                              title={order.shipmentError ?? 'Penghapusan penjemputan gagal'}
+                              className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-amber-50 px-2 py-1 font-sans text-[11px] font-semibold text-amber-800"
+                            >
+                              <AlertTriangle className="h-3 w-3" />
+                              Penjemputan belum dihapus
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => cobaHapusLagi(order)}
+                              disabled={Boolean(mengulangHapus)}
+                              className="whitespace-nowrap rounded-full border border-amber-300 px-2 py-1 font-sans text-[11px] font-semibold text-amber-800 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {mengulangHapus === order.orderId ? 'Menghapus…' : 'Coba hapus lagi'}
+                            </button>
+                            {/* Jalan keluar terakhir. Sengaja lebih pucat daripada tombol di
+                                sebelahnya: mencoba lewat sistem selalu lebih dulu, karena hanya
+                                jalur itu yang benar-benar menghapus di Mengantar. */}
+                            <button
+                              type="button"
+                              onClick={() => tandaiSudahDihapus(order)}
+                              disabled={Boolean(mengulangHapus)}
+                              title="Pakai hanya kalau Anda sudah menghapusnya sendiri di dashboard Mengantar"
+                              className="whitespace-nowrap rounded-full px-2 py-1 font-sans text-[11px] font-medium text-gray-500 underline decoration-dotted underline-offset-2 transition hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              Sudah dihapus manual
+                            </button>
+                          </div>
+                        )}
                       </td>
-                      {/* Pembayaran */}
+                      {/* Pembayaran — status DAN metodenya.
+                          Metodenya ikut ditampilkan karena itulah yang menentukan bagaimana uang
+                          bisa dikembalikan saat pesanan dibatalkan: transfer bank tak bisa
+                          di-refund Xendit dan menuntut transfer manual ke rekening pembeli,
+                          sedangkan e-wallet/QRIS/kartu bisa kembali ke sumbernya. Sebelum ini
+                          nilainya tersimpan tapi tak pernah terlihat di OMS mana pun.
+                          Hanya ditampilkan bila ADA — 'belum tercatat' pada pesanan yang belum
+                          dibayar cuma mengulang apa yang sudah dikatakan badge di atasnya. */}
                       <td className="px-5 py-4">
                         <PaymentBadge status={order.paymentStatus} />
+                        {paymentMethodLabel(order.paymentMethod) && (
+                          <p className="mt-1 text-xs text-gray-500">
+                            {paymentMethodLabel(order.paymentMethod)}
+                          </p>
+                        )}
                       </td>
                       {/* Status alur */}
                       <td className="px-5 py-4">
@@ -486,6 +766,14 @@ function OrdersContent() {
                           <StatusBadge status={order.status} />
                         ) : (
                           <span className="text-gray-300">—</span>
+                        )}
+                      </td>
+                      {/* Gudang pemenuh — pesanan lama (warehouse_id NULL) tampil netral, tak kosong */}
+                      <td className="px-5 py-4">
+                        {order.warehouseName ? (
+                          <span className="text-gray-700">{order.warehouseName}</span>
+                        ) : (
+                          <span className="text-xs italic text-gray-400">{WAREHOUSE_UNSET_LABEL}</span>
                         )}
                       </td>
                       {/* Tanggal */}
@@ -620,6 +908,16 @@ function StatusBadge({ status }: { status: OrderFulfillmentStatus }) {
   // Tampilkan "Menunggu" agar ringkas, sisanya apa adanya
   const label = status === 'Menunggu Pembayaran' ? 'Menunggu' : status
   return <span className={`text-sm font-semibold ${styles[status]}`}>{label}</span>
+}
+
+// Jam:menit saja, mis. "12.07" — untuk penanda "disinkronkan". Tanpa tanggal: sinkronisasi selalu
+// terjadi di sesi yang sedang berjalan, jadi tanggalnya tak menambah informasi.
+function formatClock(d: Date): string {
+  return new Intl.DateTimeFormat('id-ID', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(d)
 }
 
 // Format angka ke Rupiah

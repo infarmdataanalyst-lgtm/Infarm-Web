@@ -24,7 +24,10 @@ export default function ReviewForm() {
 
   // Data produk yang akan diulas (dibangun dari item pesanan)
   const [products, setProducts] = useState<ReviewProduct[]>([])
-  const [customerName, setCustomerName] = useState('')
+  // Nama penulis TIDAK lagi diambil dari API. `orders/get` berhenti mengembalikan nama pelanggan
+  // (temuan SEC-007: endpoint itu terbuka dan nomor invoice mudah ditebak, sehingga nama utuh bisa
+  // dipanen massal). Sebagai gantinya, `reviews/create` mengisi nama penulis sendiri dari pesanan
+  // yang sudah diverifikasinya — jadi klien memang tak perlu tahu.
   // 'cancelled' → pesanan sudah dibatalkan, tidak boleh diulas
   // 'done' → semua produk pada pesanan sudah diulas sebelumnya
   const [status, setStatus] = useState<'loading' | 'ready' | 'notfound' | 'cancelled' | 'done'>('loading')
@@ -85,8 +88,6 @@ export default function ReviewForm() {
             price: item.price,
           }))
 
-        setCustomerName(orderRes.order.customerName ?? '')
-
         // Semua produk pada pesanan sudah diulas → tidak ada yang perlu ditampilkan
         if (built.length === 0) {
           setStatus('done')
@@ -140,7 +141,9 @@ export default function ReviewForm() {
             body: JSON.stringify({
               orderId,
               productId: p.id,
-              authorName: customerName || 'Pelanggan Infarm',
+              // Nilai isian saja: server MENGABAIKANNYA dan mengisi nama penulis dari pesanan.
+              // Tetap dikirim karena validasi payload mewajibkan field ini ada dan tak kosong.
+              authorName: 'Pelanggan Infarm',
               rating: reviews[p.id].rating,
               comment: reviews[p.id].review,
             }),
