@@ -29,6 +29,9 @@ type PromotionRow = {
   end_at: string | null
   progress_message: string
   is_active: boolean
+  // Opsional di tipe: database yang belum menjalankan migration kuota tak punya kolomnya.
+  usage_limit?: number | null
+  usage_count?: number | null
   created_at: string
 }
 
@@ -45,6 +48,8 @@ function rowToPromotion(row: PromotionRow): Promotion {
     endAt: row.end_at,
     progressMessage: row.progress_message,
     isActive: row.is_active,
+    usageLimit: row.usage_limit ?? null,
+    usageCount: row.usage_count ?? 0,
     createdAt: row.created_at,
   }
 }
@@ -62,6 +67,9 @@ function inputToRow(input: PromotionInput) {
     end_at: input.endAt,
     progress_message: input.progressMessage,
     is_active: input.isActive,
+    // usage_count SENGAJA tak ditulis dari form: hanya create_order_with_items (tambah) dan
+    // release_promo_quota (kurangi) yang boleh mengubahnya. Menyunting promo tak mereset pemakaian.
+    usage_limit: input.usageLimit,
   }
 }
 
@@ -196,4 +204,32 @@ export async function deletePromotion(id: string): Promise<boolean> {
   }
 
   return (data?.length ?? 0) > 0
+}
+
+// === Kuota promo ===
+
+// Mengembalikan kuota promo yang dipakai sebuah pesanan (dipanggil saat pesanan batal/kedaluwarsa,
+// tepat di sebelah restoreStock). Idempoten di database (release_promo_quota menandai
+// orders.promo_quota_released_at), jadi aman bila webhook dan penyapu terjadwal membatalkan pesanan
+// yang sama. Best effort: gagal di sini tak boleh menggagalkan pembatalan — kuota yang tertahan
+// hanya membuat promo habis sedikit lebih cepat, dan tercatat di log.
+export async function releasePromoQuota(invoice: string): Promise<void> {
+  const supabase = createAdminClient()
+  const { data, error: readError } = await supabase
+    .from('orders')
+    .select('id')
+    .eq('nomor_invoice', invoice)
+    .maybeSingle()
+  if (readError || !data) {
+    if (readError) console.error(`[promo-kuota] gagal membaca pesanan ${invoice}:`, readError.message)
+    return
+  }
+
+  const { error } = await supabase.rpc('release_promo_quota', { p_order_id: (data as { id: string }).id })
+  if (error) {
+    // PGRST202/42883 = fungsi belum ada (migration 20260928120000 belum dijalankan) → tak ada kuota
+    // yang perlu dikembalikan. Galat lain dicatat.
+    if (error.code === 'PGRST202' || error.code === '42883') return
+    console.error(`[promo-kuota] gagal mengembalikan kuota promo ${invoice}:`, error.message)
+  }
 }

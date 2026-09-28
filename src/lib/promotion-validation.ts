@@ -87,6 +87,16 @@ export function validatePromotionInput(body: unknown): PromotionValidation {
 
   const isActive = typeof b.isActive === 'boolean' ? b.isActive : true
 
+  // Batas pemakaian (opsional). Kosong/null = tanpa batas; bila diisi, bilangan bulat 1–1.000.000.
+  let usageLimit: number | null = null
+  if (b.usageLimit !== undefined && b.usageLimit !== null && b.usageLimit !== '') {
+    const v = typeof b.usageLimit === 'number' ? b.usageLimit : NaN
+    if (!Number.isInteger(v) || v < 1 || v > 1_000_000) {
+      return { ok: false, error: 'Batas pemakaian harus bilangan bulat antara 1–1.000.000, atau dikosongkan.' }
+    }
+    usageLimit = v
+  }
+
   return {
     ok: true,
     value: {
@@ -100,6 +110,7 @@ export function validatePromotionInput(body: unknown): PromotionValidation {
       endAt,
       progressMessage,
       isActive,
+      usageLimit,
     },
   }
 }

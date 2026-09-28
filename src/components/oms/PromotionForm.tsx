@@ -60,6 +60,10 @@ export default function PromotionForm({
   )
 
   // Periode
+  // Batas pemakaian (opsional). '' = tanpa batas. Pemakaian yang sudah terjadi (usageCount) hanya
+  // ditampilkan — diubah oleh database saat pesanan dibuat/batal, tak pernah dari formulir.
+  const [usageLimit, setUsageLimit] = useState<number | ''>(initialPromotion?.usageLimit ?? '')
+  const usageCount = initialPromotion?.usageCount ?? 0
   const [startDate, setStartDate] = useState(toWibDateInput(initialPromotion?.startAt ?? null))
   const [endDate, setEndDate] = useState(toWibDateInput(initialPromotion?.endAt ?? null))
 
@@ -171,6 +175,16 @@ export default function PromotionForm({
           ? 'Tanggal mulai tidak boleh di masa lalu'
           : null
 
+  // Batas pemakaian opsional: kosong = tanpa batas; bila diisi 1–1.000.000
+  const usageLimitError =
+    usageLimit === ''
+      ? null
+      : usageLimit < 1
+        ? 'Batas pemakaian minimal 1, atau kosongkan untuk tanpa batas'
+        : usageLimit > 1_000_000
+          ? 'Batas pemakaian maksimal 1.000.000'
+          : null
+
   // Pesan progres opsional; bila diisi maksimal 150 karakter
   const progressError =
     progressMessage.length > 150 ? 'Pesan progres maksimal 150 karakter' : null
@@ -182,6 +196,7 @@ export default function PromotionForm({
       freeProductError ||
       discountNominalError ||
       discountPercentError ||
+      usageLimitError ||
       periodError ||
       progressError,
   )
@@ -200,6 +215,7 @@ export default function PromotionForm({
     freeProductError ||
     discountNominalError ||
     discountPercentError ||
+    usageLimitError ||
     periodError ||
     progressError
 
@@ -242,7 +258,7 @@ export default function PromotionForm({
       ? 'name'
       : typeError
         ? 'type'
-        : minPurchaseError
+        : minPurchaseError || usageLimitError
           ? 'min'
           : freeProductError || discountNominalError || discountPercentError
             ? 'gift'
@@ -263,6 +279,7 @@ export default function PromotionForm({
       minPurchase: minPurchaseNum,
       isActive,
       progressMessage: progressMessage.trim(),
+      usageLimit: usageLimit === '' ? null : usageLimit,
       // Detail hadiah sesuai tipe (null untuk yang tidak relevan)
       freeProductId: type === 'free_product' ? freeProductId : null,
       freeProductName: type === 'free_product' ? freeProductName : null,
@@ -406,6 +423,42 @@ export default function PromotionForm({
               </Field>
               {minPurchase !== '' && !minPurchaseError && (
                 <p className="mt-1 text-xs font-medium text-emerald-700">{formatRupiah(minPurchaseNum)}</p>
+              )}
+            </div>
+
+            {/* Kuota pemakaian (migration 20260928120000) */}
+            <div id="promo-quota" className="mt-5">
+              <Field label="Batas Pemakaian (opsional)" error={usageLimitError}>
+                <div className="relative">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={usageLimit}
+                    onChange={(e) => {
+                      const digits = e.target.value.replace(/\D/g, '')
+                      setUsageLimit(digits === '' ? '' : Number(digits))
+                    }}
+                    placeholder="Kosongkan untuk tanpa batas"
+                    className={`${inputClass} pr-20`}
+                  />
+                  <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center border-l border-gray-200 px-3 text-sm font-medium text-gray-500">
+                    pesanan
+                  </span>
+                </div>
+              </Field>
+              <p className="mt-1 text-xs text-gray-500">
+                Mis. 10 = promo hanya berlaku untuk 10 pesanan pertama. Kuota dipakai saat pesanan
+                dibuat dan kembali bila pesanan batal atau tidak dibayar.
+              </p>
+              {isEdit && (
+                <p className="mt-1 text-xs font-medium text-gray-700">
+                  Sudah terpakai: {usageCount} pesanan
+                  {usageLimit !== '' && !usageLimitError && usageLimit <= usageCount && (
+                    <span className="text-orange-600">
+                      {' '}— batas ini sudah tercapai, promo langsung berhenti ditawarkan.
+                    </span>
+                  )}
+                </p>
               )}
             </div>
           </section>

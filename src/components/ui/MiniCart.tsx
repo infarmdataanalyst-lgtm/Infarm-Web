@@ -33,6 +33,7 @@ import {
   setComboCountInCart,
 } from '@/lib/cart-client'
 import { cartLineKey, comboMultiplier } from '@/lib/cart-lines'
+import PromoQuotaBadge from '@/components/cart/PromoQuotaBadge'
 import { formatRupiah } from '@/lib/format'
 import {
   computePromoProgress,
@@ -440,7 +441,10 @@ function MiniCartPromos({
         ) : (
           <div key={promo.id} className="flex items-start gap-2 text-xs">
             <CheckCircle2 className="mt-px h-3.5 w-3.5 flex-none text-brand-primary" />
-            <p className="font-semibold text-brand-primary">{message}</p>
+            <div className="space-y-1">
+              <p className="font-semibold text-brand-primary">{message}</p>
+              <PromoQuotaBadge promo={promo} />
+            </div>
           </div>
         ),
       )}
@@ -450,7 +454,10 @@ function MiniCartPromos({
         <div>
           <div className="flex items-start gap-2 text-xs">
             <Gift className="mt-px h-3.5 w-3.5 flex-none text-brand-primary" />
-            <p className="text-zinc-700">{berikutnya.message}</p>
+            <div className="space-y-1">
+              <p className="text-zinc-700">{berikutnya.message}</p>
+              <PromoQuotaBadge promo={berikutnya.promo} />
+            </div>
           </div>
           <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-brand-light/40">
             <div

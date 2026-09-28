@@ -25,6 +25,10 @@ export type Promotion = {
   endAt: string | null // ISO; null = tak terbatas
   progressMessage: string // pesan progres di keranjang (boleh memuat token {sisa})
   isActive: boolean
+  // Kuota pemakaian (migration 20260928120000). usageLimit null = tanpa batas. usageCount = jumlah
+  // pesanan yang sedang memakai promo ini (dipotong saat pesanan dibuat, dikembalikan saat batal).
+  usageLimit: number | null
+  usageCount: number
   createdAt: string // ISO date, untuk urutan terbaru
 }
 
@@ -40,6 +44,7 @@ export type PromotionInput = {
   endAt: string | null
   progressMessage: string
   isActive: boolean
+  usageLimit: number | null // null = tanpa batas. usageCount TIDAK dikirim form — hanya diubah RPC.
 }
 
 // === Tanggal promo dalam WIB ===
@@ -82,6 +87,20 @@ export function todayWib(now: Date = new Date()): string {
 export function isPromotionScheduled(startAt: string | null, nowMs: number): boolean {
   if (!startAt) return false
   return new Date(startAt).getTime() > nowMs
+}
+
+// === Kuota pemakaian ===
+
+// Sisa kuota, atau null bila promo tanpa batas. Tak pernah negatif (admin boleh menurunkan batas
+// di bawah pemakaian yang sudah terjadi).
+export function remainingQuota(promo: Pick<Promotion, 'usageLimit' | 'usageCount'>): number | null {
+  if (promo.usageLimit === null) return null
+  return Math.max(0, promo.usageLimit - promo.usageCount)
+}
+
+// Kuota promo sudah habis → promo tak lagi ditawarkan dan pesanan baru tak bisa memakainya.
+export function isPromotionQuotaFull(promo: Pick<Promotion, 'usageLimit' | 'usageCount'>): boolean {
+  return remainingQuota(promo) === 0
 }
 
 // Promo kedaluwarsa bila endAt terisi & sudah lewat dari "sekarang".
