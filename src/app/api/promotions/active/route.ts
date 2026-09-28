@@ -16,6 +16,7 @@ import { NextResponse } from 'next/server'
 import { readActivePromotionsPublic } from '@/lib/mock-db/promotions'
 import { readProducts } from '@/lib/mock-db/products'
 import { getMaxDiscountPercent } from '@/lib/mock-db/settings'
+import { isPromotionQuotaFull } from '@/types/promotion'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic' // selalu pakai data promo terbaru
@@ -39,6 +40,8 @@ export async function GET() {
       if (!p.isActive) return false
       // start_at null ATAU sudah lewat; end_at null ATAU belum lewat
       if (p.startAt && new Date(p.startAt).getTime() > now) return false
+      // Kuota habis → tak ditawarkan lagi (migration 20260928120000)
+      if (isPromotionQuotaFull(p)) return false
       if (p.endAt && new Date(p.endAt).getTime() < now) return false
       return true
     })

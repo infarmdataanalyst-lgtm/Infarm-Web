@@ -18,6 +18,7 @@ import { verifyCancelToken } from '@/lib/order-token'
 import { evaluateBuyerCancel } from '@/lib/order-cancellation'
 import { expireInvoiceForCancelledOrder } from '@/lib/order-invoice-expiry'
 import type { Order, OrderFulfillmentStatus } from '@/types/order'
+import { releasePromoQuota } from '@/lib/mock-db/promotions'
 
 // createAdminClient (Supabase) butuh runtime Node.js, bukan Edge
 export const runtime = 'nodejs'
@@ -126,6 +127,8 @@ export async function PATCH(request: Request) {
     })),
     order.warehouseId,
   )
+  // Kembalikan juga kuota promo yang dipakai pesanan ini (idempoten, lihat releasePromoQuota)
+  await releasePromoQuota(order.orderId)
 
   // Riwayat mutasi: stok kembali karena pembatalan. Pelakunya PEMBELI (bukan admin), jadi kolom
   // "diubah oleh" di riwayat dibiarkan kosong dan ditampilkan sebagai "Sistem (pembeli)".

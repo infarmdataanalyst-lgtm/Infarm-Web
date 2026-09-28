@@ -11,11 +11,13 @@ import { revalidatePath, revalidateTag } from 'next/cache'
 import {
   saveOrder,
   OrderStockError,
+  PromoQuotaError,
   attachGaIdentifiers,
   attachDeliveryEstimate,
 } from '@/lib/mock-db/orders'
 import { readProductsByIds } from '@/lib/mock-db/products'
 import { readPromotions } from '@/lib/mock-db/promotions'
+import { parseExpectedPromoIds, planPromoQuota, promoQuotaMessage } from '@/lib/promo-quota'
 import { getComboById } from '@/lib/mock-db/combos'
 import { allocateComboPrices, computeOrderPromos } from '@/lib/promo-cart'
 import { comboMultiplier } from '@/lib/cart-lines'
@@ -193,6 +195,16 @@ async function pickQuotedWarehouseWithStock(
   return null
 }
 
+// 409 PROMO_QUOTA_EXHAUSTED: kuota promo yang diharapkan pembeli habis. Checkout memuat ulang promo
+// (yang kuotanya habis tak lagi ditawarkan) dan menampilkan pesan menetap di atas ringkasan.
+function promoQuotaResponse(names: string[]) {
+  console.warn(`${LOG} kuota promo habis: ${names.join(', ')}`)
+  return NextResponse.json(
+    { error: promoQuotaMessage(names), code: 'PROMO_QUOTA_EXHAUSTED', promoNames: names },
+    { status: 409 },
+  )
+}
+
 // 409 SHIPPING_CHANGED: gudang pilihan pembeli tak bisa lagi memenuhi pesanan, dan ongkir dari
 // gudang penggantinya belum ia setujui. Checkout memuat ulang ongkir dan menampilkan pesan menetap.
 //
@@ -350,6 +362,8 @@ export async function POST(request: Request) {
     weight?: unknown
     gaClientId?: unknown
     gaSessionId?: unknown
+    // Promo yang ditampilkan checkout ke pembeli (lihat lib/promo-quota.ts)
+    expectedPromoIds?: unknown
   }
 
   // Penanda GA4 titipan checkout. Dipakai HANYA untuk pelaporan (lihat analytics-server.ts) —
@@ -563,6 +577,21 @@ export async function POST(request: Request) {
   // produk gratis → cegah manipulasi dapat barang gratis tanpa memenuhi min_purchase.
   // subtotal dihitung SEBELUM blok ini (item gratis harga 0 → tak mengubah subtotal).
   const nowMs = Date.now()
+
+  // === Kuota promo (migration 20260928120000) ===
+  // Promo yang kuotanya penuh tak diterapkan. Bila pembeli masih MENGIRA promo itu berlaku (ia
+  // melihatnya di checkout), pesanan ditolak dengan pesan jujur alih-alih ditagih lebih mahal
+  // diam-diam; checkout memuat ulang promo lalu pembeli menyetujui total barunya.
+  const quotaPlan = planPromoQuota(
+    promotions,
+    subtotal,
+    nowMs,
+    parseExpectedPromoIds(extra.expectedPromoIds),
+  )
+  if (quotaPlan.exhaustedExpected.length > 0) {
+    return promoQuotaResponse(quotaPlan.exhaustedExpected.map((p) => p.name))
+  }
+  const availablePromotions = quotaPlan.available
   const addedFreeIds = new Set<string>()
   // Peringatan yang ikut dikirim ke pembeli bersama respons sukses (bukan error — pesanannya tetap
   // dibuat). Lihat blok hadiah tak tersedia di bawah.
@@ -571,7 +600,7 @@ export async function POST(request: Request) {
   // hadiah SAAT pesanan dibuat — biaya promo bagi toko. Dulu hadiah tak tercatat di sana sama sekali
   // (hanya order_items.promotion_id, harga 0), sehingga laporan biaya promo hadiah selalu kosong.
   const freeProductPromos: { id: string; name: string; type: string; value: number }[] = []
-  for (const promo of promotions) {
+  for (const promo of availablePromotions) {
     if (promo.type !== 'free_product' || !promo.isActive || !promo.freeProductId) continue
     if (isPromotionExpired(promo.endAt, nowMs)) continue // sudah kedaluwarsa
     if (promo.startAt && new Date(promo.startAt).getTime() > nowMs) continue // belum mulai
@@ -854,7 +883,7 @@ export async function POST(request: Request) {
   //
   // Sebelum ini `discount` dipaku 0 sementara keranjang sudah mengurangi totalnya sendiri, sehingga
   // pembeli melihat satu angka lalu ditagih angka yang lebih besar.
-  const promoResult = computeOrderPromos(promotions, subtotal, shippingCost, nowMs, {
+  const promoResult = computeOrderPromos(availablePromotions, subtotal, shippingCost, nowMs, {
     maxDiscountPercent,
     minTotal: XENDIT_MIN_AMOUNT,
   })
@@ -963,6 +992,11 @@ export async function POST(request: Request) {
       { status: 201 },
     )
   } catch (e) {
+    // Kuota promo terakhir diambil pembeli lain di antara pemeriksaan di atas dan transaksi →
+    // transaksi sudah di-rollback DB. Sama dengan kuota yang sudah habis sejak awal.
+    if (e instanceof PromoQuotaError) {
+      return promoQuotaResponse([e.promoName])
+    }
     // Stok tidak cukup → transaksi sudah di-rollback DB; beri tahu buyer produk mana
     if (e instanceof OrderStockError) {
       // Kalah balapan di RPC: pemeriksaan stok di atas lolos, tapi pembeli lain mengunci & menghabiskan

@@ -3,7 +3,7 @@
 
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/oms-guard'
-import { updatePromotion } from '@/lib/mock-db/promotions'
+import { PromotionWriteError, updatePromotion } from '@/lib/mock-db/promotions'
 import { validatePromotionInput } from '@/lib/promotion-validation'
 
 export const runtime = 'nodejs'
@@ -30,7 +30,15 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: result.error }, { status: 422 })
   }
 
-  const promotion = await updatePromotion(body.id, result.value)
+  let promotion
+  try {
+    promotion = await updatePromotion(body.id, result.value)
+  } catch (e) {
+    if (e instanceof PromotionWriteError) {
+      return NextResponse.json({ error: e.message }, { status: 500 })
+    }
+    throw e
+  }
   if (!promotion) {
     return NextResponse.json({ error: 'Promo tidak ditemukan.' }, { status: 404 })
   }

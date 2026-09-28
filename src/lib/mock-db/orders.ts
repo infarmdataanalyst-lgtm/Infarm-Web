@@ -162,6 +162,18 @@ type OrderItemRow = {
 
 // Dilempar bila stok salah satu produk tidak mencukupi saat checkout.
 // Route menangkapnya untuk menampilkan pesan "Stok produk {nama} tidak mencukupi".
+// Kuota promo habis saat pesanan disimpan (create_order_with_items me-raise
+// 'PROMO_QUOTA_EXHAUSTED:<nama promo>'): pembeli lain mengambil kuota terakhir di antara
+// pemeriksaan server dan transaksi. Transaksi sudah di-rollback DB — stok tak berkurang.
+export class PromoQuotaError extends Error {
+  promoName: string
+  constructor(promoName: string) {
+    super(`Kuota promo ${promoName} sudah habis`)
+    this.name = 'PromoQuotaError'
+    this.promoName = promoName
+  }
+}
+
 export class OrderStockError extends Error {
   productName: string
   constructor(productName: string) {
@@ -1237,6 +1249,11 @@ export async function saveOrder(input: CreateOrderInput): Promise<Order> {
       const raw = error.message.split('INSUFFICIENT_STOCK:')[1]?.trim() ?? ''
       const name = raw.replace(/:\s*\d+\s*$/, '').trim() || 'produk'
       throw new OrderStockError(name)
+    }
+    // Kuota promo habis (migration 20260928120000). Jangan retry.
+    if (error.message?.includes('PROMO_QUOTA_EXHAUSTED')) {
+      const name = error.message.split('PROMO_QUOTA_EXHAUSTED:')[1]?.trim() || 'promo'
+      throw new PromoQuotaError(name)
     }
     // Tabrakan nomor invoice unik → coba lagi dengan nomor baru
     if (error.code === '23505') {

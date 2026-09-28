@@ -35,6 +35,7 @@ import { evaluateBuyerCancel } from '@/lib/order-cancellation'
 import { expireInvoiceForCancelledOrder } from '@/lib/order-invoice-expiry'
 import type { OrderFulfillmentStatus } from '@/types/order'
 import { RATE_LIMITS, enforceRateLimit, getClientIp } from '@/lib/rate-limit'
+import { releasePromoQuota } from '@/lib/mock-db/promotions'
 
 export const runtime = 'nodejs'
 
@@ -146,6 +147,8 @@ export async function POST(request: Request) {
     })),
     order.warehouseId,
   )
+  // Kembalikan juga kuota promo yang dipakai pesanan ini (idempoten, lihat releasePromoQuota)
+  await releasePromoQuota(order.orderId)
 
   // Riwayat mutasi: stok kembali karena pembatalan oleh pembeli (lihat catatan di orders/cancel).
   const orderUuid = await getOrderUuidByInvoice(order.orderId)

@@ -15,19 +15,21 @@ import { formatRupiah } from '@/lib/format'
 import {
   PROMOTION_TYPE_LABELS,
   isPromotionExpired,
+  isPromotionQuotaFull,
   isPromotionScheduled,
   type Promotion,
   type PromotionType,
 } from '@/types/promotion'
 import type { StoredProduct } from '@/types/product'
 
-type StatusFilter = 'all' | 'active' | 'scheduled' | 'inactive' | 'expired'
-type EffectiveStatus = 'active' | 'scheduled' | 'inactive' | 'expired'
+type StatusFilter = 'all' | 'active' | 'scheduled' | 'quota_full' | 'inactive' | 'expired'
+type EffectiveStatus = 'active' | 'scheduled' | 'quota_full' | 'inactive' | 'expired'
 
 const FILTERS: { key: StatusFilter; label: string }[] = [
   { key: 'all', label: 'Semua' },
   { key: 'active', label: 'Aktif' },
   { key: 'scheduled', label: 'Terjadwal' },
+  { key: 'quota_full', label: 'Kuota habis' },
   { key: 'inactive', label: 'Nonaktif' },
   { key: 'expired', label: 'Kedaluwarsa' },
 ]
@@ -66,6 +68,14 @@ function formatDate(iso: string): string {
     year: 'numeric',
     timeZone: 'Asia/Jakarta',
   }).format(d)
+}
+
+// Teks pemakaian kuota: "7 / 10" untuk promo berbatas, "7 · tanpa batas" bila tidak.
+// usageCount = pesanan yang sedang memakai promo (pesanan batal/kedaluwarsa sudah dikembalikan).
+function usageText(promo: Promotion): string {
+  return promo.usageLimit === null
+    ? `${promo.usageCount} · tanpa batas`
+    : `${promo.usageCount} / ${promo.usageLimit}`
 }
 
 // Teks periode: rentang tanggal, atau "Tidak Terbatas" bila kosong
@@ -135,11 +145,12 @@ export default function PromosiPage() {
     return (stockById[promo.freeProductId] ?? 0) <= 0
   }
 
-  // Status efektif (dihitung frontend): kedaluwarsa > nonaktif (manual/stok habis) > terjadwal
-  // (tanggal mulai belum tiba — belum ditawarkan ke pembeli) > aktif
+  // Status efektif (dihitung frontend): kedaluwarsa > nonaktif (manual/stok habis) > kuota habis
+  // (batas pemakaian tercapai — tak ditawarkan lagi) > terjadwal (tanggal mulai belum tiba) > aktif
   function getStatus(promo: Promotion): EffectiveStatus {
     if (nowMs !== null && isPromotionExpired(promo.endAt, nowMs)) return 'expired'
     if (!promo.isActive || isOutOfStock(promo)) return 'inactive'
+    if (isPromotionQuotaFull(promo)) return 'quota_full'
     if (nowMs !== null && isPromotionScheduled(promo.startAt, nowMs)) return 'scheduled'
     return 'active'
   }
@@ -244,6 +255,7 @@ export default function PromosiPage() {
                     <th className="px-5 py-3.5">Minimal Pembelian</th>
                     <th className="px-5 py-3.5">Nilai Hadiah</th>
                     <th className="px-5 py-3.5">Periode</th>
+                    <th className="px-5 py-3.5">Pemakaian</th>
                     <th className="px-5 py-3.5">Status</th>
                     <th className="px-5 py-3.5 text-right">Aksi</th>
                   </tr>
@@ -276,6 +288,7 @@ export default function PromosiPage() {
                         <td className="px-5 py-4 text-gray-700">{formatRupiah(promo.minPurchase)}</td>
                         <td className="px-5 py-4 font-medium text-gray-900">{rewardText(promo)}</td>
                         <td className="px-5 py-4 text-gray-500">{periodText(promo)}</td>
+                        <td className="px-5 py-4 text-gray-700">{usageText(promo)}</td>
                         <td className="px-5 py-4">
                           <StatusBadge status={status} />
                         </td>
@@ -361,6 +374,11 @@ export default function PromosiPage() {
 function StatusBadge({ status }: { status: EffectiveStatus }) {
   if (status === 'active') {
     return <span className="inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">Aktif</span>
+  }
+  if (status === 'quota_full') {
+    // Batas pemakaian tercapai: berhenti ditawarkan sampai ada pesanan batal (kuota kembali)
+    // atau batasnya dinaikkan
+    return <span className="inline-flex rounded-full bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-600">Kuota habis</span>
   }
   if (status === 'scheduled') {
     // Belum berjalan: tak tampil di keranjang sampai tanggal mulainya (00.00 WIB)

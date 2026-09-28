@@ -20,6 +20,7 @@ import { canTransition } from '@/lib/order-status-machine'
 import { cancelShipmentOrder } from '@/lib/mengantar-cancel'
 import { expireInvoiceForCancelledOrder } from '@/lib/order-invoice-expiry'
 import type { Order, OrderFulfillmentStatus } from '@/types/order'
+import { releasePromoQuota } from '@/lib/mock-db/promotions'
 
 // createAdminClient (Supabase) butuh runtime Node.js, bukan Edge
 export const runtime = 'nodejs'
@@ -188,6 +189,8 @@ export async function PATCH(request: Request) {
       })),
       order.warehouseId,
     )
+    // Kembalikan juga kuota promo yang dipakai pesanan ini (idempoten, lihat releasePromoQuota)
+    await releasePromoQuota(order.orderId)
 
     // Riwayat mutasi. Di jalur ini pelakunya ADMIN (pembatalan dari OMS), jadi recordOrderStockChanges
     // tetap dipakai untuk alasan 'order_cancelled' — kolom "diubah oleh" memang tak diisi di sini

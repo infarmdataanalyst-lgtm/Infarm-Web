@@ -21,6 +21,7 @@ import { getOrderUuidByInvoice, updatePaymentStatus } from '@/lib/mock-db/orders
 import { restoreStock } from '@/lib/mock-db/products'
 import { recordOrderStockChanges } from '@/lib/stock-audit'
 import type { Order } from '@/types/order'
+import { releasePromoQuota } from '@/lib/mock-db/promotions'
 
 const LOG = '[order-expiry]'
 
@@ -74,6 +75,8 @@ export async function expireOrder(
     })),
     order.warehouseId,
   )
+  // Kembalikan juga kuota promo yang dipakai pesanan ini (idempoten, lihat releasePromoQuota)
+  await releasePromoQuota(order.orderId)
 
   const orderUuid = await getOrderUuidByInvoice(invoice)
   await recordOrderStockChanges({

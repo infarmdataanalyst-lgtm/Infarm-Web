@@ -5,6 +5,7 @@
 
 import { AlertTriangle, Gift, CheckCircle2 } from 'lucide-react'
 import type { PromoProgress } from '@/lib/promo-cart'
+import PromoQuotaBadge from '@/components/cart/PromoQuotaBadge'
 
 export default function CartPromoList({
   promos,
@@ -43,6 +44,8 @@ export default function CartPromoList({
               {message}
             </p>
           </div>
+          {/* Sisa kuota (promo berbatas). Tak ditampilkan saat hadiahnya habis — tak relevan lagi. */}
+          {!giftOutOfStock && <PromoQuotaBadge promo={promo} className="ml-6 mt-1.5" />}
 
           {/* Progress bar hanya saat belum tercapai */}
           {!reached && (

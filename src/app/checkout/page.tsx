@@ -30,7 +30,7 @@ import {
 } from '@/lib/checkout-draft'
 import { validateAddress } from '@/lib/checkout-validation'
 import { formatRupiah } from '@/lib/format'
-import { computeOrderPromos, eligibleFreeProductIds } from '@/lib/promo-cart'
+import { computeOrderPromos, eligibleFreeProductIds, isPromoEligible } from '@/lib/promo-cart'
 import { XENDIT_MIN_AMOUNT } from '@/lib/payment-limits'
 import type { Promotion } from '@/types/promotion'
 import { shippingWeightKg, type WeighableItem } from '@/lib/shipping-weight'
@@ -208,6 +208,12 @@ export default function CheckoutPage() {
   // render sehingga hasil useMemo tak stabil. Diambil bersamaan dengan promonya justru lebih benar
   // secara semantik — keduanya potret keadaan pada saat yang sama.
   const [promoNowMs, setPromoNowMs] = useState(0)
+  // Dinaikkan saat server menolak karena kuota promo habis (409 PROMO_QUOTA_EXHAUSTED) → promo
+  // dimuat ulang; yang kuotanya habis tak lagi ikut, jadi total di layar ikut berubah.
+  const [promoReloadKey, setPromoReloadKey] = useState(0)
+  // Pesan menetap di atas ringkasan: total berubah karena kuota promo habis. Dibersihkan saat
+  // pembeli menekan bayar lagi (ia sudah melihat total barunya).
+  const [promoNotice, setPromoNotice] = useState<string | null>(null)
   useEffect(() => {
     let active = true
     fetch('/api/promotions/active')
@@ -224,7 +230,7 @@ export default function CheckoutPage() {
     return () => {
       active = false
     }
-  }, [])
+  }, [promoReloadKey])
 
   // Daftar id produk yang perlu di-resolve, sebagai satu string stabil.
   //
@@ -645,6 +651,7 @@ export default function CheckoutPage() {
     setIsPaying(true)
     // Pembeli sudah melihat ongkir baru dan memutuskan bayar → pesannya selesai tugas.
     setShippingNotice(null)
+    setPromoNotice(null)
 
     try {
       const res = await fetch('/api/orders/create', {
@@ -668,6 +675,9 @@ export default function CheckoutPage() {
             // ulang sendiri — bukan untuk mempercayai harga di `price` (SEC-033).
             comboId: item.comboId,
           })),
+          // Promo yang DITAMPILKAN ke pembeli. Bila salah satunya kuotanya habis, server menolak
+          // (409 PROMO_QUOTA_EXHAUSTED) alih-alih menagih lebih mahal diam-diam — lib/promo-quota.ts
+          expectedPromoIds: promos.filter((p) => isPromoEligible(p, subtotal, promoNowMs)).map((p) => p.id),
           // Server menghitung ulang total dari harga DB + ongkir + diskon (totalAmount client diabaikan)
           totalAmount: total, // dikirim untuk kompatibilitas; server tetap hitung ulang
           shippingCost: selectedCourier.price,
@@ -724,6 +734,15 @@ export default function CheckoutPage() {
         setShippingNotice({ reason: data.code, previousPrice: selectedCourier.price })
         setSelectedCourier(null)
         setShippingRefreshKey((n) => n + 1)
+        setIsPaying(false)
+        return
+      }
+
+      // Kuota promo yang ditampilkan ke pembeli sudah habis → muat ulang promo (total berubah) dan
+      // tampilkan pesan menetap. Pembeli menekan bayar lagi bila setuju dengan total barunya.
+      if (res.status === 409 && data.code === 'PROMO_QUOTA_EXHAUSTED') {
+        setPromoNotice(data.error ?? 'Kuota promo sudah habis, total pembayaranmu berubah.')
+        setPromoReloadKey((n) => n + 1)
         setIsPaying(false)
         return
       }
@@ -1010,6 +1029,17 @@ export default function CheckoutPage() {
 
         {/* 5 — Ringkasan pesanan (rincian harga) */}
         <CheckoutCard className="lg:col-start-2">
+          {promoNotice && (
+            <div className="bg-white px-4 pt-4 lg:rounded-t-2xl">
+              <div
+                role="alert"
+                className="flex gap-2.5 rounded-xl border border-orange-200 bg-orange-50 p-3 text-sm text-orange-800"
+              >
+                <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" aria-hidden />
+                <p className="leading-relaxed">{promoNotice}</p>
+              </div>
+            </div>
+          )}
           <OrderSummary
             subtotal={subtotal}
             shipping={shipping}

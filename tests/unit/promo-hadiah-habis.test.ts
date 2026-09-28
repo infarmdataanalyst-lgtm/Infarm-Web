@@ -19,6 +19,8 @@ const PROMO_HADIAH: Promotion = {
   endAt: null,
   progressMessage: 'Tambah {sisa} untuk hadiah!',
   isActive: true,
+  usageLimit: null,
+  usageCount: 0,
   createdAt: '2026-07-06T00:00:00.000Z',
 }
 
