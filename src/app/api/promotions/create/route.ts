@@ -3,7 +3,7 @@
 
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/oms-guard'
-import { createPromotion } from '@/lib/mock-db/promotions'
+import { PromotionWriteError, createPromotion } from '@/lib/mock-db/promotions'
 import { validatePromotionInput } from '@/lib/promotion-validation'
 
 export const runtime = 'nodejs'
@@ -26,6 +26,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: result.error }, { status: 422 })
   }
 
-  const promotion = await createPromotion(result.value)
-  return NextResponse.json({ success: true, promotion }, { status: 201 })
+  try {
+    const promotion = await createPromotion(result.value)
+    return NextResponse.json({ success: true, promotion }, { status: 201 })
+  } catch (e) {
+    if (e instanceof PromotionWriteError) {
+      return NextResponse.json({ error: e.message }, { status: 500 })
+    }
+    throw e
+  }
 }

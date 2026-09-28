@@ -73,6 +73,26 @@ function inputToRow(input: PromotionInput) {
   }
 }
 
+// === Galat tulis ===
+
+// Gagal MENULIS promo ke database — berbeda dari "promo tidak ditemukan". Dulu updatePromotion
+// mengembalikan null untuk keduanya, sehingga route menjawab "Promo tidak ditemukan" padahal
+// penyebabnya kolom yang belum ada (uji preview 28 Sep 2026: migration kuota belum dijalankan).
+// Pesannya untuk admin OMS; detail teknis tetap di log server.
+export class PromotionWriteError extends Error {
+  constructor(detail: string) {
+    const kolomKuotaBelumAda =
+      /usage_limit|usage_count/.test(detail) && /column|schema cache/i.test(detail)
+    super(
+      kolomKuotaBelumAda
+        ? 'Kolom kuota promo belum ada di database. Jalankan migration ' +
+            '20260928120000_promotions_kuota.sql di Supabase, lalu simpan lagi.'
+        : 'Gagal menyimpan promo ke database. Coba lagi sebentar.',
+    )
+    this.name = 'PromotionWriteError'
+  }
+}
+
 // === Baca ===
 
 // Membaca seluruh promo, terbaru di depan. Array kosong bila error agar UI tidak crash.
@@ -143,7 +163,8 @@ export async function createPromotion(input: PromotionInput): Promise<Promotion>
     .single()
 
   if (error || !data) {
-    throw new Error(`Gagal menyimpan promo: ${error?.message ?? 'tidak diketahui'}`)
+    console.error('Gagal membuat promo di Supabase:', error?.message ?? 'tidak diketahui')
+    throw new PromotionWriteError(error?.message ?? '')
   }
 
   return rowToPromotion(data as PromotionRow)
@@ -161,9 +182,10 @@ export async function updatePromotion(id: string, input: PromotionInput): Promis
 
   if (error) {
     console.error('Gagal memperbarui promo di Supabase:', error.message)
-    return null
+    throw new PromotionWriteError(error.message)
   }
 
+  // null HANYA bila id-nya memang tak ada
   return data ? rowToPromotion(data as PromotionRow) : null
 }
 
