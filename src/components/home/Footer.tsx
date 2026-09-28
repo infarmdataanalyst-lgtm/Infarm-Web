@@ -54,8 +54,7 @@ const SITEMAP: { label: string; href: string | null }[] = [
 // katalog, jadi ia mengajak pindah ke percakapan WhatsApp tepat ketika pembeli sedang berbelanja
 // di web. Di footer, kanal CS tetap ada tapi baru ditemui saat pembeli memang sedang mencarinya.
 //
-// WHATSAPP_CS_LINK masih '/404' selama WHATSAPP_CS_NUMBER di @/lib/data/contact belum diisi —
-// begitu nomornya masuk, ikon ini otomatis mengarah ke wa.me tanpa mengubah berkas ini.
+// Tujuan ikon WhatsApp diatur di satu tempat: WHATSAPP_CS_NUMBER di @/lib/data/contact.
 const SOCIAL = [
   { label: 'Instagram', Icon: InstagramIcon, href: 'https://www.instagram.com/infarm.id/' },
   { label: 'TikTok', Icon: TiktokIcon, href: 'https://www.tiktok.com/@infarmid' },
@@ -128,8 +127,8 @@ export default function Footer() {
             </p>
             <ul className="mt-4 flex gap-3">
               {SOCIAL.map((s) => {
-                // Tab baru hanya untuk tautan ke situs lain. Tautan dalam aplikasi (WhatsApp yang
-                // masih '/404' selama nomornya belum diisi) dibuka di tab yang sama — membuka
+                // Tab baru hanya untuk tautan ke situs lain. Tautan dalam aplikasi (mis. WhatsApp
+                // jatuh ke '/404' bila nomornya dikosongkan) dibuka di tab yang sama — membuka
                 // halaman 404 di tab baru meninggalkan tab kosong yang harus ditutup pembeli.
                 const eksternal = s.href.startsWith('http')
                 return (
