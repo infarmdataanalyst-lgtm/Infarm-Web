@@ -36,6 +36,7 @@ describe('buildSessionPayload', () => {
       cancel_return_url: 'https://infarm-web-mu.vercel.app/checkout/success?invoice=INV-20260928-ABCDEFGH',
       notification_channels: ['EMAIL'],
       customer: {
+        reference_id: `INV-20260928-ABCDEFGH-${now.getTime()}`,
         type: 'INDIVIDUAL',
         email: 'budi@example.com',
         mobile_number: '+6281234567890',
@@ -43,10 +44,18 @@ describe('buildSessionPayload', () => {
       },
       metadata: { nomor_invoice: 'INV-20260928-ABCDEFGH' },
     })
-    // Tidak ada items, tidak ada reference_id pelanggan (409 DUPLICATE_ERROR), tidak ada filter kanal.
+    // Tidak ada items, tidak ada filter kanal.
     expect(payload).not.toHaveProperty('items')
-    expect((payload.customer as Record<string, unknown>)).not.toHaveProperty('reference_id')
     expect(payload).not.toHaveProperty('allowed_payment_channels')
+  })
+
+  it('customer.reference_id wajib ada dan berbeda tiap percobaan untuk pesanan yang sama', () => {
+    const a = buildSessionPayload(order, 'https://infarm.id', { now })
+    const b = buildSessionPayload(order, 'https://infarm.id', { now: new Date(now.getTime() + 60_000) })
+    const refA = (a.customer as Record<string, unknown>).reference_id
+    const refB = (b.customer as Record<string, unknown>).reference_id
+    expect(refA).toMatch(/^INV-20260928-ABCDEFGH-\d+$/)
+    expect(refA).not.toBe(refB)
   })
 
   it('origin http (dev lokal) → return URL dihilangkan, bukan dikirim non-https', () => {

@@ -873,8 +873,10 @@ migration + perubahan client tanpa manfaat.
 - **Return URL wajib https.** Di `next dev` (http://localhost) keduanya DIHILANGKAN dari payload
   — pembayaran tetap tercatat lewat webhook, hanya pembeli tak dipulangkan otomatis. Di Vercel
   origin selalu https, dan `NEXT_PUBLIC_SITE_URL` menang bila diisi.
-- **`customer.reference_id` TIDAK dikirim.** Xendit menjadikannya kunci unik pelanggan
-  (409 `DUPLICATE_ERROR`); pembeli tamu tak punya identitas tetap.
+- **`customer.reference_id` WAJIB, dan unik per percobaan** (`<nomor_invoice>-<epoch ms>`).
+  Tanpanya Xendit membalas 400 `API_VALIDATION_ERROR` (terbukti 2026-09-30). Tak boleh nomor
+  invoice saja: ia kunci unik pelanggan (409 `DUPLICATE_ERROR`), dan "Bayar Sekarang" bisa
+  membuat sesi baru untuk pesanan yang sama.
 - **`items` sengaja TIDAK dikirim**: jumlah harga item ≠ `amount` (amount memuat ongkir dan
   dikurangi diskon). `metadata.nomor_invoice` ikut dikirim supaya terbaca di laporan Xendit.
 - **`allowed_payment_channels` hanya bila `XENDIT_ALLOWED_CHANNELS` diisi.** Kosong = semua kanal
