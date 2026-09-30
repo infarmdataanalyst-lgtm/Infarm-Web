@@ -961,11 +961,11 @@ Seluruh bentuk di atas disusun dari referensi API Xendit (docs.xendit.co, 2026-0
 satu pun callback Sessions/Payments v3 sungguhan pernah diterima**. Pelajaran 2026-09-14 (callback
 eWallet ditolak parser yang ditulis dari dokumentasi) berlaku penuh. Yang harus dicek:
 
-- Nama event pembayaran sukses: `payment.capture` (referensi webhook) vs `payment.succeeded`
-  (panduan migrasi). Parser mengenali keduanya; catat mana yang datang.
-- Apakah `payment_session.completed` membawa `channel_code`. Kalau tidak dan `payment.capture`
-  tak terdaftar, `metode_pembayaran` akan kosong → daftarkan keduanya.
-- Batas maksimum `expires_at` (24 jam ditolak atau tidak).
+- ✅ *Terbukti 2026-09-30 (INV-20260930-HR7KNVX1, VA BCA simulasi):* event sukses bernama
+  `payment.capture` (status SUCCEEDED, `paid` terbaca benar); `payment_session.completed` tiba
+  **lebih dulu** dan menandai Lunas **tanpa** `channel_code`, lalu `payment.capture` menyusul
+  ±0,2 dtk kemudian. Karena itu cabang ALREADY_PAID mengisi `metode_pembayaran` bila masih
+  kosong (`fillPaymentMethodIfEmpty`) — status tetap tak disentuh. `expires_at` 24 jam diterima.
 - Header idempotency yang dihormati `POST /refunds` (`Idempotency-key` dikirim; tak didokumentasikan
   untuk endpoint ini).
 - Domain `payment_link_url` (contoh dokumentasi memakai `https://xen.to/…`) — selektor & pola URL

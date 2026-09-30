@@ -1410,6 +1410,28 @@ export async function updatePaymentStatus(
   return getOrderByOrderId(orderId)
 }
 
+// Mengisi orders.metode_pembayaran HANYA bila masih kosong — status apa pun tak disentuh.
+//
+// Untuk callback `payment.capture` yang tiba SETELAH `payment_session.completed` sudah menandai
+// Lunas (urutan yang terbukti terjadi 2026-09-30, INV-20260930-HR7KNVX1). Callback sesi tak membawa
+// `channel_code`, jadi tanpa ini metode bayar pesanan tersebut tak pernah tercatat. Syarat
+// `is null` membuatnya aman diulang dan tak pernah menimpa metode yang sudah ada.
+export async function fillPaymentMethodIfEmpty(orderId: string, paymentMethod: string): Promise<boolean> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('orders')
+    .update({ metode_pembayaran: paymentMethod })
+    .eq('nomor_invoice', orderId)
+    .is('metode_pembayaran', null)
+    .select('id')
+    .maybeSingle()
+  if (error) {
+    console.error('Gagal mengisi metode pembayaran di Supabase:', error.message)
+    return false
+  }
+  return Boolean(data)
+}
+
 // true bila galat ini berarti "kolomnya tidak ada".
 //   PGRST204 — kolom tak ada di schema cache PostgREST (bentuk yang biasa muncul dari supabase-js)
 //   42703    — undefined_column dari Postgres sendiri
