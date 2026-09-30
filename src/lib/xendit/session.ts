@@ -158,12 +158,15 @@ export function buildSessionPayload(
   // sah. Nomor tak valid → field-nya dihilangkan (mengirim mobile_number kosong ditolak Xendit).
   const mobileNumber = order.customerPhone ? toE164Phone(order.customerPhone) : ''
 
-  // `customer.reference_id` SENGAJA TIDAK dikirim. Xendit menjadikannya kunci unik pelanggan
-  // (409 DUPLICATE_ERROR), dan pembeli tamu Infarm tak punya identitas tetap — email yang sama
-  // bisa memesan berkali-kali. Tanpa reference_id, tiap sesi membawa data kontaknya sendiri.
+  // `customer.reference_id` WAJIB (terbukti 2026-09-30: tanpanya Xendit membalas 400
+  // API_VALIDATION_ERROR "customer must have required property 'reference_id'"). Tapi Xendit
+  // menjadikannya kunci unik pelanggan (409 DUPLICATE_ERROR), dan pembeli tamu Infarm tak punya
+  // identitas tetap — jadi nilainya dibuat unik PER PERCOBAAN: nomor invoice + cap waktu. Nomor
+  // invoice saja tak cukup, karena "Bayar Sekarang" bisa membuat sesi baru untuk pesanan yang sama.
   const customer = payerEmail
     ? {
         customer: {
+          reference_id: `${order.orderId}-${now.getTime()}`,
           type: 'INDIVIDUAL',
           email: payerEmail,
           ...(mobileNumber ? { mobile_number: mobileNumber } : {}),
