@@ -26,6 +26,7 @@ import {
   getOrderByOrderId,
   settleRefundByReference,
   updatePaymentStatus,
+  fillPaymentMethodIfEmpty,
 } from '@/lib/mock-db/orders'
 import { expireOrder, revalidateAfterExpiry } from '@/lib/order-expiry'
 import { getCachedProducts } from '@/lib/mock-db/cached-reads'
@@ -226,6 +227,16 @@ async function handlePaid(
   // Idempoten: Xendit mengulang kirim callback yang sama. Kalau sudah Lunas, jangan sentuh apa pun —
   // menimpanya berpotensi menarik kembali status alur yang sudah maju (mis. sudah Dikirim → Diproses).
   if (order.paymentStatus === 'Lunas') {
+    // Satu-satunya pengecualian: metode bayar. `payment_session.completed` bisa tiba lebih dulu
+    // dan menandai Lunas tanpa `channel_code`; `payment.capture` yang menyusul membawanya.
+    // Hanya kolom itu yang diisi, dan hanya bila masih kosong — status tetap tak disentuh.
+    if (paymentMethod && !order.paymentMethod) {
+      const filled = await fillPaymentMethodIfEmpty(invoice, paymentMethod)
+      console.log(
+        `${LOG} invoice=${invoice} sudah Lunas — ${filled ? `metode=${paymentMethod} dilengkapi` : 'metode tak jadi diisi'}`,
+      )
+      return NextResponse.json({ received: true, handled: filled, reason: 'ALREADY_PAID' })
+    }
     console.log(`${LOG} invoice=${invoice} sudah Lunas — dilewati (idempoten)`)
     return NextResponse.json({ received: true, handled: false, reason: 'ALREADY_PAID' })
   }
