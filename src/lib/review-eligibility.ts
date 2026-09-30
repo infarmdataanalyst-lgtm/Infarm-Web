@@ -50,7 +50,8 @@ const SEHARI_MS = 86_400_000
 //
 // Zona WIB dipakai eksplisit karena server berjalan di UTC (Vercel): memakai waktu server akan
 // menggeser batas hari sampai 7 jam, dan tepat di sekitar tengah malam itulah jendela ini tutup.
-// Pola yang sama sudah dipakai `pilihMetode` di xendit/ewallet-refund.ts.
+// Pola yang sama dulu dipakai `pilihMetode` di xendit/ewallet-refund.ts (modul itu sudah dilepas
+// 2026-09-28 bersama migrasi ke Payments API v3; polanya tetap berlaku di sini).
 function tanggalJakarta(ms: number): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Jakarta',

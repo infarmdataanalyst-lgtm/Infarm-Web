@@ -44,28 +44,31 @@ Dipindah APA ADANYA dari `CLAUDE.md` (heading aslinya dipertahankan):
 EXPIRED/FAILED → Gagal/Dibatalkan + stok dikembalikan + dicatat ke `stock_mutations`,
 kurang bayar ditolak).
 
-**Status per 2026-09-08 — jalur yang dipakai adalah Invoice API v2:**
-`POST /api/payments/invoice` + `src/lib/xendit/{config,invoice}.ts`. Pembeli dibawa ke halaman
-pembayaran Xendit dan memilih metodenya di sana; daftar bank di checkout hanya tampilan informasi
-(`lib/payment-methods.ts`). Tagihan yang masih berlaku DIPAKAI ULANG lewat `orders.invoice_url` &
-`invoice_expires_at`, jadi menekan "Bayar Sekarang" berkali-kali tak menerbitkan tagihan kembar.
+**Status per 2026-09-28 — jalur yang dipakai adalah Payment Sessions (Payments API v3):**
+`POST /api/payments/invoice` + `src/lib/xendit/{config,session,refund,webhook,refund-callback,util}.ts`.
+Pembeli dibawa ke halaman pembayaran Xendit (`payment_link_url`) dan memilih metodenya di sana.
+Sesi yang masih berlaku DIPAKAI ULANG lewat `orders.invoice_url` & `invoice_expires_at`. Refund
+e-wallet/QRIS/direct debit lewat `POST /refunds` dengan `payment_request_id` dari `GET /sessions/{id}`.
 
-Jalur Payment Request v3 / Virtual Account **sudah DIHAPUS 2026-09-08** (631 baris) — tak pernah
-dipakai checkout, dan endpoint pembuatnya tanpa penjaga otentikasi (SEC-043). Webhook TETAP
-mengenali DUA bentuk payload lewat `parseXenditCallback()`: pembayaran Invoice lewat transfer bank
-tetap membawa bentuk v3. `external_id`/`reference_id` = `orders.nomor_invoice`.
+Invoice API v2 & eWallets API **DILEPAS 2026-09-28** karena Xendit menggolongkannya legacy (Monthly
+Maintenance Fee USD 250 mulai 1 Okt 2026). Jalur Payment Request v3 / VA sudah dihapus lebih dulu
+(2026-09-08, SEC-043). `reference_id` = `orders.nomor_invoice`.
 
-Sisa yang masih `UNVERIFIED`: bentuk callback v3 & ketersediaan channel di dashboard Xendit.
-Lihat [docs/checkout-flow.md](docs/checkout-flow.md) → "Pembayaran Xendit".
+**Belum satu pun callback Sessions/Payments v3 sungguhan pernah diterima** — daftar UNVERIFIED
+lengkap di [docs/checkout-flow.md](docs/checkout-flow.md) → "Pembayaran Xendit — Payment Sessions".
 
 Turunan yang menunggu Xendit:
 
 | Pekerjaan | Detail |
 |---|---|
-| ~~Sambungkan pembayaran ke `/checkout`~~ **SELESAI 2026-08-21** lewat Invoice API v2: checkout → `POST /api/payments/invoice` → redirect ke `invoice_url`. `/checkout/success` kini sadar-status + tombol bayar ulang | [docs/checkout-flow.md](docs/checkout-flow.md) → Pembayaran Xendit (Invoice) |
+| ~~Sambungkan pembayaran ke `/checkout`~~ **SELESAI 2026-08-21** (Invoice API v2; dimigrasi ke Payment Sessions 2026-09-28): checkout → `POST /api/payments/invoice` → redirect ke halaman bayar Xendit. `/checkout/success` sadar-status + tombol bayar ulang | [docs/checkout-flow.md](docs/checkout-flow.md) → Pembayaran Xendit — Payment Sessions |
 | ~~Jalur VA (Payment Request v3) TAK DIPAKAI — putuskan: hapus atau hidupkan kembali~~ **DIPUTUSKAN & DIHAPUS 2026-09-08.** Pemilik proyek menegaskan pembeli memilih bank di halaman Xendit; daftar bank di checkout hanya tampilan informasi. `payment-request.ts`, `/api/payments/create`, dan `/test-xendit` dihapus (631 baris) — endpoint-nya ternyata juga tanpa penjaga otentikasi (SEC-043) | [docs/checkout-flow.md](docs/checkout-flow.md) → jalur Virtual Account (DIHAPUS) |
-| **Aktifkan saluran WhatsApp** di Dashboard Xendit (Settings → Customer notifications). Payload sudah mengirim `customer_notification_preference: whatsapp`; tanpa diaktifkan, invoice terbit tapi notifikasi tak terkirim | [docs/checkout-flow.md](docs/checkout-flow.md) → Notifikasi WhatsApp |
-| **Verifikasi kontrak Xendit** pada panggilan pertama, lalu ganti seluruh komentar `UNVERIFIED` dengan bentuk respons yang sebenarnya | `src/lib/xendit/invoice.ts`, `src/lib/xendit/webhook.ts` |
+| ~~Aktifkan saluran WhatsApp di Dashboard Xendit~~ **TIDAK BERLAKU LAGI** — Payment Sessions hanya mendukung `notification_channels: ['EMAIL']`; saluran ditentukan pengaturan Customer notifications di dashboard | [docs/checkout-flow.md](docs/checkout-flow.md) → Notifikasi lewat EMAIL |
+| ~~Migrasi ke Payments API v3~~ **SELESAI 2026-09-28**: Invoice API v2 → Payment Sessions (`POST /sessions`), eWallets refund → `POST /refunds`, webhook mengenali `payment_session.*` / `payment.*` / `refund.*`. Path endpoint lokal & kolom DB dipertahankan; tanpa migration | [docs/checkout-flow.md](docs/checkout-flow.md) → Pembayaran Xendit — Payment Sessions |
+| **Verifikasi kontrak Payment Sessions pada uji pertama di mode test** (nama event `payment.capture` vs `payment.succeeded`, `channel_code` di callback sesi, batas maksimum `expires_at` 24 jam, domain `payment_link_url`, email notifikasi, header idempotency `/refunds`), lalu kunci contoh callback-nya di `tests/unit/xendit-webhook.test.ts` dan hapus butir UNVERIFIED yang terbukti | [docs/checkout-flow.md](docs/checkout-flow.md) → Yang masih UNVERIFIED |
+| **Daftarkan webhook Payments, Payment Sessions, dan Refunds** di dashboard Xendit (Settings → Webhooks) — event yang tak didaftarkan tak pernah dikirim; `payment_session.expired` khususnya, karena itulah yang melepas stok | [docs/checkout-flow.md](docs/checkout-flow.md) → Webhook |
+| **Refund VA otomatis lewat Payouts API** (`POST /v3/payouts`, header `Idempotency-key`, webhook `v3_payout.*`): form rekening pembeli di OMS, pencocokan nama pemilik, kolom `payout_id`/status, aktivasi produk Payouts + API key ber-izin payout. Diputuskan pemilik 2026-09-28 dikerjakan TERPISAH setelah migrasi Sessions; sementara refund VA tetap manual dari dashboard | `src/app/api/oms/refunds/`, deck FAT slide 11–14 |
+| **Perbarui deck FAT & Sales**: ID transaksi kini `ps-`/`pr-`/`py-`/`rfd-`, `channel_code` v3 di kolom metode bayar, refund e-wallet tanpa void/refunds per tanggal, email notifikasi bergantung pengaturan dashboard | `demo-presentation/05-deck-per-tim/` |
 | ~~Pesanan `Menunggu` tak punya batas waktu~~ **SELESAI 2026-09-08** lewat penyapu terjadwal `/api/cron/expire-orders` (harian, guard `CRON_SECRET`): tenggat dihitung dari `created_at` pesanan sendiri sehingga tak bergantung pada callback Xendit. Terbukti menutup 7 pesanan & mengembalikan 14 unit stok. **SISA:** 15 pesanan warisan tanpa `warehouse_id` sengaja dilewati — stoknya tak bisa dibuktikan pernah dipotong dari gudang mana pun, jadi butuh pencocokan stok fisik oleh manusia | [docs/checkout-flow.md](docs/checkout-flow.md) → Pembayaran Xendit |
 | ~~webhook → update status order + stok~~ **SUDAH ADA** (`/api/webhooks/xendit`). Sisa alur post-payment yang belum: booking kurir, isi no. resi, hapus cookie keranjang, kirim email | [docs/checkout-flow.md](docs/checkout-flow.md) → Alur Post-Payment (Webhook) |
 | Alokasi/rilis stok penuh saat pembayaran gagal/expired | [docs/warehouse.md](docs/warehouse.md) |

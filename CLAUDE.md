@@ -881,10 +881,10 @@ NEXT_PUBLIC_SITE_URL             # PUBLIC/client, OPSIONAL. Asal URL situs (mis.
                                  # bila memakai domain kustom di depan Vercel, kalau tidak pembeli
                                  # bisa dipulangkan ke domain *.vercel.app alih-alih domain toko.
 
-# Sudah dipakai sekarang (Pembuatan Invoice / Virtual Account Xendit)
+# Sudah dipakai sekarang (Payment Sessions & Refunds Xendit — Payments API v3)
 XENDIT_SECRET_KEY                # server-only, WAJIB agar pembayaran bisa dibuat. JANGAN pernah
-                                 # diberi prefix NEXT_PUBLIC_ — key ini bisa membuat invoice,
-                                 # menarik dana, dan membaca transaksi.
+                                 # diberi prefix NEXT_PUBLIC_ — key ini bisa membuat sesi
+                                 # pembayaran, mengembalikan dana, dan membaca transaksi.
                                  # Autentikasi Xendit = HTTP Basic dengan key sebagai USERNAME dan
                                  # password KOSONG → base64("{KEY}:"), titik dua wajib ada.
                                  # Dibaca HANYA oleh xenditCredentials() di lib/xendit/config.ts.
@@ -895,7 +895,20 @@ XENDIT_SECRET_KEY                # server-only, WAJIB agar pembayaran bisa dibua
                                  # Host sama untuk test & live (api.xendit.co) — yang membedakan
                                  # lingkungan adalah KUNCINYA, beda dari Mengantar yang punya host
                                  # sandbox tersendiri.
+XENDIT_ALLOWED_CHANNELS          # server-only, OPSIONAL. Daftar kanal yang boleh tampil di halaman
+                                 # pembayaran Xendit, dipisah koma (mis. BCA_VIRTUAL_ACCOUNT,QRIS,
+                                 # DANA,OVO,SHOPEEPAY,BRI_DIRECT_DEBIT). KOSONG = tidak dikirim =
+                                 # semua kanal yang aktif di akun tampil. ⚠️ Kanal yang disebut di
+                                 # sini tapi belum diaktifkan di akun membuat Xendit menolak SELURUH
+                                 # sesi (INVALID_PAYMENT_CHANNEL) — checkout mati total. Isi hanya
+                                 # setelah daftar kanal aktif di dashboard dipastikan.
 ```
+
+> **Xendit memakai Payments API v3 (Payment Sessions + Refunds) sejak 2026-09-28.** Invoice API v2
+> dan eWallets API dilepas karena digolongkan legacy oleh Xendit (biaya USD 250/bulan mulai
+> 1 Okt 2026). Path endpoint lokal (`/api/payments/invoice`) dan kolom DB (`id_transaksi`,
+> `invoice_url`) sengaja dipertahankan. Detail & daftar UNVERIFIED: [docs/checkout-flow.md](docs/checkout-flow.md)
+> → "Pembayaran Xendit — Payment Sessions".
 
 > Cara dapat `NEXT_PUBLIC_MENGANTAR_ORIGIN_ID`: panggil endpoint search alamat Mengantar dengan
 > nama kelurahan toko, ambil `_id` yang cocok. Jangan hardcode di kode.

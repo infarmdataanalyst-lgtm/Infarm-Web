@@ -793,22 +793,35 @@ bisa di bawah minimum payment gateway):
 
 ---
 
-## Pembayaran Xendit — Invoice API v2 (JALUR AKTIF)
+## Pembayaran Xendit — Payment Sessions (JALUR AKTIF sejak 2026-09-28)
 
-Keputusan pemilik proyek 2026-08-21: checkout memakai **Invoice API v2**. Pembeli dibawa ke halaman
-pembayaran yang di-host Xendit (`invoice_url`) yang sudah menyediakan semua metode (VA, e-wallet,
-QRIS, retail) tanpa kita membangun UI apa pun.
+Checkout memakai **Payment Sessions** mode `PAYMENT_LINK`: pembeli dibawa ke halaman pembayaran
+yang di-host Xendit (`payment_link_url`) dan memilih metodenya di sana — keputusan pemilik proyek
+2026-09-18 ("satu tempat memilih, di halaman Xendit") tetap berlaku.
 
-> Jalur **Payment Request v3 / Virtual Account** sudah **DIHAPUS** (2026-09-08). Daftar bank di
-> halaman checkout hanya tampilan informasi dari `lib/payment-methods.ts` — ia tak menyentuh
-> Xendit sama sekali, dan pemilihan bank yang sesungguhnya terjadi di halaman Xendit.
+> **Kenapa pindah dari Invoice API v2 (dilepas 2026-09-28).** Xendit menggolongkan
+> `POST /v2/invoices` dan eWallets API (`/ewallets/charges/…`) sebagai **legacy**; mulai
+> **1 Okt 2026** akun yang masih memakainya dikenai *Monthly Maintenance Fee* USD 250
+> ([Xendit Pricing Policy](https://help.xendit.co/hc/en-us/articles/59516240127129-Xendit-Pricing-Policy)).
+> Pengganti resmi untuk halaman pembayaran ter-host adalah Payment Sessions
+> ([panduan migrasi](https://docs.xendit.co/docs/migrate-to-payment-session)). Migrasi dilakukan
+> **sebelum go-live**, jadi tak ada masa transisi: kode v2 dihapus utuh, bukan dijaga berdampingan.
+>
+> **Kenapa bukan `/v3/payment_requests`.** Endpoint itu menuntut `channel_code` dipilih SEBELUM
+> permintaan — pemilih metode, halaman nomor VA/QR, dan penanganan `REQUIRES_ACTION` per kanal
+> harus dibangun sendiri. Itu membalik keputusan 2026-09-18 dan menambah ±50% pekerjaan.
 
 | Berkas | Peran |
 |---|---|
-| `src/lib/xendit/config.ts` | satu pintu kredensial + penjaga lingkungan (dipakai kedua jalur) |
-| `src/lib/xendit/invoice.ts` | penyusun payload `POST /v2/invoices` + pemetaan respons |
-| `src/app/api/payments/invoice/route.ts` | endpoint yang dipanggil checkout |
-| `src/app/checkout/success/PayNowButton.tsx` | tombol bayar ulang bila penerbitan gagal / halaman ditutup |
+| `src/lib/xendit/config.ts` | satu pintu kredensial + penjaga lingkungan |
+| `src/lib/xendit/session.ts` | `POST /sessions` (buat), `GET /sessions/{id}` (baca), `POST /sessions/{id}/cancel` (batalkan) |
+| `src/lib/xendit/refund.ts` | `POST /refunds` — pengembalian dana ke sumber (e-wallet/QRIS/direct debit/kartu) |
+| `src/lib/xendit/webhook.ts` | verifikasi token + parser callback `payment_session.*` & `payment.*` |
+| `src/lib/xendit/refund-callback.ts` | parser callback `refund.*` |
+| `src/lib/xendit/util.ts` | pembantu murni bersama (baca angka/string, deskripsi galat) |
+| `src/app/api/payments/invoice/route.ts` | endpoint yang dipanggil checkout — **nama path & bentuk respons dipertahankan** |
+| `src/lib/order-invoice-expiry.ts` | membatalkan sesi saat pesanan dibatalkan |
+| `src/components/payment/PayNowButton.tsx` | tombol bayar ulang bila penerbitan gagal / halaman ditutup |
 
 ### Alurnya
 
@@ -816,86 +829,73 @@ QRIS, retail) tanpa kita membangun UI apa pun.
 "Bayar Sekarang" di /checkout
   → POST /api/orders/create        (RPC atomik: orders + order_items + potong stok)
   → POST /api/payments/invoice     { invoice: nomor_invoice }
-  → Xendit POST /v2/invoices
-  → window.location.replace(invoice_url)     ← FULL redirect, bukan router.push
-  → pembeli bayar di halaman Xendit
-  → callback "Invoice paid" → /api/webhooks/xendit → Lunas + booking kurir J&T
-  → Xendit redirect ke /checkout/success?invoice=…
+  → Xendit POST /sessions          (session_type PAY, mode PAYMENT_LINK)
+  → window.location.assign(payment_link_url)     ← FULL redirect, bukan router.push
+  → pembeli memilih metode & bayar di halaman Xendit
+  → callback payment.capture + payment_session.completed → /api/webhooks/xendit → Lunas + booking kurir J&T
+  → Xendit mengembalikan pembeli ke /checkout/success?invoice=…
 ```
+
+### Pemetaan dari Invoice API (untuk membaca kode & data lama)
+
+| Invoice API v2 | Payment Sessions | Disimpan di |
+|---|---|---|
+| `external_id` | `reference_id` | kunci webhook = `orders.nomor_invoice` |
+| `invoice_duration` (detik) | `expires_at` (ISO 8601) | `SESSION_DURATION_SECONDS` = 24 jam |
+| `payer_email` + `customer` + `customer_notification_preference` | `customer` + `notification_channels: ['EMAIL']` | — |
+| `success/failure_redirect_url` | `success/cancel_return_url` (**wajib https**) | — |
+| `id` (invoice id) | `payment_session_id` `ps-…` | `orders.id_transaksi` |
+| `invoice_url` | `payment_link_url` | `orders.invoice_url` |
+| `expiry_date` | `expires_at` | `orders.invoice_expires_at` |
+| `POST /invoices/{id}/expire!` | `POST /sessions/{id}/cancel` | `orders.invoice_expired_at` / `invoice_expire_error` |
+| `payment_id` `ewc_…` (eWallet charge) | `payment_request_id` `pr-…` (dibaca dari `GET /sessions/{id}`) | tidak disimpan; dibaca saat refund |
+| `POST /ewallets/charges/{id}/refunds` & `/void` | `POST /refunds` (satu endpoint; tak ada lagi void/refunds per tanggal) | `orders.refund_reference` |
+| `ewr_…` (nomor refund eWallet) | `rfd-…` | `orders.refund_reference` |
+| `payment_channel` 'BCA' / 'OVO' | `channel_code` 'BCA_VIRTUAL_ACCOUNT' / 'DANA' / 'BRI_DIRECT_DEBIT' | `orders.metode_pembayaran` (dibaca `lib/payment-method.ts` — kedua bentuk dikenali) |
+
+**Nama kolom & path endpoint lama sengaja dipertahankan** (`id_transaksi`, `invoice_url`,
+`/api/payments/invoice`, `invoiceUrl` di respons): maknanya sama, dan mengganti namanya berarti
+migration + perubahan client tanpa manfaat.
 
 ### Aturan yang tak boleh dilanggar
 
-- **`external_id` WAJIB `orders.nomor_invoice`**, bukan `orders.id` (UUID). Webhook mencari pesanan
-  dengan `.eq('nomor_invoice', external_id)`; mengisi UUID = SETIAP callback gagal menemukan
+- **`reference_id` WAJIB `orders.nomor_invoice`**, bukan `orders.id` (UUID). Webhook mencari pesanan
+  dengan `.eq('nomor_invoice', reference_id)`; mengisi UUID = SETIAP callback gagal menemukan
   pesanannya dan pembayaran tak pernah tercatat meski uangnya masuk.
-- **Tagihan diterbitkan SETELAH order tersimpan**, bukan sebelum — ia mengacu pada `nomor_invoice`
-  yang baru dibuat server. Efek samping yang disengaja: penerbitan tagihan gagal **tidak**
+- **Sesi diterbitkan SETELAH order tersimpan**, bukan sebelum. Penerbitan gagal **tidak**
   menghilangkan pesanan; ia tetap ada berstatus Menunggu, dan pembeli diarahkan ke
   `/checkout/success?invoice=…&pay_error=1` yang menyediakan tombol bayar ulang.
-- **Client hanya mengirim nomor invoice.** Nominal/nama/telepon dibaca dari tabel `orders`.
-- **`invoice_duration` 24 jam** (`INVOICE_DURATION_SECONDS`). Sengaja pendek: pesanan menunggu bayar
-  MENAHAN STOK, dan callback EXPIRED-lah yang melepasnya kembali.
-- **`items` sengaja TIDAK dikirim** ke Xendit. Jumlah harga item ≠ `amount` (amount memuat ongkir
-  dan dikurangi diskon, sementara ongkir tak punya kolom sendiri), dan daftar yang tak berjumlah
-  sama dengan tagihan lebih membingungkan daripada tak ada daftar.
+- **Client hanya mengirim nomor invoice.** Nominal/nama/telepon/email dibaca dari tabel `orders`.
+- **`expires_at` 24 jam** (`SESSION_DURATION_SECONDS`). Sengaja pendek: pesanan menunggu bayar
+  MENAHAN STOK, dan `payment_session.expired`-lah yang melepasnya kembali. Cron `expire-orders`
+  memakai konstanta yang sama. ⚠️ Xendit menyebut ada batas maksimum tanpa menyebut angkanya —
+  bila panggilan pertama dijawab `INVALID_EXPIRY_DATE`, turunkan konstanta itu (lihat *UNVERIFIED*).
+- **Return URL wajib https.** Di `next dev` (http://localhost) keduanya DIHILANGKAN dari payload
+  — pembayaran tetap tercatat lewat webhook, hanya pembeli tak dipulangkan otomatis. Di Vercel
+  origin selalu https, dan `NEXT_PUBLIC_SITE_URL` menang bila diisi.
+- **`customer.reference_id` TIDAK dikirim.** Xendit menjadikannya kunci unik pelanggan
+  (409 `DUPLICATE_ERROR`); pembeli tamu tak punya identitas tetap.
+- **`items` sengaja TIDAK dikirim**: jumlah harga item ≠ `amount` (amount memuat ongkir dan
+  dikurangi diskon). `metadata.nomor_invoice` ikut dikirim supaya terbaca di laporan Xendit.
+- **`allowed_payment_channels` hanya bila `XENDIT_ALLOWED_CHANNELS` diisi.** Kosong = semua kanal
+  aktif di akun tampil (perilaku lama). Kanal yang disebut tapi belum aktif di akun membuat Xendit
+  menolak SELURUH sesi (`INVALID_PAYMENT_CHANNEL`) — checkout mati total. Isi hanya bila daftar
+  di dashboard sudah pasti (kesepakatan 2026-09-28: VA semua bank, QRIS, DANA/OVO/ShopeePay,
+  direct debit BRI).
 
-### Notifikasi lewat EMAIL (sejak 2026-09-04)
+### Notifikasi lewat EMAIL
 
-Tagihan dikirim ke **email** pembeli. `NOTIFICATION_CHANNELS = ['email']` di
-`src/lib/xendit/invoice.ts`, dan alamatnya dikirim **dua kali**: sebagai `payer_email` (field
-tingkat atas, warisan v1 yang masih didukung v2) dan sebagai `customer.email`. Keduanya
-didokumentasikan Xendit sebagai sumber alamat notifikasi dan mana yang dipakai berbeda antar versi
-API — mengirim keduanya dengan nilai sama menghilangkan pertanyaan itu tanpa risiko konflik.
+`notification_channels: ['EMAIL']` + `customer.email` dikirim bila pesanan punya email (selalu,
+untuk pesanan baru — field-nya wajib di checkout, SEC-022). Tanpa email blok itu tak dikirim dan
+log menulis peringatan; sesi tetap terbit. Nomor telepon hanya ikut sebagai `customer.mobile_number`
+bila formatnya sah (`toE164Phone()`), tidak dikirim kosong.
 
-**⚠️ JEBAKAN YANG SUDAH MEMAKAN KORBAN — baca sebelum mengubah saluran notifikasi.**
-Nilai `customer_notification_preference` yang dikirim **per-invoice MENIMPA setelan Dashboard
-Xendit**. Mengganti saluran di dashboard saja TIDAK berpengaruh apa pun selama konstanta di kode
-masih berkata lain. Itulah yang terjadi sebelum 2026-09-04: dashboard sudah dialihkan ke email,
-tetapi payload masih mengirim `['whatsapp']` — dan lebih parah, alamat emailnya tak pernah ikut
-dikirim sama sekali, jadi Xendit tak punya tujuan meski salurannya benar. Dua hal harus sejalan:
-konstanta di kode **dan** Settings → Customer notifications di dashboard.
+⚠️ Berbeda dari Invoice API, Sessions **tidak punya `customer_notification_preference`** — jadi
+pengaturan Customer notifications di dashboard Xendit yang menentukan email mana yang terkirim.
+Cocokkan slide 4 deck Sales ("dua email otomatis dari Xendit") dengan email sungguhan pada uji
+pertama.
 
-Alasan lama memilih WhatsApp ("email sudah dihapus dari form checkout, `orders.email` NULL untuk
-semua pesanan baru") sudah tidak berlaku: email kembali **wajib** di checkout, divalidasi ulang di
-server (SEC-022), dan justru menjadi kunci utama pembeli tamu — lacak, ulas, dan batalkan pesanan
-semuanya dicari lewat email.
-
-- Blok notifikasi digantungkan pada **ada tidaknya email**, bukan lagi nomor telepon. Tanpa email
-  (hanya mungkin pada pesanan warisan), blok itu tak dikirim dan log menulis peringatan eksplisit —
-  invoice tetap terbit dan tetap bisa dibayar lewat tautannya, yang hilang hanya notifikasinya.
-- Nomor telepon **tidak lagi menentukan apa pun** soal notifikasi; ia hanya ikut dititipkan sebagai
-  `customer.mobile_number` bila formatnya sah (`toE164Phone()`, `08…` → `+628…`). Nomor tak valid →
-  field-nya dihilangkan, bukan dikirim kosong (Xendit menolak nilai kosong).
-- **`should_send_email` SENGAJA tidak dikirim.** Field itu ada di `CreateInvoiceRequest`, tetapi
-  panggilan manual yang terbukti mengirim email tidak menyertakannya. Menambahkannya berarti
-  menyimpang dari payload yang sudah terbukti demi field yang nilai bawaannya pun tak dinyatakan
-  dokumentasi. Jangan tambahkan tanpa pengujian ulang.
-- **`invoice_expired` dipertahankan meski tak ada di spesifikasi SDK.** `NotificationPreference`
-  pada xendit-php & xendit-go hanya memuat `invoice_created`, `invoice_reminder`, `invoice_paid` —
-  tetapi API sungguhan MENERIMA `invoice_expired` tanpa keluhan pada panggilan manual. Keduanya
-  tidak bertentangan: field tak dikenal umumnya diabaikan diam-diam, jadi paling buruk ia tak
-  berefek; bila dilayani, pembeli dapat kabar saat invoicenya kedaluwarsa dan pesanannya otomatis
-  dibatalkan.
-- **Nilai saluran yang sah**: `email` · `sms` · `whatsapp` · `viber` — huruf kecil semua.
-
-**Sumber kebenaran kontrak ini (2026-09-04), berurut kekuatannya:**
-
-1. **Panggilan manual yang TERBUKTI** mengirim email ke inbox pemilik proyek — `payer_email` +
-   `customer.email` + `customer_notification_preference` bersaluran `email`, TANPA
-   `should_send_email`. Bukti terhadap API sungguhan mengalahkan dokumentasi mana pun.
-2. SDK resmi [xendit-php](https://github.com/xendit/xendit-php/blob/master/docs/Invoice/CreateInvoiceRequest.md)
-   & [xendit-go](https://github.com/xendit/xendit-go/blob/master/docs/invoice/NotificationPreference.md),
-   di-generate dari spesifikasi OpenAPI — dipakai untuk enum saluran dan daftar field.
-
-⚠️ `docs.xendit.co` kini mengarahkan Invoice API ke Payments v3/Payment Sessions dan menyebut
-Invoice sebagai **legacy**; halaman referensi `create-invoice`-nya sudah tidak ada di indeks. Jalur
-v2 yang dipakai project ini belum mati, tapi arah Xendit jelas — pertimbangkan migrasi.
-
-Bila Xendit tetap menolak salah satu field, `describeXenditError()` menampilkan `error_code` dan
-`message` apa adanya di log (mis. `API_VALIDATION_ERROR` beserta nama field-nya) — kegagalannya
-terbaca jelas, bukan tersamar sebagai galat generik.
-
-### `success_redirect_url` = `failure_redirect_url`
+### `success_return_url` = `cancel_return_url`
 
 Keduanya menuju `/checkout/success?invoice=…`. Halaman itu membaca status **FRESH dari Supabase**,
 jadi ia menampilkan keadaan sungguhan tanpa mempercayai parameter redirect — status yang sah hanya
@@ -907,75 +907,78 @@ datang dari webhook, dan URL bisa diketik siapa pun.
 | `Menunggu` | "Menunggu Pembayaran" + "Selesaikan Pembayaran" + kartu amber 24 jam + **tombol Bayar Sekarang** |
 | `Dibatalkan` | "Pesanan Dibatalkan" + catatan stok sudah dilepas |
 
-Estimasi tiba **hanya** muncul saat lunas — menampilkannya pada pesanan yang belum dibayar adalah
-janji yang belum tentu ditepati (kurir baru dipesan setelah pembayaran masuk).
+### Webhook: DUA callback untuk SATU pembayaran
 
-## Pembayaran Xendit — jalur Virtual Account (DIHAPUS 2026-09-08)
+Satu pembayaran memicu dua callback dengan bentuk `{ event, business_id, created, data }`:
 
-Jalur **Payment Request v3 / Virtual Account** — `lib/xendit/payment-request.ts`,
-`POST /api/payments/create`, dan halaman uji `/test-xendit` — **sudah dihapus**. Total 631 baris.
-
-**Kenapa dihapus, bukan sekadar dijaga.** Ia tak pernah dipakai checkout sejak Invoice API
-menggantikannya (2026-08-21), dan keputusan desainnya kini final: pembeli memilih bank di halaman
-Xendit, sementara daftar bank di halaman checkout hanya tampilan informasi (`lib/payment-methods.ts`)
-yang tak menyentuh Xendit sama sekali. Saat diperiksa pada 2026-09-08 ternyata
-`POST /api/payments/create` **tidak punya penjaga otentikasi apa pun** — tanpa `requireAdmin()`,
-tanpa gerbang `NODE_ENV` — sehingga siapa pun yang menebak nomor invoice bisa menerbitkan Virtual
-Account atas pesanan orang lain dan menimpa `orders.id_transaksi` (SEC-043).
-
-Memasang penjaga akan menutup lubang itu tapi menyisakan kode mati yang tak pernah dijalankan,
-membusuk diam-diam, dan menyesatkan pembaca berikutnya seolah ada dua jalur pembayaran yang hidup.
-Riwayat Git menyimpannya bila VA di dalam aplikasi suatu hari dibutuhkan — implementasinya toh
-harus ditulis ulang karena belum ada kolom penampung nomor VA, bank, dan kedaluwarsa.
-
-**Yang TETAP ada dan tidak boleh ikut dihapus:** `lib/xendit/config.ts` (satu pintu kredensial +
-penjaga lingkungan) dan kemampuan webhook membaca DUA bentuk payload — lihat di bawah. Konstanta
-`PAYMENT_CREATE_IP` & `PAYMENT_CREATE_INVOICE` juga tetap; keduanya kini dipakai
-`POST /api/payments/invoice`.
-
-### Webhook menerima DUA bentuk payload
-
-`parseXenditCallback()` mencoba bentuk Invoice API v2 lebih dulu, lalu Payment Request v3:
-
-| | Invoice v2 | Payment Request v3 |
+| | `payment.*` (tingkat pembayaran) | `payment_session.*` (tingkat sesi) |
 |---|---|---|
-| Referensi kita | `external_id` (akar) | `data.reference_id` |
-| Status | `status` | `data.status`, cadangan dari `event` |
-| Nominal | `paid_amount` \|\| `amount` | `data.amount` \|\| `captured_amount` \|\| `request_amount` |
-| id transaksi | `id` | `data.payment_request_id` (didahulukan) \|\| `data.id` |
-| Metode bayar | `payment_channel` (didahulukan) \|\| `payment_method` | `…virtual_account.channel_code` \|\| `channel_code` \|\| `payment_method.type` |
+| Event | `payment.capture` (docs lama: `payment.succeeded` — keduanya dikenali), `payment.failure`, `payment.expiry`, `payment.authorization` | `payment_session.completed`, `payment_session.expired` |
+| Referensi kita | `data.reference_id` | `data.reference_id` |
+| Status | `data.status` (SUCCEEDED/FAILED/…), cadangan dari nama event | `data.status` (COMPLETED/EXPIRED/…), cadangan dari nama event |
+| Nominal | Σ `captures[].capture_amount` → `amount` → `request_amount` (string!) | `amount` (string) |
+| id | `payment_id` `py-`, `payment_request_id` `pr-` | `payment_session_id` `ps-` (+ `pr-`/`py-` bila ada) |
+| Metode bayar | **`channel_code`** → `orders.metode_pembayaran` | tidak ada |
 
-Baris **metode bayar** → `orders.metode_pembayaran`. Yang SPESIFIK didahulukan di kedua bentuk:
-kolom itu menjawab "dibayar pakai apa" (`BCA`), bukan "lewat mekanisme apa" (`BANK_TRANSFER` /
-`VIRTUAL_ACCOUNT`). Hanya `handlePaid()` yang menyimpannya — callback gagal/kedaluwarsa tak
-membawanya karena tak pernah ada yang dibayar, dan `updatePaymentStatus()` **tak menulis null** untuk
-field kosong (urutan callback tak dijamin; null akan menghapus metode yang sudah tercatat).
+Aturan di `resolvePaymentOutcome()` (`src/lib/xendit/webhook.ts`):
 
-Keduanya dipertahankan supaya jalur pembayaran bisa dipindah tanpa mematikan callback yang sudah
-beredar. `ParsedCallback.source` mencatat bentuk mana yang cocok (muncul di log sebagai `bentuk=`).
+- **Lunas**: `payment` SUCCEEDED/CAPTURED **atau** `payment_session` COMPLETED, dengan nominal ≥
+  `orders.jumlah_total` (dari DB, bukan payload). Keduanya boleh menandai Lunas; route idempoten
+  lewat cabang `ALREADY_PAID`. Urutan kedatangan tak dijamin.
+- **Batal + stok dilepas**: HANYA `payment_session` EXPIRED/CANCELED.
+- **`payment.failure` TIDAK membatalkan pesanan** (`attempt-failed`): itu SATU percobaan yang
+  gagal, sesinya masih hidup, pembeli bisa mencoba metode lain. Membatalkan pada percobaan pertama
+  berarti melepas stok untuk pembeli yang sedang mencoba membayar.
+- Nominal kurang → **tak pernah** Lunas (`underpaid`). Nominal tak terbaca → 0 → kurang bayar.
+- Callback **Invoice v2 lama** (`external_id` di akar) dibalas 200 `LEGACY_INVOICE_CALLBACK` dan
+  diabaikan — hanya mungkin dari tagihan uji sebelum migrasi.
 
-Status: PAID/SETTLED/**SUCCEEDED**/CAPTURED → lunas · EXPIRED/FAILED/**VOIDED**/CANCELED →
-gagal + stok dikembalikan · PENDING/**REQUIRES_ACTION**/AWAITING_CAPTURE → tak ada perubahan.
-Nominal kurang → **tak pernah** ditandai lunas. Nominal yang tak terbaca jatuh jadi 0 → kurang
-bayar (menolak-dengan-aman).
+Token: tetap header `x-callback-token` vs `XENDIT_CALLBACK_TOKEN`, diverifikasi sebelum body dibaca.
+**Daftarkan URL webhook untuk Payments, Payment Sessions, dan Refunds** di dashboard Xendit
+(Settings → Webhooks) — event yang tak didaftarkan tak pernah dikirim.
 
-### ⚠️ Yang masih UNVERIFIED
+### Pengembalian dana (`POST /api/oms/refunds/xendit`)
 
-Bagian berikut disusun dari dokumentasi Xendit dan **wajib dicocokkan dengan callback sungguhan**:
+1. `GET /sessions/{id_transaksi}` → `payment_request_id` `pr-…` (dibaca saat dibutuhkan, tak disimpan).
+2. Klaim baris (PERLU_REFUND → SEDANG_DIPROSES) dengan `refund_reference = pr-…` — SEBELUM Xendit
+   disentuh (SEC-045).
+3. `POST /refunds { payment_request_id, reason: 'CANCELLATION', currency: 'IDR', reference_id: nomor_invoice }`
+   + header `Idempotency-key` acak (best-effort; klaim DB adalah jaring utama).
+4. SUCCEEDED → SUDAH_REFUND; PENDING/lainnya → tetap SEDANG_DIPROSES sampai callback
+   `refund.succeeded`/`refund.failed` (`settleRefundByReference` mencoba `rfd-…`, lalu `pr-…`, lalu `py-…`).
+5. 403 `REFUND_NOT_SUPPORTED` (VA) → 422 ke admin, klaim dilepas, kembalikan manual dari dashboard.
 
-- **Bentuk callback v3** dan nama peristiwanya (`payment.succeeded`, dll). Parser tetap
-  mendukungnya meski jalur pembuatan VA sudah dihapus: pembayaran lewat Invoice yang dibayar
-  dengan transfer bank tetap membawa `payment_method.virtual_account.channel_code`, dan itulah
-  yang mengisi `orders.metode_pembayaran`.
-- **Ketersediaan channel** — sebagian metode harus diaktifkan lewat dashboard Xendit. Daftar di
-  `PAYMENT_METHODS` hanya TAMPILAN di halaman checkout; yang benar-benar tersedia ditentukan
-  Xendit, jadi keduanya bisa menyimpang tanpa error apa pun. Cocokkan sesekali.
+Transfer bank / VA **tidak bisa** lewat sini (Xendit menolak); refund-nya adalah payout BARU ke
+rekening pembeli — sementara manual dari dashboard, otomatisasinya lewat Payouts API (`POST
+/v3/payouts`) dijadwalkan terpisah. Direct debit BRI **bisa** (keluarga `direct-debit` di
+`lib/payment-method.ts`).
 
-Dua butir yang dulu ada di sini — path `/payment_requests` dan letak nomor VA di respons — sudah
-tidak berlaku sejak jalur Virtual Account dihapus (2026-09-08).
+### ⚠️ Yang masih UNVERIFIED (cocokkan pada uji pertama di mode test)
 
-Setelah callback pertama masuk, cocokkan dengan log `[xendit-webhook] masuk …` lalu perbarui
-komentar `UNVERIFIED` di kode.
+Seluruh bentuk di atas disusun dari referensi API Xendit (docs.xendit.co, 2026-09-28) — **belum
+satu pun callback Sessions/Payments v3 sungguhan pernah diterima**. Pelajaran 2026-09-14 (callback
+eWallet ditolak parser yang ditulis dari dokumentasi) berlaku penuh. Yang harus dicek:
+
+- Nama event pembayaran sukses: `payment.capture` (referensi webhook) vs `payment.succeeded`
+  (panduan migrasi). Parser mengenali keduanya; catat mana yang datang.
+- Apakah `payment_session.completed` membawa `channel_code`. Kalau tidak dan `payment.capture`
+  tak terdaftar, `metode_pembayaran` akan kosong → daftarkan keduanya.
+- Batas maksimum `expires_at` (24 jam ditolak atau tidak).
+- Header idempotency yang dihormati `POST /refunds` (`Idempotency-key` dikirim; tak didokumentasikan
+  untuk endpoint ini).
+- Domain `payment_link_url` (contoh dokumentasi memakai `https://xen.to/…`) — selektor & pola URL
+  di `tests/e2e/checkout-full-payment-flow.spec.ts` menunggu `xendit.co`.
+- Email notifikasi: apakah Sessions mengirim email tagihan & konfirmasi seperti Invoice dulu.
+
+Setelah callback pertama masuk, cocokkan dengan log `[xendit-webhook] masuk …`, kunci contohnya di
+`tests/unit/xendit-webhook.test.ts`, lalu hapus butir yang sudah terbukti dari daftar ini.
+
+### Pesanan uji dari era Invoice v2
+
+`orders.id_transaksi` pesanan yang dibuat sebelum 2026-09-28 berisi **invoice id**, bukan `ps-…`.
+Membatalkannya memanggil `POST /sessions/{invoice id}/cancel` → 404 (`not-found`, dicatat di
+`invoice_expire_error`); me-refund-nya lewat OMS gagal di `GET /sessions` (`INVOICE_READ_FAILED`).
+Keduanya diselesaikan **manual di dashboard Xendit**. Tak ada pesanan pembeli sungguhan di antaranya.
 
 
 ## Flowchart Sistem Ecommerce (target end-to-end)
@@ -1002,14 +1005,14 @@ resi masih roadmap (dijalankan dengan mock).
    (Email WAJIB dan menjadi kunci Lacak Pesanan — lihat "Validasi Form Checkout" & "Layanan Pesanan Guest".)
 9. User isi form → klik "Bayar Sekarang" → `POST /api/orders/create` → RPC atomik `create_order_with_items`
    (insert `orders` + `order_items` + kurangi stok; rollback bila stok kurang; nomor invoice `INV-…`)
-10. Backend **terbitkan tagihan** → `POST /api/payments/invoice` → Xendit Invoice API v2 *(sudah ada, dipakai checkout)*
-11. Xendit kirim balik `invoice_url` + batas waktu; `invoice_id` disimpan ke `orders.id_transaksi`, tautan & kedaluwarsanya ke `invoice_url`/`invoice_expires_at` *(sudah ada)*
-12. Pembeli diarahkan ke halaman pembayaran Xendit dan memilih metodenya di sana; menekan "Bayar Sekarang" lagi memakai ULANG tagihan yang sama selama belum kedaluwarsa *(sudah ada)*
+10. Backend **terbitkan sesi pembayaran** → `POST /api/payments/invoice` → Xendit Payment Sessions (`POST /sessions`) *(sudah ada, dipakai checkout)*
+11. Xendit kirim balik `payment_link_url` + `expires_at`; `payment_session_id` disimpan ke `orders.id_transaksi`, tautan & kedaluwarsanya ke `invoice_url`/`invoice_expires_at` *(sudah ada)*
+12. Pembeli diarahkan ke halaman pembayaran Xendit dan memilih metodenya di sana; menekan "Bayar Sekarang" lagi memakai ULANG sesi yang sama selama belum kedaluwarsa *(sudah ada)*
 13. User melakukan pembayaran
 
 ### Alur Post-Payment (Webhook) — SUDAH TERPASANG
 14. Xendit kirim notifikasi ke webhook (`/api/webhooks/xendit`)
-15. Backend verifikasi `x-callback-token` (Xendit tak menandatangani body) → update `orders`; stok TIDAK disentuh saat lunas karena checkout sudah memotongnya, tapi DIKEMBALIKAN saat EXPIRED/FAILED
+15. Backend verifikasi `x-callback-token` (Xendit tak menandatangani body) → update `orders`; stok TIDAK disentuh saat lunas karena checkout sudah memotongnya, tapi DIKEMBALIKAN saat `payment_session.expired`
 16. Kirim data ke API Mengantar untuk proses booking kurir
 17. Mengantar kirim balik no. resi / booking ID resmi
 18. Update tabel order dengan no. resi
@@ -1023,7 +1026,7 @@ resi masih roadmap (dijalankan dengan mock).
 - Langkah 3 & 7: operasi cookie via `src/lib/cart-client.ts`
 - Langkah 8: cek ongkir Mengantar via `src/lib/mengantar.ts` (`fetchShippingEstimate`), UI `ShippingOptions` *(sudah real)*
 - Langkah 9 & 22: data order via `src/lib/mock-db/orders.ts` (Supabase)
-- Langkah 10-12: logika Xendit di `src/lib/xendit/` (`config.ts` + `invoice.ts`), jangan di frontend *(sudah ada)*
+- Langkah 10-12: logika Xendit di `src/lib/xendit/` (`config.ts` + `session.ts`), jangan di frontend *(sudah ada)*
 - Langkah 14-18: `src/app/api/webhooks/xendit/route.ts` *(sudah ada)*. Langkah 19-20 (hapus cookie, email) belum
 - Langkah 16-17: booking/tracking kurir Mengantar (pakai `MENGANTAR_API_KEY`) *(roadmap)*
 - Langkah 19: pastikan cookie dihapus **hanya setelah** webhook dikonfirmasi sukses, bukan setelah redirect

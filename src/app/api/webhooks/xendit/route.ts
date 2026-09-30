@@ -32,6 +32,7 @@ import { getCachedProducts } from '@/lib/mock-db/cached-reads'
 import { sendPurchaseEvent, type ProductMeta } from '@/lib/analytics-server'
 import { bookShipmentForPaidOrder } from '@/lib/shipment-booking'
 import {
+  isLegacyInvoiceCallback,
   parseXenditCallback,
   resolvePaymentOutcome,
   verifyCallbackToken,
@@ -82,15 +83,20 @@ export async function POST(request: Request) {
 
   const parsed = parseXenditCallback(body)
   if (!parsed) {
-    // Bisa jadi callback jenis lain (disbursement, dll) yang belum kita tangani. Balas 200 agar
-    // Xendit tidak mengulang terus-menerus untuk sesuatu yang memang bukan urusan endpoint ini.
-    // Nama event ikut dicatat. Callback refund eWallet pertama lenyap di sini dengan pesan yang tak
-    // menyebut bahwa ia `ewallet.refund` — padahal nama itu saja sudah cukup untuk langsung menemukan
-    // penyebabnya. Callback eWallet lain yang belum ditangani (mis. `ewallet.void`) akan terlihat
-    // dengan cara yang sama. Aman dicatat: token callback sudah diverifikasi di langkah 1.
+    // Bisa jadi callback jenis lain (payout, payment_token, dll) yang belum kita tangani. Balas 200
+    // agar Xendit tidak mengulang terus-menerus untuk sesuatu yang memang bukan urusan endpoint ini.
+    // Nama event ikut dicatat: callback refund eWallet pertama (2026-09-14) dulu lenyap di sini
+    // dengan pesan yang tak menyebut event-nya — padahal nama itu saja sudah cukup untuk langsung
+    // menemukan penyebabnya. Aman dicatat: token callback sudah diverifikasi di langkah 1.
     const eventName = callbackEventName(body)
+    if (isLegacyInvoiceCallback(body)) {
+      // Invoice API v2 dilepas 2026-09-28. Callback seperti ini berarti masih ada tagihan lama
+      // (dari masa uji) yang beredar di akun Xendit — bukan pembayaran pembeli sungguhan.
+      console.warn(`${LOG} callback Invoice API v2 LAMA diabaikan (jalur sudah dilepas)`)
+      return NextResponse.json({ received: true, handled: false, reason: 'LEGACY_INVOICE_CALLBACK' })
+    }
     console.warn(
-      `${LOG} payload tak dikenali${eventName ? ` (event=${eventName})` : ''} — tanpa external_id/reference_id/status, dilewati`,
+      `${LOG} payload tak dikenali${eventName ? ` (event=${eventName})` : ''} — tanpa data.reference_id/status, dilewati`,
     )
     return NextResponse.json({
       received: true,
@@ -101,7 +107,7 @@ export async function POST(request: Request) {
   }
 
   console.log(
-    `${LOG} masuk invoice=${parsed.invoice} status=${parsed.rawStatus} paid=${parsed.paidAmount} bentuk=${parsed.source}`,
+    `${LOG} masuk invoice=${parsed.invoice} event=${parsed.event} status=${parsed.rawStatus} paid=${parsed.paidAmount} bentuk=${parsed.source}`,
   )
 
   // 3) Pesanan harus ada. Nominal tagihan dibaca dari DB, bukan dari payload.
@@ -122,6 +128,13 @@ export async function POST(request: Request) {
     case 'ignored':
       console.warn(`${LOG} invoice=${parsed.invoice} status tak dikenal: ${outcome.rawStatus}`)
       return NextResponse.json({ received: true, handled: false, reason: 'UNKNOWN_STATUS' })
+
+    case 'attempt-failed':
+      // Satu PERCOBAAN bayar gagal (`payment.failure`), tapi sesinya masih hidup dan pembeli bisa
+      // mencoba metode lain. Pesanan & stok TIDAK disentuh — yang menutup pesanan hanya
+      // `payment_session.expired` (atau penyapu cron). Lihat catatan di lib/xendit/webhook.ts.
+      console.log(`${LOG} invoice=${parsed.invoice} percobaan bayar gagal (${parsed.rawStatus}) — sesi masih hidup, tak ada perubahan`)
+      return NextResponse.json({ received: true, handled: false, reason: 'ATTEMPT_FAILED' })
 
     case 'underpaid':
       // JANGAN tandai Lunas. Barang bisa terkirim padahal uangnya kurang.
@@ -144,12 +157,14 @@ export async function POST(request: Request) {
 // diuji dengan payload sungguhan tanpa menjalankan server. Dipindah dari sini setelah 2026-09-14
 // terbukti bentuk yang ditulis dari dokumentasi tak cocok dengan callback yang benar-benar dikirim.
 //
-// ⚠️ TIDAK memuat `external_id` — jadi nomor invoice kita tak ada di mana pun di payload ini.
-// Penghubung satu-satunya adalah nomor yang kita simpan di refund_reference.
+// ⚠️ `data.reference_id` di callback refund adalah referensi yang KITA kirim saat meminta refund
+// (nomor invoice) — tapi pencocokannya sengaja tetap lewat refund_reference: refund yang dimulai
+// dari dashboard Xendit tak membawa reference_id kita, dan satu pesanan hanya boleh ditutup oleh
+// refund yang memang diklaim OMS.
 
 async function handleRefundCallback(refund: RefundCallback) {
   console.log(
-    `${LOG} callback ${refund.event} ref=${refund.id || '-'} charge=${refund.chargeId || '-'} status=${refund.status || '-'}`,
+    `${LOG} callback ${refund.event} ref=${refund.id || '-'} pr=${refund.paymentRequestId || '-'} py=${refund.paymentId || '-'} status=${refund.status || '-'}`,
   )
 
   // Keberhasilan ditentukan `data.status`, bukan nama event-nya. Keduanya hampir selalu sepakat,
@@ -171,14 +186,14 @@ async function handleRefundCallback(refund: RefundCallback) {
     return NextResponse.json({ received: true, handled: false, reason: 'UNKNOWN_REFUND_STATUS' })
   }
 
-  // Dicoba dengan nomor refund (`data.id`) lebih dulu, lalu id charge-nya.
+  // Dicoba dengan nomor refund (`data.id`) lebih dulu, lalu payment_request_id, lalu payment_id.
   //
-  // Keduanya perlu karena isi refund_reference BERGANTI selama prosesnya: saat diklaim ia berisi id
-  // charge (`ewc_…`), lalu ditimpa nomor refund (`ewr_…`) begitu balasan HTTP Xendit diterima.
-  // Callback yang tiba sesudah pergantian itu cocok lewat nomor refund — terukur 2026-09-14,
-  // `data.id` sama persis dengan yang tersimpan. Callback yang tiba SEBELUMNYA hanya bisa cocok lewat
-  // id charge.
-  const kandidat = [refund.id, refund.chargeId].filter(Boolean)
+  // Semuanya perlu karena isi refund_reference BERGANTI selama prosesnya: saat diklaim ia berisi
+  // `pr-…` (sudah diketahui sebelum Xendit dipanggil), lalu ditimpa nomor refund `rfd-…` begitu
+  // balasan HTTP Xendit diterima. Callback yang tiba sesudah pergantian itu cocok lewat nomor
+  // refund; yang tiba SEBELUMNYA hanya bisa cocok lewat payment_request_id. payment_id cadangan
+  // terakhir bila suatu saat Xendit hanya menyertakan itu.
+  const kandidat = [refund.id, refund.paymentRequestId, refund.paymentId].filter(Boolean)
   for (const ref of kandidat) {
     const hasil = await settleRefundByReference(ref, berhasil, refund.detail || status)
     if (hasil) {

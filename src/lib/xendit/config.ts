@@ -19,9 +19,10 @@ import 'server-only'
 
 export const XENDIT_BASE_URL = 'https://api.xendit.co'
 
-// Catatan: XENDIT_PAYMENT_REQUEST_PATH ('/payment_requests') DIHAPUS bersama jalur Virtual Account
-// pada 2026-09-08 — tak ada lagi yang memanggilnya. Checkout memakai Invoice API, path-nya ada di
-// lib/xendit/invoice.ts. Lihat docs/checkout-flow.md → "jalur Virtual Account (DIHAPUS)".
+// Path per-API tinggal di modulnya masing-masing: `/sessions` di lib/xendit/session.ts (checkout),
+// `/refunds` di lib/xendit/refund.ts. Invoice API v2 (`/v2/invoices`) dan eWallets API
+// (`/ewallets/charges/…`) dilepas 2026-09-28 karena Xendit menggolongkannya legacy — lihat
+// docs/checkout-flow.md → "Pembayaran Xendit — Payment Sessions".
 
 // === Kunci & lingkungan ===
 
