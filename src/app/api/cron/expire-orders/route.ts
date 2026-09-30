@@ -32,7 +32,7 @@ import {
   updatePaymentStatus,
 } from '@/lib/mock-db/orders'
 import { expireOrder, revalidateAfterExpiry } from '@/lib/order-expiry'
-import { INVOICE_DURATION_SECONDS } from '@/lib/xendit/invoice'
+import { SESSION_DURATION_SECONDS } from '@/lib/xendit/session'
 
 // createAdminClient (Supabase) + node:crypto butuh runtime Node.js, bukan Edge
 export const runtime = 'nodejs'
@@ -40,7 +40,7 @@ export const dynamic = 'force-dynamic'
 
 const LOG = '[cron:expire-orders]'
 
-// Tenggang di atas umur invoice. Callback Xendit bisa terlambat beberapa menit, dan menutup
+// Tenggang di atas umur sesi pembayaran. Callback Xendit bisa terlambat beberapa menit, dan menutup
 // pesanan lebih dulu daripada callback-nya hanya akan membuat dua jalur berebut baris yang sama.
 // Satu jam cukup lapang tanpa membuat stok tertahan lama.
 const GRACE_MS = 60 * 60 * 1000
@@ -82,7 +82,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Tidak berwenang.' }, { status: 401 })
   }
 
-  const cutoff = new Date(Date.now() - INVOICE_DURATION_SECONDS * 1000 - GRACE_MS)
+  const cutoff = new Date(Date.now() - SESSION_DURATION_SECONDS * 1000 - GRACE_MS)
   const cutoffIso = cutoff.toISOString()
 
   // Dua pekerjaan berbeda, sengaja dibaca bersamaan:

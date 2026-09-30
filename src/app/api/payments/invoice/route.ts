@@ -1,20 +1,25 @@
 // src/app/api/payments/invoice/route.ts
-// Menyediakan halaman pembayaran Xendit untuk sebuah pesanan yang SUDAH tersimpan.
+// Menyediakan halaman pembayaran Xendit (Payment Session) untuk sebuah pesanan yang SUDAH tersimpan.
 //   POST /api/payments/invoice  { invoice: "INV-..." }
 //   → { invoiceUrl, invoiceId, expiryDate, reused? }
 //
+// Nama path & bentuk responsnya DIPERTAHANKAN dari era Invoice API v2 (dilepas 2026-09-28) supaya
+// halaman checkout dan tombol "Bayar Sekarang" tak perlu berubah: `invoiceUrl` kini berisi
+// `payment_link_url` sesi, `invoiceId` berisi `payment_session_id` (`ps-…`).
+//
 // ── Memakai ulang lebih dulu, menerbitkan belakangan ──
-// Bila pesanan masih memegang tagihan yang belum kedaluwarsa, tagihan ITU yang dikembalikan
+// Bila pesanan masih memegang sesi yang belum kedaluwarsa, sesi ITU yang dikembalikan
 // (`reused: true`) tanpa memanggil Xendit sama sekali. Endpoint ini dipanggil dari halaman
 // checkout DAN dari tombol "Bayar Sekarang" di halaman sukses — tanpa pemakaian ulang, setiap
-// tekan menerbitkan tagihan baru untuk pesanan yang sama (API-XND-027).
+// tekan menerbitkan sesi baru untuk pesanan yang sama (API-XND-027).
 //
 // ── Metode pembayaran dipilih di halaman Xendit, bukan di sini ──
-// Sempat ada pemilih metode di checkout yang meneruskan pilihannya lewat `payment_methods`
-// (2026-09-18, dicabut hari yang sama). Keputusan pemilik proyek: satu tempat memilih saja, dan
-// tempat itu halaman Xendit — ia sudah menampilkan seluruh metode aktif beserta instruksinya.
-// Konsekuensinya endpoint ini tak perlu tahu metode apa pun: satu pesanan, satu tagihan, dan
-// pembeli yang berubah pikiran cukup memilih ulang di halaman Xendit tanpa tagihan diterbitkan lagi.
+// Sempat ada pemilih metode di checkout (2026-09-18, dicabut hari yang sama). Keputusan pemilik
+// proyek: satu tempat memilih saja, dan tempat itu halaman Xendit — Payment Session mode
+// PAYMENT_LINK mempertahankan itu. Kanal yang tampil = yang aktif di akun Xendit, kecuali
+// `XENDIT_ALLOWED_CHANNELS` diisi (lihat lib/xendit/session.ts). Endpoint ini tak perlu tahu
+// metode apa pun: satu pesanan, satu sesi, dan pembeli yang berubah pikiran cukup memilih ulang di
+// halaman Xendit tanpa sesi diterbitkan lagi.
 //
 // ── Yang TIDAK dipercaya dari client ──
 // Client hanya mengirim NOMOR INVOICE. Nominal, nama, dan nomor telepon dibaca dari tabel
@@ -33,7 +38,7 @@
 
 import { NextResponse } from 'next/server'
 import { getOrderByOrderId, setOrderTransactionId } from '@/lib/mock-db/orders'
-import { createXenditInvoice } from '@/lib/xendit/invoice'
+import { createXenditSession } from '@/lib/xendit/session'
 import { RATE_LIMITS, enforceRateLimit, getClientIp } from '@/lib/rate-limit'
 import type { Order } from '@/types/order'
 
@@ -50,16 +55,16 @@ const PUBLIC_ERRORS: Record<string, string> = {
   'blocked-environment': 'Pembayaran belum dikonfigurasi. Silakan hubungi kami.',
   'invalid-order': 'Data pesanan tidak lengkap. Silakan hubungi kami.',
   'http-error': 'Gagal membuat halaman pembayaran. Silakan coba lagi.',
-  'no-invoice-url': 'Gagal membuat halaman pembayaran. Silakan coba lagi.',
+  'no-session-url': 'Gagal membuat halaman pembayaran. Silakan coba lagi.',
   network: 'Gagal menghubungi layanan pembayaran. Silakan coba lagi.',
 }
 
-// Sisa waktu minimum agar tagihan lama layak dipakai ulang. Tagihan yang tinggal beberapa detik
-// secara teknis masih hidup, tapi mengarahkan pembeli ke sana berarti ia kedaluwarsa di tengah
-// pembeli memilih metode & menyalin nomor — lebih baik terbitkan yang baru sekalian.
+// Sisa waktu minimum agar sesi lama layak dipakai ulang. Sesi yang tinggal beberapa detik secara
+// teknis masih hidup, tapi mengarahkan pembeli ke sana berarti ia kedaluwarsa di tengah pembeli
+// memilih metode & menyalin nomor — lebih baik terbitkan yang baru sekalian.
 const REUSE_MIN_REMAINING_MS = 5 * 60 * 1000
 
-// Tagihan tersimpan yang masih layak dipakai ulang, atau null bila harus menerbitkan yang baru.
+// Sesi tersimpan yang masih layak dipakai ulang, atau null bila harus menerbitkan yang baru.
 function liveInvoiceOf(
   order: Order,
 ): { invoiceUrl: string; invoiceId: string; expiryDate: string } | null {
@@ -159,7 +164,7 @@ export async function POST(request: Request) {
   )
   if (limitedInvoice) return limitedInvoice
 
-  const result = await createXenditInvoice(order, resolveOrigin(request))
+  const result = await createXenditSession(order, resolveOrigin(request))
   if (!result.ok) {
     // Detail lengkap HANYA ke log server.
     console.error(`${LOG} invoice=${invoice} gagal (${result.reason}): ${result.detail}`)
@@ -171,30 +176,30 @@ export async function POST(request: Request) {
     )
   }
 
-  // Simpan id invoice → orders.id_transaksi. Ini yang menghubungkan pesanan kita dengan objek
-  // pembayaran di dashboard Xendit; tanpanya, pembayaran bermasalah tak bisa dilacak balik.
+  // Simpan id sesi (`ps-…`) → orders.id_transaksi. Ini yang menghubungkan pesanan kita dengan
+  // objek pembayaran di dashboard Xendit; tanpanya, pembayaran bermasalah tak bisa dilacak balik,
+  // dan pembatalan sesi maupun pengembalian dana tak punya pegangan.
   //
-  // Gagal menyimpan TIDAK membatalkan respons: invoice sudah terbit dan pembeli berhak
-  // membayarnya. Webhook tetap menemukan pesanan lewat `external_id` (= nomor invoice), bukan
-  // lewat kolom ini. Tapi dicatat sekeras mungkin karena jejaknya jadi tak lengkap.
-  // Tautan & masa berlakunya ikut disimpan supaya penekanan tombol berikutnya dijawab dari DB
-  // tanpa menerbitkan tagihan kedua.
-  const saved = await setOrderTransactionId(invoice, result.invoice.invoiceId, {
-    url: result.invoice.invoiceUrl,
-    expiresAt: result.invoice.expiryDate,
+  // Gagal menyimpan TIDAK membatalkan respons: sesi sudah terbit dan pembeli berhak membayarnya.
+  // Webhook tetap menemukan pesanan lewat `reference_id` (= nomor invoice), bukan lewat kolom ini.
+  // Tapi dicatat sekeras mungkin karena jejaknya jadi tak lengkap. Tautan & masa berlakunya ikut
+  // disimpan supaya penekanan tombol berikutnya dijawab dari DB tanpa menerbitkan sesi kedua.
+  const saved = await setOrderTransactionId(invoice, result.session.sessionId, {
+    url: result.session.paymentUrl,
+    expiresAt: result.session.expiresAt,
   })
   if (!saved) {
     console.error(
-      `${LOG} invoice=${invoice} tagihan terbit (${result.invoice.invoiceId}) tapi GAGAL disimpan ke id_transaksi`,
+      `${LOG} invoice=${invoice} sesi terbit (${result.session.sessionId}) tapi GAGAL disimpan ke id_transaksi`,
     )
   }
 
-  console.log(`${LOG} invoice=${invoice} tagihan terbit, kedaluwarsa ${result.invoice.expiryDate}`)
+  console.log(`${LOG} invoice=${invoice} sesi terbit, kedaluwarsa ${result.session.expiresAt}`)
 
   return NextResponse.json({
-    invoiceUrl: result.invoice.invoiceUrl,
-    invoiceId: result.invoice.invoiceId,
-    expiryDate: result.invoice.expiryDate,
+    invoiceUrl: result.session.paymentUrl,
+    invoiceId: result.session.sessionId,
+    expiryDate: result.session.expiresAt,
     transactionSaved: saved,
   })
 }

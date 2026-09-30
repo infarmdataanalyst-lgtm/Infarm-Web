@@ -26,7 +26,7 @@
 // "(direct)" seperti dugaan awal — benar-benar tak teratribusi.
 //
 // Penempelan ini bisa diandalkan di sini karena tagihan Xendit hanya berlaku 24 jam
-// (INVOICE_DURATION_SECONDS), jadi jarak terjauh antara sesi dan pembayaran adalah satu hari.
+// (SESSION_DURATION_SECONDS di lib/xendit/session.ts), jadi jarak terjauh antara sesi dan pembayaran adalah satu hari.
 
 import 'server-only'
 

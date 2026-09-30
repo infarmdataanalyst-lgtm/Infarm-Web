@@ -98,6 +98,12 @@ ketiga, bukan karena kode kita. Spec memeriksa kolom Provinsi tepat setelah alam
 penyebabnya kelihatan di situ, bukan menjelma jadi "tak ada opsi kurir" satu langkah kemudian.
 
 Selektor halaman Xendit di spec itu masih **tebakan berlapis kandidat**, bukan hasil pengamatan
-(halamannya tak bisa diintip tanpa menerbitkan invoice lebih dulu). Jalankan sekali, lihat
+(halamannya tak bisa diintip tanpa menerbitkan sesi lebih dulu). Jalankan sekali, lihat
 `screenshots/xendit-1-metode.png`, `screenshots/xendit-2-va.png`, dan dump struktur di konsol,
 lalu kunci selektornya.
+
+⚠️ **Sejak 2026-09-28 checkout memakai Payment Sessions, bukan Invoice API.** Halaman yang dituju
+adalah `payment_link_url` sesi — contoh di dokumentasi Xendit berdomain `https://xen.to/…`, jadi
+`page.waitForURL(/xendit\.co/)` di spec itu **mungkin tak lagi cocok** dan selektor halamannya pasti
+berbeda dari halaman Invoice lama. Amati sekali lalu perbarui pola URL & selektornya. Detail migrasi:
+`docs/checkout-flow.md` → "Pembayaran Xendit — Payment Sessions".

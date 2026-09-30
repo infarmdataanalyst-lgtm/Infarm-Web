@@ -24,8 +24,14 @@
 
 // Keluarga metode pembayaran. Dipakai untuk pelabelan; keputusan soal refund TIDAK dikodekan di
 // sini karena bergantung pada channel spesifik dan batas waktunya, bukan sekadar keluarganya.
+//
+// 'direct-debit' (mis. BRI) DIPISAH dari 'transfer-bank' walau sama-sama rekening bank: direct
+// debit BISA dikembalikan ke rekening asal lewat POST /refunds (BRI: penuh, maks. 120 hari),
+// sementara VA/transfer bank tidak bisa sama sekali. Menyatukannya akan menyembunyikan tombol
+// refund otomatis untuk pembayaran yang sebenarnya bisa dikembalikan.
 export type PaymentFamily =
   | 'transfer-bank'
+  | 'direct-debit'
   | 'e-wallet'
   | 'qris'
   | 'kartu'
@@ -36,10 +42,17 @@ export type PaymentFamily =
 // Channel Xendit → keluarga. Kunci disimpan KAPITAL; pencocokan meng-uppercase masukannya lebih
 // dulu, jadi 'bca' dan 'BCA' sama saja.
 //
-// Daftar ini sengaja memuat channel yang BELUM tentu kita nyalakan (GoPay, ShopeePay, Kredivo…).
-// Menyalakan satu metode baru di dashboard Xendit tak seharusnya menuntut perubahan kode di sini —
-// dan kalau daftarnya cuma memuat yang aktif hari ini, metode baru akan muncul sebagai 'lain'
-// tepat pada hari pertama ia dipakai pembeli sungguhan.
+// ── Dua generasi kode kanal, satu tabel ──
+// Invoice API v2 (dilepas 2026-09-28) menulis `payment_channel` pendek: 'BCA', 'OVO'. Payments
+// API v3 menulis `channel_code` panjang: 'BCA_VIRTUAL_ACCOUNT', 'BRI_DIRECT_DEBIT', dan untuk
+// e-wallet kadang berawalan negara: 'ID_SHOPEEPAY' (terukur di callback refund 2026-09-14).
+// normalizeChannelKey() melucuti awalan/akhiran itu sebelum mencocokkan, jadi tabel ini cukup
+// memuat nama pendeknya dan pesanan lama maupun baru terbaca dengan cara yang sama.
+//
+// Daftar ini sengaja memuat channel yang BELUM tentu kita nyalakan (GoPay, Kredivo…). Menyalakan
+// satu metode baru di dashboard Xendit tak seharusnya menuntut perubahan kode di sini — dan kalau
+// daftarnya cuma memuat yang aktif hari ini, metode baru akan muncul sebagai 'lain' tepat pada
+// hari pertama ia dipakai pembeli sungguhan.
 const CHANNEL_FAMILY: Record<string, PaymentFamily> = {
   // Transfer bank / Virtual Account
   BCA: 'transfer-bank',
@@ -54,8 +67,17 @@ const CHANNEL_FAMILY: Record<string, PaymentFamily> = {
   BTN: 'transfer-bank',
   DANAMON: 'transfer-bank',
   SAHABAT_SAMPOERNA: 'transfer-bank',
+  BSS: 'transfer-bank',
+  HANA: 'transfer-bank',
+  MUAMALAT: 'transfer-bank',
   BANK_TRANSFER: 'transfer-bank',
   VIRTUAL_ACCOUNT: 'transfer-bank',
+
+  // Direct debit (kunci hasil normalisasi 'BRI_DIRECT_DEBIT' → 'DD_BRI', lihat normalizeChannelKey)
+  DD_BRI: 'direct-debit',
+  DD_MANDIRI: 'direct-debit',
+  DD_BCA: 'direct-debit',
+  DIRECT_DEBIT: 'direct-debit',
 
   // Dompet digital
   OVO: 'e-wallet',
@@ -92,6 +114,7 @@ const CHANNEL_FAMILY: Record<string, PaymentFamily> = {
 
 const FAMILY_LABEL: Record<PaymentFamily, string> = {
   'transfer-bank': 'Transfer Bank',
+  'direct-debit': 'Direct Debit',
   'e-wallet': 'Dompet Digital',
   qris: 'QRIS',
   kartu: 'Kartu',
@@ -116,6 +139,14 @@ const CHANNEL_LABEL: Record<string, string> = {
   QR_CODE: 'QRIS',
   EWALLET: 'Dompet Digital',
   SAHABAT_SAMPOERNA: 'Sahabat Sampoerna',
+  BSS: 'Sahabat Sampoerna',
+  BNC: 'Neo Commerce',
+  HANA: 'Hana Bank',
+  MUAMALAT: 'Muamalat',
+  DD_BRI: 'BRI',
+  DD_MANDIRI: 'Mandiri',
+  DD_BCA: 'BCA',
+  DIRECT_DEBIT: 'Direct Debit',
   ALFAMART: 'Alfamart',
   INDOMARET: 'Indomaret',
   KREDIVO: 'Kredivo',
@@ -142,14 +173,29 @@ export function paymentMethodInfo(value: string | null | undefined): PaymentMeth
   const raw = value?.trim()
   if (!raw) return null
 
-  const key = raw.toUpperCase().replace(/[\s-]+/g, '_')
+  const key = normalizeChannelKey(raw)
   const family = CHANNEL_FAMILY[key] ?? 'lain'
 
   return {
-    channel: CHANNEL_LABEL[key] ?? raw.toUpperCase(),
+    channel: CHANNEL_LABEL[key] ?? key,
     family,
     familyLabel: FAMILY_LABEL[family],
   }
+}
+
+// Kunci tabel dari nilai kolom apa pun bentuknya. Diekspor untuk unit test.
+//
+//   'bca'                 → 'BCA'
+//   'BCA_VIRTUAL_ACCOUNT' → 'BCA'        (akhiran v3 dilucuti; keluarganya sudah jelas dari bank)
+//   'BRI_DIRECT_DEBIT'    → 'DD_BRI'     (dibedakan dari VA BRI — jalur refund-nya berbeda)
+//   'ID_SHOPEEPAY'        → 'SHOPEEPAY'  (awalan negara di callback e-wallet)
+//   'ID_DANA_AUTODEBIT'   → 'DANA'       (varian autodebit dompet digital)
+export function normalizeChannelKey(raw: string): string {
+  let key = raw.toUpperCase().replace(/[\s-]+/g, '_')
+  key = key.replace(/^ID_/, '')
+  if (key.endsWith('_DIRECT_DEBIT')) return `DD_${key.slice(0, -'_DIRECT_DEBIT'.length)}`
+  key = key.replace(/_VIRTUAL_ACCOUNT$/, '').replace(/_AUTODEBIT$/, '')
+  return key
 }
 
 // Satu baris siap tampil: 'BCA · Transfer Bank'.

@@ -24,9 +24,10 @@ export type OrderPaymentStatus = 'Lunas' | 'Menunggu' | 'Gagal'
 // Keadaan pengembalian dana. Nilainya dipakai apa adanya di DB (bukan dipetakan seperti
 // order_status) supaya kolom, constraint, dan kode menyebut hal yang sama persis — satu lapis
 // terjemahan lebih sedikit untuk salah.
-// SEDANG_DIPROSES: sudah dikirim ke Xendit, hasilnya belum dipastikan. `refunds` (H+1) menjawab
-// PENDING lebih dulu dan hasil sesungguhnya menyusul lewat callback. Keadaan ini yang mencegah
-// dana terkirim dua kali TANPA berbohong bahwa urusannya sudah selesai.
+// SEDANG_DIPROSES: sudah dikirim ke Xendit, hasilnya belum dipastikan. `POST /refunds` bisa
+// menjawab PENDING lebih dulu dan hasil sesungguhnya menyusul lewat callback refund.succeeded /
+// refund.failed. Keadaan ini yang mencegah dana terkirim dua kali TANPA berbohong bahwa urusannya
+// sudah selesai.
 export type RefundStatus = 'PERLU_REFUND' | 'SEDANG_DIPROSES' | 'SUDAH_REFUND' | 'TIDAK_PERLU'
 
 // Satu baris di daftar kerja pengembalian dana OMS.
@@ -99,7 +100,7 @@ export type Order = {
   status?: OrderFulfillmentStatus
   logistics?: OrderLogistics
   trackingNumber?: string // no_tracking (diisi setelah kurir pickup)
-  transactionId?: string // id_transaksi (dari Xendit setelah pembayaran)
+  transactionId?: string // id_transaksi: payment_session_id Xendit (`ps-…`) sejak sesi dibuat
   // client_id GA4 pembeli, dititipkan checkout dari cookie `_ga` (migration 20260923120000).
   // Dipakai webhook Xendit untuk mengirim event `purchase` atas nama pembeli yang benar — lihat
   // src/lib/analytics-server.ts. `undefined` bila pembeli memblokir GA atau pesanannya dibuat
@@ -113,15 +114,15 @@ export type Order = {
   // Estimasi lama pengiriman dari Mengantar saat pesanan dibuat, teks mentah ("2-4 hari").
   // Diurai oleh src/lib/delivery-estimate.ts. Kosong = pesanan lama → perkiraan 2–4 hari.
   deliveryEstimate?: string
-  // Tagihan Xendit yang masih berlaku, disimpan agar tombol "Bayar Sekarang" yang ditekan
-  // berulang kali memakai ulang halaman pembayaran yang SAMA alih-alih menerbitkan tagihan baru
-  // (API-XND-027). Keduanya `undefined` untuk pesanan yang belum pernah ditagih, dan untuk seluruh
-  // pesanan lama bila migration 20260908120000 belum dijalankan.
+  // Sesi pembayaran Xendit yang masih berlaku, disimpan agar tombol "Bayar Sekarang" yang ditekan
+  // berulang kali memakai ulang halaman pembayaran yang SAMA alih-alih menerbitkan sesi baru
+  // (API-XND-027). Nama field warisan era Invoice API; isinya kini `payment_link_url` &
+  // `expires_at` sesi. Keduanya `undefined` untuk pesanan yang belum pernah ditagih.
   invoiceUrl?: string
-  invoiceExpiresAt?: string // ISO 8601, dari `expiry_date` respons Xendit
-  // Hasil upaya mematikan tagihan saat pesanan dibatalkan.
-  invoiceExpiredAt?: string // ISO 8601 — tagihan BERHASIL dimatikan, tak bisa dibayar lagi
-  // Terisi = pesanan sudah batal tapi tagihannya MASIH HIDUP dan masih bisa dibayar. Uang yang
+  invoiceExpiresAt?: string // ISO 8601, dari `expires_at` respons Xendit
+  // Hasil upaya membatalkan sesi pembayaran saat pesanan dibatalkan.
+  invoiceExpiredAt?: string // ISO 8601 — sesi BERHASIL dibatalkan, tak bisa dibayar lagi
+  // Terisi = pesanan sudah batal tapi sesinya MASIH HIDUP dan masih bisa dibayar. Uang yang
   // terlanjur masuk lewat VA tak bisa di-refund Xendit, jadi ini WAJIB ditindaklanjuti manual.
   invoiceExpireError?: string
   // === Pengembalian dana ===
@@ -139,10 +140,11 @@ export type Order = {
   // undefined = dikembalikan manual oleh manusia (dan itu akan tetap umum: transfer bank tak
   // bisa dikembalikan lewat Xendit sama sekali).
   refundReference?: string
-  // = metode_pembayaran. Metode/channel yang BENAR-BENAR dipakai pembeli menurut Xendit
-  // (mis. 'BCA', 'OVO', 'QRIS', 'ALFAMART'). Hanya diketahui setelah callback pembayaran masuk —
-  // di jalur invoice pembeli memilih metodenya sendiri di halaman Xendit, jadi `undefined` selama
-  // tagihan belum dibayar, dan juga untuk pesanan yang dibuat sebelum kolomnya ada.
+  // = metode_pembayaran. `channel_code` yang BENAR-BENAR dipakai pembeli menurut callback
+  // pembayaran Xendit (mis. 'BCA_VIRTUAL_ACCOUNT', 'DANA', 'QRIS', 'BRI_DIRECT_DEBIT'; pesanan era
+  // Invoice v2 menyimpan bentuk pendek 'BCA'/'OVO' — keduanya dibaca src/lib/payment-method.ts).
+  // Hanya diketahui setelah callback pembayaran masuk — pembeli memilih metodenya di halaman
+  // Xendit, jadi `undefined` selama sesi belum dibayar.
   paymentMethod?: string
   address?: OrderShippingAddress
   warehouseId?: string // gudang pemenuh pesanan (orders.warehouse_id); undefined untuk pesanan lama
