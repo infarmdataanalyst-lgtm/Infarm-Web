@@ -46,7 +46,7 @@
 // bukan kebocoran yang baru ketahuan setelah kuncinya terbaca di tab Network.
 import 'server-only'
 
-import { JT_COURIER_ID } from '@/lib/mengantar-estimate'
+import { courierIdFromLabel } from '@/lib/mengantar-estimate'
 import { mengantarWriteHost } from '@/lib/mengantar-host'
 import { getTodayPickupTimeId } from '@/lib/mengantar-pickup'
 import { readProducts } from '@/lib/mock-db/products'
@@ -257,8 +257,11 @@ export async function createShipmentOrder(order: Order): Promise<ShipmentResult>
   }
 
   const weight = await buildWeightKg(order)
+  // Kurir pilihan pembeli (orders.nama_ekspedisi), bukan J&T yang dipaku — sejak Shopee Express
+  // ditawarkan (2026-10-02). Kosong / pesanan lama → J&T, lihat courierIdFromLabel.
+  const courier = courierIdFromLabel(order.logistics?.courier)
   const payload = {
-    courier: JT_COURIER_ID,
+    courier,
     pickup: {
       type: PICKUP_TYPE,
       volume: PICKUP_VOLUME,
@@ -282,7 +285,7 @@ export async function createShipmentOrder(order: Order): Promise<ShipmentResult>
   }
 
   console.log(
-    `${LOG} booking ${order.orderId}: kurir=${JT_COURIER_ID} berat=${weight}kg gudang=${order.warehouseId ?? 'warisan/default'} address_id=${addressId} time_id=${pickup.timeId} (sumber ${pickup.source}, tanggal ${pickup.date})`,
+    `${LOG} booking ${order.orderId}: kurir=${courier} berat=${weight}kg gudang=${order.warehouseId ?? 'warisan/default'} address_id=${addressId} time_id=${pickup.timeId} (sumber ${pickup.source}, tanggal ${pickup.date})`,
   )
 
   try {

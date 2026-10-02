@@ -690,6 +690,8 @@ export default function CheckoutPage() {
           // Server memverifikasi ulang gudang ini (aktif & stok cukup) dan, bila gagal, jatuh ke
           // opsi termurah berikutnya dari perbandingan ongkir yang masih tersimpan di server.
           warehouseId: selectedCourier.warehouseId,
+          // Kode kurir ('JT', 'spx'): server mencocokkannya dengan tarif sah, lalu dipakai saat booking.
+          courierId: selectedCourier.id,
           weight: shippingWeight,
           // client_id GA4 dari cookie `_ga`. Dititipkan ke pesanan supaya webhook Xendit bisa
           // mengirim event `purchase` atas nama pembeli ini — event itu TAK BISA dikirim dari

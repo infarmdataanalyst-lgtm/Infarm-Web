@@ -422,16 +422,29 @@ Susunan baris: `[logo] [nama + estimasi tiba] … [harga] [centang bila terpilih
   tetap muncul di console browser, jadi entri di `COURIER_LOGOS` sebaiknya hanya ditambahkan setelah
   filenya benar-benar ada.
 
-### Kurir dibatasi J&T saja
+### Kurir yang ditawarkan: J&T dan Shopee Express
 
-Daftar putih ada di **`src/lib/mengantar-estimate.ts`** (`ALLOWED_COURIER_IDS`, saat ini hanya
-`JT_COURIER_ID = 'JT'`). Menambah kurir lain = tambah satu entri di situ.
+Daftar putih ada di **`src/lib/mengantar-estimate.ts`** (`ALLOWED_COURIER_IDS` = `JT` dan, sejak
+2026-10-02, **`spx`** = Shopee Express). Kurir pilihan pembeli mengalir utuh sampai Mengantar:
+
+- Checkout mengirim **`courierId`**; `orders/create` mencocokkan pasangan (gudang, harga, **kurir**)
+  dengan tarif sah, fallback gudang hanya ke tarif kurir yang sama, dan `nama_ekspedisi` diisi dari
+  tarif sah itu (`courierDisplayName`), bukan dari teks klien.
+- Booking (`mengantar-shipment.ts`) dan pembatalan penjemputan (`mengantar-cancel.ts`) membaca kurir
+  dari `nama_ekspedisi` lewat `courierIdFromLabel()`; kosong/tak dikenal → `JT` (pesanan lama).
+- **SPX menurut docs sandbox.mengantar.com:** `dropOff` hanya bila SPX Drop Off aktif (kita pakai
+  `scheduledPickup`); `time_id` divalidasi ke slot penjemputan SPX hari itu; sandbox SPX hanya
+  menerima origin Jakarta. **Booking & pembatalan SPX BELUM diuji** — catat di Testing Mengantar.
+- Logo SPX belum ada (ikon truk), tautan lacak SPX belum dipetakan (`courier-tracking-url.ts`).
+
+Menambah kurir lain = tambah satu entri di `ALLOWED_COURIER_IDS` + `COURIER_DISPLAY_NAMES`, lalu uji
+booking & pembatalannya.
 
 - **Kode kurir J&T = `JT`** — dua huruf kapital, TANPA `&` dan tanpa spasi. Terverifikasi lewat
   probe 4 rute; respons `allEstimatePublic` memuat 16 key (`JNE, JNECargo, SiCepat, SiCepatCargo,
   SAP, SAPLite, SapCargo, iDexpress, iDlite, JT, lion, iDexpressCargo, anteraja, paxel, Ninja,
-  pos`). Nama `"J&T"` hanya ada di `COURIER_DISPLAY_NAMES` (label kita) dan di
-  `orders.nama_ekspedisi` (`JT_COURIER_LABEL`) — **bukan** di respons Mengantar.
+  pos`; per 2026-10-02 juga `spx`). Nama `"J&T"` hanya ada di `COURIER_DISPLAY_NAMES` (label kita)
+  dan di `orders.nama_ekspedisi` — **bukan** di respons Mengantar.
 - **Respons cek ongkir TIDAK punya field `nama_ekspedisi`/`jenis_layanan`.** Bentuknya objek
   ber-key kode kurir: `{ data: { JT: { estimatedSpecialPrice, estimatedDate, unsupported } } }`.
   Kolom `nama_ekspedisi`/`jenis_layanan` adalah kolom tabel `orders` kita. Jadi filter

@@ -172,7 +172,7 @@ export default function ShippingOptions({
             // J&T tak melayani rute ini. Sebut kurirnya dengan jelas — "belum ada kurir tersedia"
             // membuat buyer menyangka seluruh alamatnya bermasalah dan mencoba ulang tanpa guna.
             setEmptyReason(
-              'Maaf, J&T tidak melayani pengiriman ke alamat ini saat ini. Coba gunakan alamat lain.',
+              'Maaf, kurir kami (J&T dan Shopee Express) belum melayani pengiriman ke alamat ini. Coba gunakan alamat lain.',
             )
           }
         }

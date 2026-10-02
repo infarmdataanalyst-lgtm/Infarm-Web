@@ -9,7 +9,7 @@
 // nyata dan pengujian berhenti bermakna.
 
 import { revalidatePath } from 'next/cache'
-import { JT_COURIER_LABEL } from '@/lib/mengantar-estimate'
+import { courierDisplayName, courierIdFromLabel } from '@/lib/mengantar-estimate'
 import { createShipmentOrder } from '@/lib/mengantar-shipment'
 import { updateShipment } from '@/lib/mock-db/orders'
 import type { Order } from '@/types/order'
@@ -65,7 +65,7 @@ export async function bookShipmentForPaidOrder(
   const saved = await updateShipment(invoice, {
     booked: true,
     trackingNumber: result.trackingNumber,
-    courier: JT_COURIER_LABEL,
+    courier: courierDisplayName(courierIdFromLabel(order.logistics?.courier)),
     service: result.serviceCode,
     ...(result.mengantarObjectId ? { mengantarObjectId: result.mengantarObjectId } : {}),
     ...(result.mengantarOrderId ? { mengantarOrderId: result.mengantarOrderId } : {}),

@@ -15,7 +15,9 @@
 // PENTING: entri hanya boleh ada bila filenya benar-benar ada. Menambah kurir baru = taruh
 // filenya lalu tambahkan satu baris di sini; tak ada kode lain yang perlu disentuh.
 const COURIER_LOGOS: Record<string, string> = {
-  JT: 'jt.png', // J&T Express — satu-satunya kurir yang ditawarkan saat ini
+  JT: 'jt.png', // J&T Express
+  // Shopee Express ('spx') ditawarkan sejak 2026-10-02 tapi BELUM punya file logo — tampil ikon truk.
+  // Taruh public/images/couriers/spx.png lalu tambahkan `SPX: 'spx.png'` di sini.
 }
 
 // Menormalkan nama/kode kurir jadi kunci pencarian.
