@@ -21,6 +21,7 @@ import { cancelShipmentOrder } from '@/lib/mengantar-cancel'
 import { expireInvoiceForCancelledOrder } from '@/lib/order-invoice-expiry'
 import type { Order, OrderFulfillmentStatus } from '@/types/order'
 import { releasePromoQuota } from '@/lib/mock-db/promotions'
+import { courierIdFromLabel } from '@/lib/mengantar-estimate'
 
 // createAdminClient (Supabase) butuh runtime Node.js, bukan Edge
 export const runtime = 'nodejs'
@@ -87,6 +88,7 @@ async function cancelPickupFor(order: Order): Promise<ShipmentCancellationReport
   }
 
   const hasil = await cancelShipmentOrder({
+    courier: courierIdFromLabel(order.logistics?.courier),
     ...(order.mengantarObjectId ? { objectId: order.mengantarObjectId } : {}),
     ...(order.mengantarOrderId ? { orderId: order.mengantarOrderId } : {}),
   })
