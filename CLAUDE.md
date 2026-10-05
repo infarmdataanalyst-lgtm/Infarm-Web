@@ -172,7 +172,10 @@ punya pemilik yang bisa dibuktikan lewat jalur email, jadi tak akan pernah muncu
   `GA_API_SECRET` + kolom `orders.ga_client_id` & `orders.ga_session_id`). Keduanya dititipkan
   checkout dari cookie `_ga` dan `_ga_<measurement-id>`: `client_id` menjawab SIAPA yang membeli,
   `session_id` menjawab dari KUNJUNGAN MANA — tanpa yang kedua seluruh pendapatan mendarat di baris
-  "Unassigned" laporan Akuisisi traffic (terukur 24 Sep 2026). Strategi load = `afterInteractive`
+  "Unassigned" laporan Akuisisi traffic (terukur 24 Sep 2026). Pesanan yang dananya SUDAH
+  dikembalikan dilaporkan balik lewat event `refund` (`src/lib/ga-refund.ts`, satu event per
+  pesanan dijaga kolom `orders.ga_refund_sent_at`) — detail: docs/checkout-flow.md → "Laporan
+  refund ke GA4". Strategi load = `afterInteractive`
   (default @next/third-parties) — disengaja demi akurasi analytics (tak di-defer ke `lazyOnload`).
 
 ### Roadmap integrasi (belum terpasang)

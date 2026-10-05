@@ -975,6 +975,40 @@ Token: tetap header `x-callback-token` vs `XENDIT_CALLBACK_TOKEN`, diverifikasi 
    `refund.succeeded`/`refund.failed` (`settleRefundByReference` mencoba `rfd-…`, lalu `pr-…`, lalu `py-…`).
 5. 403 `REFUND_NOT_SUPPORTED` (VA) → 422 ke admin, klaim dilepas, kembalikan manual dari dashboard.
 
+### Laporan refund ke GA4 (event `refund`)
+
+Event `purchase` dikirim webhook saat Lunas; sejak 2026-10-05 pesanan yang dananya **sudah
+kembali** juga dilaporkan lewat event `refund` (Measurement Protocol), supaya revenue GA4 & Looker
+Studio tak lebih tinggi dari kenyataan. Orkestrasi: `reportRefundToGa` di `src/lib/ga-refund.ts`;
+payload: `buildRefundPayload` di `src/lib/analytics-server.ts`.
+
+- **Kapan:** saat `refund_status` berpindah ke `SUDAH_REFUND` — bukan saat `PERLU_REFUND`
+  (refund yang akhirnya ditutup `TIDAK_PERLU` tak bisa "ditarik" dari GA4). Tiga jalur, semuanya
+  memanggil `reportRefundToGa` **hanya bila ia pemenang compare-and-swap**:
+  1. callback `refund.succeeded` → `settleRefundByReference` (webhook Xendit)
+  2. `POST /api/oms/refunds/xendit` yang langsung `SUCCEEDED` → `finalizeClaimedRefund`
+  3. `PATCH /api/oms/refunds` status `SUDAH_REFUND` (refund VA manual) → `resolveRefund`
+- **Payload:** `transaction_id` = nomor invoice (sama dengan purchase), `value` = `totalAmount`
+  (bukan `refund_amount` — pesanan batal utuh; potongan biaya transfer adalah biaya toko),
+  `currency` IDR, tanpa `items` (= refund penuh), tanpa `session_id`.
+- **Satu event per pesanan:** lapis 1 = CAS penutupan refund (`settleRefundByReference` kini ikut
+  `.select()` — dulu callback kembar sama-sama "menang"); lapis 2 = klaim
+  `orders.ga_refund_sent_at` (migration `20261005130000`) sebelum mengirim.
+- **Dilewati tanpa klaim** bila env GA kosong atau pesanan tanpa `ga_client_id` (purchase-nya pun
+  tak pernah terkirim — refund untuknya akan jadi revenue minus).
+- **Gagal kirim:** non-2xx → klaim dilepas (masuk daftar susulan); timeout/jaringan → klaim
+  **dipertahankan** (mungkin sudah sampai; susulan = refund ganda). Tak pernah menggagalkan refund
+  atau balasan webhook.
+- **Daftar susulan:** `refund_status = 'SUDAH_REFUND' AND ga_refund_sent_at IS NULL AND
+  ga_client_id IS NOT NULL`. Measurement Protocol menolak event bertanggal > 72 jam, jadi susulan
+  tercatat pada hari dikirim. Pastikan purchase-nya memang pernah terkirim sebelum menyusulkan.
+- **Tak terlihat sistem:** refund yang dimulai langsung dari dashboard Xendit (callback tak cocok
+  dengan pesanan mana pun) — selalu jalankan refund dari OMS.
+- ⚠️ **UNVERIFIED** sampai terlihat di GA4 dari refund sungguhan: (a) refund mengurangi
+  *Purchase revenue*/*Total revenue*, tapi **tidak** jumlah transaksi/"Pembelian"; kartu Looker
+  harus memakai metrik bersih; (b) tanpa `session_id`, refund kemungkinan tampil di kanal
+  "Unassigned" pada laporan Akuisisi. Bentuk payload lolos `/debug/mp/collect` (2026-10-05).
+
 Transfer bank / VA **tidak bisa** lewat sini (Xendit menolak); refund-nya adalah payout BARU ke
 rekening pembeli — sementara manual dari dashboard, otomatisasinya lewat Payouts API (`POST
 /v3/payouts`) dijadwalkan terpisah. Direct debit BRI **bisa** (keluarga `direct-debit` di

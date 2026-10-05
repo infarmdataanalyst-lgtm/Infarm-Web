@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { gaSessionCookieName, parseGaCookie, parseGaSessionCookie } from '@/lib/ga-client-id'
-import { buildPurchasePayload, type ProductMeta } from '@/lib/analytics-server'
+import { buildPurchasePayload, buildRefundPayload, type ProductMeta } from '@/lib/analytics-server'
 import type { Order } from '@/types/order'
 
 describe('parseGaCookie', () => {
@@ -92,6 +92,44 @@ describe('buildPurchasePayload', () => {
     // menyesatkan — dan alasannya perlu tertulis supaya tak dibaca sebagai bug.
     const tanpaOngkir: Order = { ...pesanan, shippingCost: undefined }
     expect(buildPurchasePayload(tanpaOngkir, '1.1', meta).events[0].params.shipping).toBe(0)
+  })
+})
+
+describe('buildRefundPayload', () => {
+  it('memakai transaction_id yang SAMA dengan purchase-nya', () => {
+    // GA4 mencocokkan refund ke purchase lewat nilai ini. Beda satu karakter saja, revenue-nya tak
+    // berkurang dan refund-nya berdiri sendiri sebagai angka minus.
+    const purchase = buildPurchasePayload(pesanan, '1.1', meta).events[0].params
+    const refund = buildRefundPayload(pesanan, '1.1').events[0].params
+    expect(refund.transaction_id).toBe(purchase.transaction_id)
+  })
+
+  it('event bernama refund, IDR, value = total dibayar (refund penuh)', () => {
+    const payload = buildRefundPayload(pesanan, '1234567890.1699999999')
+    expect(payload).toEqual({
+      client_id: '1234567890.1699999999',
+      events: [
+        {
+          name: 'refund',
+          params: { currency: 'IDR', transaction_id: 'INV-20260923-ABCD1234', value: 112720 },
+        },
+      ],
+    })
+  })
+
+  it('value tetap total pesanan walau nominal yang dikembalikan lebih kecil', () => {
+    // Keputusan 2026-10-05: pesanan batal utuh, jadi seluruh purchase-nya ditarik dari GA4.
+    // Potongan biaya transfer (refund_amount < total) adalah biaya toko, bukan pendapatan.
+    const dipotongBiaya: Order = { ...pesanan, refundStatus: 'SUDAH_REFUND', refundAmount: 106220 }
+    expect(buildRefundPayload(dipotongBiaya, '1.1').events[0].params.value).toBe(112720)
+  })
+
+  it('tanpa items dan tanpa session_id', () => {
+    // Tanpa items = refund penuh di GA4. session_id sengaja tak ikut (lihat analytics-server.ts).
+    const params = buildRefundPayload({ ...pesanan, gaSessionId: '1758600000' }, '1.1').events[0]
+      .params as Record<string, unknown>
+    expect(params.items).toBeUndefined()
+    expect(params.session_id).toBeUndefined()
   })
 })
 

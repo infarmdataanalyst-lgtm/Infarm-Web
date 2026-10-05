@@ -32,6 +32,7 @@ import { expireOrder, revalidateAfterExpiry } from '@/lib/order-expiry'
 import { getCachedProducts } from '@/lib/mock-db/cached-reads'
 import { sendPurchaseEvent, type ProductMeta } from '@/lib/analytics-server'
 import { bookShipmentForPaidOrder } from '@/lib/shipment-booking'
+import { reportRefundToGa } from '@/lib/ga-refund'
 import {
   isLegacyInvoiceCallback,
   parseXenditCallback,
@@ -201,6 +202,13 @@ async function handleRefundCallback(refund: RefundCallback) {
       console.log(
         `${LOG} refund ${hasil.orderId} → ${berhasil ? 'SUDAH_REFUND' : 'PERLU_REFUND (gagal, perlu diulang)'}`,
       )
+      // Jalur A laporan refund GA4. `hasil` hanya didapat PEMENANG penutupan (settleRefundByReference
+      // kini compare-and-swap), jadi callback kembar tak sampai ke sini. Di-await sebelum membalas
+      // karena fungsi serverless dibekukan begitu respons terkirim; kegagalannya tak mengubah balasan.
+      if (berhasil) {
+        const order = await getOrderByOrderId(hasil.orderId)
+        if (order) await reportRefundToGa(order, LOG)
+      }
       return NextResponse.json({ received: true, handled: true, orderId: hasil.orderId })
     }
   }
