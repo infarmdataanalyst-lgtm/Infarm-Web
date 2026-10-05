@@ -16,8 +16,7 @@
 // filenya lalu tambahkan satu baris di sini; tak ada kode lain yang perlu disentuh.
 const COURIER_LOGOS: Record<string, string> = {
   JT: 'jt.png', // J&T Express
-  // Shopee Express ('spx') ditawarkan sejak 2026-10-02 tapi BELUM punya file logo — tampil ikon truk.
-  // Taruh public/images/couriers/spx.png lalu tambahkan `SPX: 'spx.png'` di sini.
+  SPX: 'spx.png', // Shopee Express (kode API 'spx', dinormalkan jadi 'SPX')
 }
 
 // Menormalkan nama/kode kurir jadi kunci pencarian.
