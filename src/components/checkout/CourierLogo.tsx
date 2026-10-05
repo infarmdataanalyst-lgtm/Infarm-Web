@@ -25,9 +25,12 @@ type Size = 'sm' | 'md'
 // Area MELEBAR, bukan bujur sangkar: logo kurir memanjang (J&T ±4:1, SPX ±2,4:1), dan kotak
 // persegi membuat logo J&T tinggal setipis garis. Lebarnya sama untuk semua kurir supaya nama
 // kurir di sebelahnya tetap sejajar.
+//
+// Di bawah `lg` (batas mobile/desktop seluruh halaman checkout) area logo 25% lebih kecil —
+// permintaan pemilik 2026-10-05: logo terlalu dominan di layar ponsel. Ukuran desktop tak berubah.
 const SIZES: Record<Size, { box: string; icon: string; sizes: string }> = {
-  sm: { box: 'h-8 w-20', icon: 'h-5 w-5', sizes: '80px' },
-  md: { box: 'h-10 w-24', icon: 'h-6 w-6', sizes: '96px' },
+  sm: { box: 'h-6 w-15 lg:h-8 lg:w-20', icon: 'h-5 w-5', sizes: '(min-width: 1024px) 80px, 60px' },
+  md: { box: 'h-7.5 w-18 lg:h-10 lg:w-24', icon: 'h-6 w-6', sizes: '(min-width: 1024px) 96px, 72px' },
 }
 
 // Menampilkan logo kurir di area berukuran tetap.
