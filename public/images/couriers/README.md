@@ -32,7 +32,9 @@ Kode dinormalkan oleh `normalizeCourierKey()` (huruf besar, buang non-alfanumeri
 - **Potong pas ke tepi logo** (sisa margin ±2%), tanpa ruang kosong di sekeliling. Sejak
   2026-10-02 logo tampil TANPA kotak/border, rata kiri, `object-contain` di area 96×40px (sheet) /
   80×32px (baris trigger) — ruang kosong di file membuat logonya tampak kecil.
-- **Rasio bebas** (logo memanjang justru paling pas); lebar sisi panjang ±400–600px.
+- **Samakan luas tampil dengan logo lain.** Area dibatasi lebar, jadi logo yang lebih "kotak"
+  tampil jauh lebih tinggi daripada logo memanjang. Tambahkan ruang transparan di KANAN sampai
+  luas tampilnya ≈ logo J&T (±96×24px di sheet). Contoh: `spx.png` 584×199 (logo tampil ±75×30px).
 - **Warna**: versi BERWARNA, bukan putih — latar kartu putih / hijau muda.
 
 Logo yang belum tersedia otomatis jatuh ke ikon truk generik — tidak akan muncul gambar rusak.
