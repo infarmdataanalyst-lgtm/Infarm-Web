@@ -11,18 +11,20 @@
 import { revalidatePath } from 'next/cache'
 import { courierDisplayName, courierIdFromLabel } from '@/lib/mengantar-estimate'
 import { createShipmentOrder } from '@/lib/mengantar-shipment'
-import { updateShipment } from '@/lib/mock-db/orders'
+import { claimShipmentBooking, updateShipment } from '@/lib/mock-db/orders'
 import type { Order } from '@/types/order'
 
 // Ringkasan hasil untuk log & badan respons. Bukan untuk ditampilkan ke pembeli.
 export type BookingOutcome =
   | { status: 'BOOKED'; trackingNumber: string; service: string }
   | { status: 'ALREADY_BOOKED'; trackingNumber?: string }
+  // Pemicu lain sedang/sudah membooking pesanan ini (kunci BOOKING dipegang pihak lain).
+  | { status: 'IN_PROGRESS' }
   | { status: 'FAILED'; reason: string; detail: string }
   // Resi terbit di Mengantar tapi gagal tercatat di DB — paling berbahaya, tak ada jejak.
   | { status: 'BOOKED_BUT_NOT_SAVED'; trackingNumber: string }
 
-// Membuat shipment J&T untuk pesanan yang SUDAH lunas, lalu mencatat hasilnya.
+// Membuat shipment kurir pilihan pembeli untuk pesanan yang SUDAH lunas, lalu mencatat hasilnya.
 //
 // Sengaja TIDAK melempar: pemanggilnya adalah jalur webhook yang wajib tetap membalas 2xx.
 // Kegagalan booking BUKAN alasan menggagalkan callback pembayaran — uangnya sudah masuk dan sudah
@@ -43,7 +45,22 @@ export async function bookShipmentForPaidOrder(
     }
   }
 
-  const result = await createShipmentOrder(order)
+  // Pemeriksaan di atas membaca `order` yang mungkin sudah basi; kunci ini yang menentukan, karena
+  // syaratnya dinilai database saat menulis. Hanya satu pemicu serentak yang lolos ke POST /order.
+  const lock = await claimShipmentBooking(invoice)
+  if (lock === 'TAKEN') {
+    console.log(`${logPrefix} invoice=${invoice} sedang/sudah dibooking pemicu lain — dilewati`)
+    return { status: 'IN_PROGRESS' }
+  }
+
+  // Lemparan tak terduga (mis. baca produk/slot pickup gagal) tak boleh meninggalkan pesanan
+  // terkunci di BOOKING tanpa penjelasan: dicatat FAILED supaya admin melihatnya dan bisa mengulang.
+  let result: Awaited<ReturnType<typeof createShipmentOrder>>
+  try {
+    result = await createShipmentOrder(order)
+  } catch (e) {
+    result = { ok: false, reason: 'network', detail: `galat tak terduga: ${e instanceof Error ? e.name : 'unknown'}` }
+  }
 
   if (!result.ok) {
     // Pembayaran sudah masuk, jadi pesanan TETAP ada. Yang ditandai: perlu tindakan manual admin.

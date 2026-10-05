@@ -23,9 +23,9 @@
 import { NextResponse } from 'next/server'
 import { revalidatePath, revalidateTag } from 'next/cache'
 import {
+  claimPaidTransition,
   getOrderByOrderId,
   settleRefundByReference,
-  updatePaymentStatus,
   fillPaymentMethodIfEmpty,
 } from '@/lib/mock-db/orders'
 import { expireOrder, revalidateAfterExpiry } from '@/lib/order-expiry'
@@ -224,42 +224,41 @@ async function handlePaid(
   transactionId?: string,
   paymentMethod?: string,
 ) {
-  // Idempoten: Xendit mengulang kirim callback yang sama. Kalau sudah Lunas, jangan sentuh apa pun —
-  // menimpanya berpotensi menarik kembali status alur yang sudah maju (mis. sudah Dikirim → Diproses).
-  if (order.paymentStatus === 'Lunas') {
-    // Satu-satunya pengecualian: metode bayar. `payment_session.completed` bisa tiba lebih dulu
-    // dan menandai Lunas tanpa `channel_code`; `payment.capture` yang menyusul membawanya.
-    // Hanya kolom itu yang diisi, dan hanya bila masih kosong — status tetap tak disentuh.
-    if (paymentMethod && !order.paymentMethod) {
-      const filled = await fillPaymentMethodIfEmpty(invoice, paymentMethod)
-      console.log(
-        `${LOG} invoice=${invoice} sudah Lunas — ${filled ? `metode=${paymentMethod} dilengkapi` : 'metode tak jadi diisi'}`,
-      )
-      return NextResponse.json({ received: true, handled: filled, reason: 'ALREADY_PAID' })
-    }
-    console.log(`${LOG} invoice=${invoice} sudah Lunas — dilewati (idempoten)`)
-    return NextResponse.json({ received: true, handled: false, reason: 'ALREADY_PAID' })
-  }
-  // Pesanan yang sudah dibatalkan tak boleh berubah jadi Lunas oleh callback yang datang terlambat.
-  // Uangnya perlu di-refund manual, bukan pesanannya dihidupkan kembali.
-  if (order.status === 'Dibatalkan') {
-    console.error(
-      `${LOG} invoice=${invoice} PEMBAYARAN MASUK untuk pesanan yang sudah DIBATALKAN — perlu refund manual`,
-    )
-    return NextResponse.json({ received: true, handled: false, reason: 'ORDER_CANCELLED' })
-  }
+  // Pemeriksaan cepat dari baris yang sudah dibaca — menangani callback ulangan yang tiba jauh
+  // setelahnya tanpa menulis apa pun. BUKAN penjaga balapan: dua callback serentak sama-sama lolos
+  // dari sini. Yang memutuskan adalah claimPaidTransition di bawah.
+  if (order.paymentStatus === 'Lunas') return respondAlreadyPaid(order, invoice, paymentMethod)
+  if (order.status === 'Dibatalkan') return respondPaidButCancelled(invoice)
 
-  const updated = await updatePaymentStatus(invoice, 'Lunas', {
-    // Pembayaran terkonfirmasi → pesanan masuk antrean proses.
-    orderStatus: 'Diproses',
+  // Hanya SATU callback yang bisa memindahkan pesanan ke Lunas — syaratnya dinilai database.
+  // Sejak Payment Sessions, `payment_session.completed` dan `payment.capture` terukur tiba 0,17 detik
+  // berselisih (INV-20261005-YV2GX0NS) dan dulu KEDUANYA membooking kurir.
+  const claim = await claimPaidTransition(invoice, {
     ...(transactionId ? { transactionId } : {}),
     ...(paymentMethod ? { paymentMethod } : {}),
   })
-  if (!updated) {
+
+  if (claim.status === 'ERROR') {
     // Gagal tulis DB LAYAK diulang → balas 500 supaya Xendit kirim lagi.
     console.error(`${LOG} invoice=${invoice} gagal menyimpan status Lunas`)
     return NextResponse.json({ error: 'Gagal memperbarui pesanan.' }, { status: 500 })
   }
+
+  if (claim.status === 'NOT_CLAIMED') {
+    // Kalah balapan: callback kembar sudah menandai Lunas, atau pesanan dibatalkan di antaranya.
+    // Baca ulang untuk tahu yang mana — dan untuk melengkapi metode bayar bila callback inilah yang
+    // membawanya (`payment.capture` sering kalah dari `payment_session.completed`).
+    const fresh = await getOrderByOrderId(invoice)
+    if (fresh?.paymentStatus === 'Lunas') {
+      console.log(`${LOG} invoice=${invoice} kalah balapan dengan callback kembar — tak membooking ulang`)
+      return respondAlreadyPaid(fresh, invoice, paymentMethod)
+    }
+    if (fresh?.status === 'Dibatalkan') return respondPaidButCancelled(invoice)
+    console.error(`${LOG} invoice=${invoice} status Lunas tak tertulis dan pesanan tak terbaca ulang`)
+    return NextResponse.json({ error: 'Gagal memperbarui pesanan.' }, { status: 500 })
+  }
+
+  const updated = claim.order
 
   // Stok TIDAK disentuh: checkout sudah memotongnya saat pesanan dibuat (order PENDING = sudah
   // commit stok). Yang berubah hanya makna angka "terjual" bagi agregasi penjualan.
@@ -293,6 +292,33 @@ async function handlePaid(
   await sendPurchaseEvent(updated, await productMetaFor(updated), LOG)
 
   return NextResponse.json({ received: true, handled: true, status: 'PAID', shipment })
+}
+
+// Callback untuk pesanan yang sudah Lunas. Status tak disentuh — menimpanya berpotensi menarik
+// kembali alur yang sudah maju (mis. sudah Dikirim → Diproses).
+//
+// Satu-satunya pengecualian: metode bayar. `payment_session.completed` bisa tiba lebih dulu dan
+// menandai Lunas tanpa `channel_code`; `payment.capture` yang menyusul membawanya. Hanya kolom itu
+// yang diisi, dan hanya bila masih kosong.
+async function respondAlreadyPaid(order: Order, invoice: string, paymentMethod?: string) {
+  if (paymentMethod && !order.paymentMethod) {
+    const filled = await fillPaymentMethodIfEmpty(invoice, paymentMethod)
+    console.log(
+      `${LOG} invoice=${invoice} sudah Lunas — ${filled ? `metode=${paymentMethod} dilengkapi` : 'metode tak jadi diisi'}`,
+    )
+    return NextResponse.json({ received: true, handled: filled, reason: 'ALREADY_PAID' })
+  }
+  console.log(`${LOG} invoice=${invoice} sudah Lunas — dilewati (idempoten)`)
+  return NextResponse.json({ received: true, handled: false, reason: 'ALREADY_PAID' })
+}
+
+// Pesanan yang sudah dibatalkan tak boleh berubah jadi Lunas oleh callback yang datang terlambat.
+// Uangnya perlu di-refund manual, bukan pesanannya dihidupkan kembali.
+function respondPaidButCancelled(invoice: string) {
+  console.error(
+    `${LOG} invoice=${invoice} PEMBAYARAN MASUK untuk pesanan yang sudah DIBATALKAN — perlu refund manual`,
+  )
+  return NextResponse.json({ received: true, handled: false, reason: 'ORDER_CANCELLED' })
 }
 
 // SKU & kategori tiap produk dalam pesanan — keduanya TIDAK tersimpan di order_items.

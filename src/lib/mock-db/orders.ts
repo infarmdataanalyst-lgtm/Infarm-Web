@@ -320,6 +320,7 @@ function rowToOrder(row: OrderRow, items: OrderItem[], warehouseNames?: Map<stri
   // dilacak: kalau hanya di sini, database menolak tulisannya (23514); kalau hanya di database,
   // nilainya tersimpan tapi hilang saat dibaca dan pesanan tampak "belum pernah dibooking".
   if (
+    row.shipment_status === "BOOKING" ||
     row.shipment_status === "BOOKED" ||
     row.shipment_status === "FAILED" ||
     row.shipment_status === "CANCELLED" ||
@@ -1373,7 +1374,6 @@ export async function updatePaymentStatus(
     paymentMethod?: string
   },
 ): Promise<Order | null> {
-  const supabase = createAdminClient()
   const patch: Record<string, string> = { status_pembayaran: PAYMENT_TO_DB[paymentStatus] }
   if (opts?.orderStatus) patch.order_status = STATUS_TO_DB[opts.orderStatus]
   if (opts?.transactionId) patch.id_transaksi = opts.transactionId
@@ -1382,8 +1382,69 @@ export async function updatePaymentStatus(
   // metode yang sudah tercatat dari callback sebelumnya.
   if (opts?.paymentMethod) patch.metode_pembayaran = opts.paymentMethod
 
-  const attempt = (body: Record<string, string>) =>
-    supabase.from('orders').update(body).eq('nomor_invoice', orderId).select('id').maybeSingle()
+  const result = await writePaymentPatch(orderId, patch, false)
+  if (result !== 'written') return null
+  return getOrderByOrderId(orderId)
+}
+
+// Hasil `claimPaidTransition`. NOT_CLAIMED BUKAN galat: artinya pesanan sudah Lunas (callback
+// kembar menang lebih dulu) atau sudah dibatalkan — pemanggil membaca ulang untuk tahu yang mana.
+export type PaidTransition =
+  | { status: 'CLAIMED'; order: Order }
+  | { status: 'NOT_CLAIMED' }
+  | { status: 'ERROR' }
+
+// Memindahkan pesanan ke Lunas/Diproses SEKALI SAJA, walau dipanggil serentak.
+//
+// ── Kenapa tidak cukup updatePaymentStatus ──
+// Sejak Payment Sessions (2026-09-30), satu pembayaran memicu DUA callback — `payment_session.completed`
+// dan `payment.capture` — yang terukur tiba hanya 0,17 detik berselisih (INV-20261005-YV2GX0NS).
+// Webhook dulu memeriksa "sudah Lunas?" dari baris yang dibaca SEBELUM menulis, lalu menulis tanpa
+// syarat. Dua callback sama-sama membaca "belum", sama-sama menulis, dan sama-sama membooking kurir:
+// dua POST /order untuk satu pesanan — dua resi dan saldo terpotong dua kali bila rutenya dilayani.
+//
+// Di sini syaratnya ikut di WHERE (status_pembayaran <> PAID, order_status <> CANCELLED), jadi
+// database sendiri yang memilih satu pemenang. Hanya pemanggil yang mendapat CLAIMED yang boleh
+// melanjutkan ke efek samping (booking kurir, event GA4 purchase).
+// Kedua kolom NOT NULL (migration init_orders), jadi `neq` tak diam-diam menyaring baris NULL.
+export async function claimPaidTransition(
+  orderId: string,
+  opts?: { transactionId?: string; paymentMethod?: string },
+): Promise<PaidTransition> {
+  const patch: Record<string, string> = {
+    status_pembayaran: PAYMENT_TO_DB.Lunas,
+    order_status: STATUS_TO_DB.Diproses,
+  }
+  if (opts?.transactionId) patch.id_transaksi = opts.transactionId
+  if (opts?.paymentMethod) patch.metode_pembayaran = opts.paymentMethod
+
+  const result = await writePaymentPatch(orderId, patch, true)
+  if (result === 'error') return { status: 'ERROR' }
+  if (result === 'no-row') return { status: 'NOT_CLAIMED' }
+
+  const order = await getOrderByOrderId(orderId)
+  // Penulisannya sudah berhasil; baca ulang yang gagal tak boleh membuat callback diulang (ulangan
+  // akan jatuh ke NOT_CLAIMED dan booking tak pernah jalan). ERROR di sini = biarkan Xendit
+  // mengulang, dan ulangan itu ditangani pemanggil sebagai "sudah Lunas".
+  return order ? { status: 'CLAIMED', order } : { status: 'ERROR' }
+}
+
+// Menulis patch status pembayaran. `onlyIfUnpaid` = syarat compare-and-swap untuk claimPaidTransition.
+// 'no-row' = tak ada baris yang cocok (invoice tak ada, atau syaratnya tak terpenuhi).
+async function writePaymentPatch(
+  orderId: string,
+  patch: Record<string, string>,
+  onlyIfUnpaid: boolean,
+): Promise<'written' | 'no-row' | 'error'> {
+  const supabase = createAdminClient()
+
+  const attempt = (body: Record<string, string>) => {
+    let q = supabase.from('orders').update(body).eq('nomor_invoice', orderId)
+    if (onlyIfUnpaid) {
+      q = q.neq('status_pembayaran', PAYMENT_TO_DB.Lunas).neq('order_status', STATUS_TO_DB.Dibatalkan)
+    }
+    return q.select('id').maybeSingle()
+  }
 
   let { data, error } = await attempt(patch)
 
@@ -1403,11 +1464,9 @@ export async function updatePaymentStatus(
 
   if (error) {
     console.error('Gagal memperbarui status pembayaran di Supabase:', error.message)
-    return null
+    return 'error'
   }
-  if (!data) return null
-
-  return getOrderByOrderId(orderId)
+  return data ? 'written' : 'no-row'
 }
 
 // Mengisi orders.metode_pembayaran HANYA bila masih kosong — status apa pun tak disentuh.
@@ -1586,6 +1645,48 @@ export async function updateShipment(
   if (!data) return null
 
   return getOrderByOrderId(orderId)
+}
+
+// Hasil `claimShipmentBooking`:
+//   CLAIMED     → pemanggil ini satu-satunya yang boleh memanggil POST /order sekarang.
+//   TAKEN       → pemanggil lain sedang/sudah membooking (BOOKING/BOOKED, atau resi sudah ada).
+//   UNAVAILABLE → kunci tak bisa dipasang (migration BOOKING belum dijalankan, atau DB galat).
+//                 Booking tetap boleh jalan — lapis pertama (claimPaidTransition) masih menjaga
+//                 jalur webhook, dan menahan booking pesanan yang sudah dibayar jauh lebih mahal.
+export type ShipmentBookingClaim = 'CLAIMED' | 'TAKEN' | 'UNAVAILABLE'
+
+// Mengunci pesanan untuk booking kurir: shipment_status → 'BOOKING', hanya bila belum ber-resi dan
+// belum pernah dibooking (NULL) atau gagal sebelumnya (FAILED, booking ulang).
+//
+// Lapis KEDUA penjaga booking ganda. Lapis pertama (claimPaidTransition) hanya melindungi jalur
+// webhook; kunci ini melindungi SETIAP pemicu booking, termasuk simulate-payment dan booking ulang
+// yang kelak dipicu admin, karena syaratnya dinilai database dalam satu UPDATE.
+//
+// Pesanan yang tertinggal di BOOKING (fungsi mati di tengah panggilan) tetap terlihat: daftar
+// masalah OMS menandai pesanan lunas tanpa resi yang bukan FAILED sebagai "lunas_tanpa_resi".
+export async function claimShipmentBooking(orderId: string): Promise<ShipmentBookingClaim> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('orders')
+    .update({ shipment_status: 'BOOKING' })
+    .eq('nomor_invoice', orderId)
+    .is('no_tracking', null)
+    .or('shipment_status.is.null,shipment_status.eq.FAILED')
+    .select('id')
+    .maybeSingle()
+
+  if (error) {
+    // 23514 = constraint belum mengenal 'BOOKING' → migration 20261005120000 belum dijalankan.
+    if (error.code === '23514') {
+      console.error(
+        `[orders] kunci booking ${orderId} DITOLAK constraint — jalankan migration 20261005120000_shipment_status_booking.sql. Booking dilanjutkan tanpa kunci.`,
+      )
+    } else {
+      console.error(`[orders] kunci booking ${orderId} gagal dipasang (${error.message}) — booking dilanjutkan tanpa kunci`)
+    }
+    return 'UNAVAILABLE'
+  }
+  return data ? 'CLAIMED' : 'TAKEN'
 }
 
 // === Hasil pembatalan penjemputan ===

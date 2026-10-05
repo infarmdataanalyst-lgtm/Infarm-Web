@@ -159,7 +159,9 @@ export type Order = {
   // kalau tidak kurir tetap datang menjemput paket yang pembatalannya sudah disetujui.
   // Sengaja terpisah dari FAILED: FAILED berarti "booking gagal, perlu dibooking ULANG" —
   // tindakan yang berlawanan.
-  shipmentStatus?: "BOOKED" | "FAILED" | "CANCELLED" | "CANCEL_FAILED"
+  // BOOKING = kunci sementara selama POST /order berjalan (claimShipmentBooking), supaya dua
+  // pemicu serentak tak membooking pesanan yang sama dua kali.
+  shipmentStatus?: "BOOKING" | "BOOKED" | "FAILED" | "CANCELLED" | "CANCEL_FAILED"
   shipmentError?: string // alasan kegagalan terakhir (untuk admin OMS)
   shipmentBookedAt?: string // ISO, kapan resi terbit
   // Kapan KURIR menyatakan paket diterima — diisi otomatis dari peristiwa pelacakan, dan inilah
