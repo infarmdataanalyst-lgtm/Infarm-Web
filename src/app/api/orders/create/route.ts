@@ -46,6 +46,7 @@ import { formatRupiah } from '@/lib/format'
 import { isValidPhone } from '@/lib/phone'
 import { isValidEmail } from '@/lib/email'
 import { isPromotionExpired } from '@/types/promotion'
+import { courierDisplayName } from '@/lib/mengantar-estimate'
 import type {
   CreateOrderInput,
   OrderItem,
@@ -359,6 +360,8 @@ export async function POST(request: Request) {
     shippingCost?: unknown
     discount?: unknown
     warehouseId?: unknown
+    // Kode kurir pilihan pembeli ('JT', 'spx'). Ikut dicocokkan dengan tarif sah — lihat `chosen`.
+    courierId?: unknown
     weight?: unknown
     gaClientId?: unknown
     gaSessionId?: unknown
@@ -788,10 +791,16 @@ export async function POST(request: Request) {
   // rute yang tak pernah dipakai, dan selisihnya dipotong dari saldo Mengantar toko.
   //
   // Tanpa `warehouseId` (klien lama) jatuh ke pencocokan harga saja, seperti perilaku sebelumnya.
+  // Sejak ada lebih dari satu kurir (Shopee Express, 2026-10-02), KURIR ikut dicocokkan: dua kurir
+  // bisa kebetulan bertarif sama di gudang yang sama, dan tanpa kode kurir `find` mengambil yang
+  // pertama — pesanan lalu dibooking dengan kurir yang tak dipilih pembeli.
+  const requestedCourierId =
+    typeof extra.courierId === 'string' && extra.courierId ? extra.courierId : undefined
   const chosen = quoted!.options.find(
     (o) =>
       Math.round(o.price) === clientShipping &&
-      (!requestedWarehouseId || o.warehouseId === requestedWarehouseId),
+      (!requestedWarehouseId || o.warehouseId === requestedWarehouseId) &&
+      (!requestedCourierId || o.id === requestedCourierId),
   )
 
   if (!chosen) {
@@ -844,8 +853,9 @@ export async function POST(request: Request) {
   let warehouse = await pickVerifiedWarehouse(chosen.warehouseId, requirements)
 
   if (!warehouse) {
+    // Hanya tarif kurir yang SAMA dengan pilihan pembeli: ia memilih kurirnya, bukan sekadar harga.
     const pengganti = await pickQuotedWarehouseWithStock(
-      quoted!.options,
+      quoted!.options.filter((o) => o.id === chosen.id),
       requirements,
       new Set([chosen.warehouseId]),
     )
@@ -906,7 +916,14 @@ export async function POST(request: Request) {
   const shippingSubsidy = promoResult.shippingSubsidy
   const totalAmount = Math.max(0, subtotal + shippingCost - discount - shippingSubsidy)
 
-  const logistics = logistikDariBody((body as { logistics?: unknown }).logistics)
+  // Nama ekspedisi diambil dari tarif sah yang terpilih (`chosen`), BUKAN dari teks kiriman klien:
+  // kolom ini kini menentukan kurir yang dibooking (lib/mengantar-shipment.ts), jadi tak boleh bisa
+  // diisi sembarang. Jenis layanan tetap boleh dari klien — booking menimpanya dengan kode Mengantar.
+  const logistikKlien = logistikDariBody((body as { logistics?: unknown }).logistics)
+  const logistics = {
+    courier: courierDisplayName(chosen.id),
+    service: logistikKlien?.service ?? 'Reguler',
+  }
 
   try {
     // Kirim item & total hasil hitung server (bukan dari client)

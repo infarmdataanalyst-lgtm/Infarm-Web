@@ -5,7 +5,7 @@
 // bottom sheet "Pilih Kurir Pengiriman".
 //
 // Kenapa komponen tersendiri, bukan <Image> inline: aturan tampilannya sama di semua tempat
-// (kotak putih, object-contain, fallback ikon truk) dan hanya ukurannya yang berbeda. Menaruhnya
+// (area logo, object-contain, fallback ikon truk) dan hanya ukurannya yang berbeda. Menaruhnya
 // di satu tempat berarti menambah kurir baru tak pernah memerlukan penyesuaian gaya.
 //
 // 'use client' karena butuh `onError`: file logo bisa belum ada di public/images/couriers/
@@ -20,13 +20,17 @@ import { courierLogoSrc } from '@/lib/courier-logo'
 // Ukuran kotak. 'sm' untuk baris trigger, 'md' untuk kartu opsi di dalam sheet.
 type Size = 'sm' | 'md'
 
-// Kelas kotak + ukuran ikon fallback + hint `sizes` untuk next/image, per ukuran.
+// Kelas area + ukuran ikon fallback + hint `sizes` untuk next/image, per ukuran.
+//
+// Area MELEBAR, bukan bujur sangkar: logo kurir memanjang (J&T ±4:1, SPX ±2,4:1), dan kotak
+// persegi membuat logo J&T tinggal setipis garis. Lebarnya sama untuk semua kurir supaya nama
+// kurir di sebelahnya tetap sejajar.
 const SIZES: Record<Size, { box: string; icon: string; sizes: string }> = {
-  sm: { box: 'h-9 w-9', icon: 'h-5 w-5', sizes: '36px' },
-  md: { box: 'h-11 w-11', icon: 'h-6 w-6', sizes: '44px' },
+  sm: { box: 'h-8 w-20', icon: 'h-5 w-5', sizes: '80px' },
+  md: { box: 'h-10 w-24', icon: 'h-6 w-6', sizes: '96px' },
 }
 
-// Menampilkan logo kurir dalam kotak putih berukuran tetap.
+// Menampilkan logo kurir di area berukuran tetap.
 // `courier` menerima kode ('JT') maupun nama ('J&T') — lihat lib/courier-logo.ts.
 export default function CourierLogo({
   courier,
@@ -43,10 +47,10 @@ export default function CourierLogo({
   const name = label || courier || 'kurir'
   const { box, icon, sizes } = SIZES[size]
 
-  // Kotak SELALU putih dengan border tipis, termasuk saat kartu opsi sedang aktif (latarnya
-  // brand-surface hijau muda). Logo kurir umumnya PNG transparan berwarna gelap; membiarkannya
-  // duduk langsung di atas latar hijau membuatnya kotor dan menempel ke ring hijau penanda pilihan.
-  const shell = `relative ${box} flex flex-none items-center justify-center overflow-hidden rounded-lg border border-zinc-200 bg-white`
+  // TANPA kotak putih & border sejak 2026-10-02 (permintaan pemilik: "hanya logo saja"). Logo
+  // duduk langsung di latar kartu, termasuk hijau muda saat terpilih — karena itu file PNG-nya
+  // WAJIB transparan dan dipotong pas ke tepi logo (lihat public/images/couriers/README.md).
+  const shell = `relative ${box} flex flex-none items-center justify-center`
 
   if (!src || failed) {
     return (
@@ -58,7 +62,7 @@ export default function CourierLogo({
 
   return (
     <span className={shell}>
-      {/* p-1 memberi ruang bernapas supaya logo tak menyentuh border kotak.
+      {/* object-left: logo rata kiri, sejajar dengan tepi kiri kartu.
           unoptimized mengikuti pola aset lokal lain di project (lihat public/images/icons). */}
       <Image
         src={src}
@@ -67,7 +71,7 @@ export default function CourierLogo({
         unoptimized
         sizes={sizes}
         onError={() => setFailed(true)}
-        className="object-contain p-1"
+        className="object-contain object-left"
       />
     </span>
   )

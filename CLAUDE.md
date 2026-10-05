@@ -685,9 +685,10 @@ lewat `src/lib/shipping-weight.ts` (salah satuan = ongkir 1000× lebih mahal). J
 sendiri (Mengantar sudah menerapkan aturan `ceil(kg − 0,3)`), dan jangan memakai nilai `weight` dari
 client sebagai dasar tagihan — server menghitung ulang dari berat di DB.
 
-**Kurir dibatasi J&T saja** — daftar putih `ALLOWED_COURIER_IDS` di `src/lib/mengantar-estimate.ts`,
-disaring **di server**. Kode kurirnya `'JT'` (kapital, tanpa `&`) untuk cek ongkir **maupun** booking;
-`"jt"` huruf kecil ditolak Mengantar. Booking kurir dipicu setelah pembayaran sukses dan
+**Kurir: J&T dan Shopee Express** — daftar putih `ALLOWED_COURIER_IDS` di `src/lib/mengantar-estimate.ts`,
+disaring **di server**. Kode kurir: `'JT'` (kapital, tanpa `&`; `"jt"` ditolak Mengantar) dan `'spx'`
+(huruf kecil), dipakai untuk cek ongkir, booking, **maupun** pembatalan penjemputan — kurir pilihan
+pembeli dibaca dari `orders.nama_ekspedisi` lewat `courierIdFromLabel()`. Booking SPX belum diuji. Booking kurir dipicu setelah pembayaran sukses dan
 **kegagalannya wajib ditandai** (`shipment_status='FAILED'`), jangan silent fail — uang pembeli sudah
 masuk.
 

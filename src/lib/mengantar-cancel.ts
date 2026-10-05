@@ -75,6 +75,9 @@ const CANCEL_RETRY_DELAY_MS = [600, 2000]
 export const PROBE_OBJECT_ID = '000000000000000000000000'
 
 export type CancelShipmentTarget = {
+  // Kode kurir API ('JT', 'spx'). DELETE /order mewajibkan kurir yang sama dengan saat booking;
+  // kosong → J&T (semua pesanan sebelum 2026-10-02).
+  courier?: string
   objectId?: string // orders.mengantar_order_object_id
   orderId?: string // orders.mengantar_order_id (cadangan)
 }
@@ -132,10 +135,11 @@ export function buildCancelPayload(
   target: CancelShipmentTarget,
 ): { courier: string; ids: string[] } | { courier: string; orderIds: string[] } | null {
   const objectId = target.objectId?.trim()
-  if (objectId) return { courier: JT_COURIER_ID, ids: [objectId] }
+  const courier = target.courier?.trim() || JT_COURIER_ID
+  if (objectId) return { courier, ids: [objectId] }
 
   const orderId = target.orderId?.trim()
-  if (orderId) return { courier: JT_COURIER_ID, orderIds: [orderId] }
+  if (orderId) return { courier, orderIds: [orderId] }
 
   return null
 }

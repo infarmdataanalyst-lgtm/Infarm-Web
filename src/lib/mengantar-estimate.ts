@@ -32,6 +32,7 @@ const COURIER_DISPLAY_NAMES: Record<string, string> = {
   paxel: 'Paxel',
   Ninja: 'Ninja Xpress',
   pos: 'POS Indonesia',
+  spx: 'Shopee Express',
 }
 
 // Bentuk satu entri kurir mentah dari respons (field yang dipakai saja)
@@ -70,19 +71,43 @@ export function isSelectableCourier(courier: ShippingCourier): boolean {
 // COURIER_DISPLAY_NAMES (label tampilan kita), BUKAN di respons Mengantar.
 export const JT_COURIER_ID = 'JT'
 
-// Label yang disimpan ke orders.nama_ekspedisi & ditampilkan di OMS.
-// Dipisah dari kode API supaya kolom DB tak berisi 'JT' yang tak bermakna bagi admin.
-export const JT_COURIER_LABEL = 'J&T'
+// Kode Shopee Express pada respons allEstimatePublic & payload POST /order: PERSIS 'spx', huruf
+// kecil (terukur 2026-10-02 lewat proxy estimasi; docs sandbox.mengantar.com menyebut nilai yang
+// sama untuk field `courier`). Label tampilannya ada di COURIER_DISPLAY_NAMES.
+export const SPX_COURIER_ID = 'spx'
 
-// Daftar putih kurir yang boleh ditawarkan. Saat ini hanya J&T (keputusan bisnis: satu kurir agar
-// booking & penanganan resi seragam).
+// Daftar putih kurir yang boleh ditawarkan. J&T sejak awal; Shopee Express ditambahkan 2026-10-02.
+// Kurir yang ada di sini WAJIB bisa dibooking & dibatalkan dengan kodenya sendiri — keduanya
+// membaca kurir pilihan pembeli lewat courierIdFromLabel(), bukan memaku J&T.
 //
 // Dicocokkan EKSAK, bukan substring 'jt' case-insensitive. Alasannya: respons memuat 16 key
 // (JNE, JNECargo, SiCepat, SAPLite, iDexpress, JT, lion, anteraja, paxel, Ninja, pos, …) dan
 // pencocokan substring akan ikut menyambar kurir lain begitu Mengantar menambah key baru yang
 // kebetulan memuat huruf itu — pembeli tiba-tiba ditawari layanan yang belum kita dukung booking-nya.
 // Menambah layanan lain = tambah satu entri di sini, bukan melonggarkan pencocokan.
-const ALLOWED_COURIER_IDS = new Set<string>([JT_COURIER_ID])
+const ALLOWED_COURIER_IDS = new Set<string>([JT_COURIER_ID, SPX_COURIER_ID])
+
+// Label tampilan untuk kode kurir ('spx' → 'Shopee Express'); fallback ke kodenya sendiri.
+// Inilah yang disimpan ke orders.nama_ekspedisi, sehingga OMS & halaman lacak tak menampilkan kode API.
+export function courierDisplayName(id: string): string {
+  return COURIER_DISPLAY_NAMES[id] ?? id
+}
+
+// Kode kurir API dari nilai orders.nama_ekspedisi ('J&T', 'Shopee Express') ATAU kodenya sendiri.
+// Dinormalkan (huruf besar, tanpa simbol) supaya 'J&T' dan 'JT' sama-sama cocok.
+//
+// Nilai kosong / tak dikenal → J&T, dan itu disengaja: semua pesanan sebelum 2026-10-02 dibooking
+// J&T, dan sebagian kolomnya kosong (dibuat sebelum checkout mengirim `logistics`). Menolak di sini
+// berarti pesanan lama tak bisa lagi dibatalkan penjemputannya.
+export function courierIdFromLabel(label: string | null | undefined): string {
+  const key = (label ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+  for (const id of ALLOWED_COURIER_IDS) {
+    const idKey = id.toUpperCase().replace(/[^A-Z0-9]/g, '')
+    const nameKey = courierDisplayName(id).toUpperCase().replace(/[^A-Z0-9]/g, '')
+    if (key === idKey || key === nameKey) return id
+  }
+  return JT_COURIER_ID
+}
 
 // Apakah kurir ini boleh ditawarkan ke pembeli. DIPAKAI DI SISI SERVER — kurir yang tak lolos
 // tak pernah melewati batas jaringan, jadi tak ada kedipan daftar kurir lain sebelum tersaring.

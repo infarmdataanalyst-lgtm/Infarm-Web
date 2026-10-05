@@ -31,6 +31,7 @@ import {
 } from '@/lib/mengantar-cancel'
 import { getOrderByOrderId, setShipmentCancellation } from '@/lib/mock-db/orders'
 import { normalizeInvoiceId } from '@/lib/invoice-id'
+import { courierIdFromLabel } from '@/lib/mengantar-estimate'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -137,6 +138,7 @@ export async function POST(request: Request) {
   }
 
   const target = {
+    courier: courierIdFromLabel(order.logistics?.courier),
     ...(order.mengantarObjectId ? { objectId: order.mengantarObjectId } : {}),
     ...(order.mengantarOrderId ? { orderId: order.mengantarOrderId } : {}),
   }

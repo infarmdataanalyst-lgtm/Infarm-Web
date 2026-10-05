@@ -63,4 +63,10 @@ describe('buildCancelPayload', () => {
     expect(buildCancelPayload({})).toBeNull()
     expect(buildCancelPayload({ objectId: '   ' })).toBeNull()
   })
+
+  it('memakai kurir pesanan bila disebut (Shopee Express), J&T bila kosong', () => {
+    // DELETE /order mewajibkan kurir yang sama dengan saat booking.
+    expect(buildCancelPayload({ courier: 'spx', objectId: 'abc' })).toEqual({ courier: 'spx', ids: ['abc'] })
+    expect(buildCancelPayload({ courier: '  ', objectId: 'abc' })).toEqual({ courier: 'JT', ids: ['abc'] })
+  })
 })
