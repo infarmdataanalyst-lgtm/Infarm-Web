@@ -58,5 +58,21 @@ jobs:
       # audit-level=high: Moderate ke bawah tidak memblokir. Ambangnya sengaja tidak lebih ketat —
       # advisory Low/Moderate pada dependency dev terlalu sering muncul dan akan membuat gerbang
       # ini diabaikan orang, yang jauh lebih buruk daripada tak punya gerbang sama sekali.
-      - name: Audit dependencies
-        run: npm audit --audit-level=high
+      #
+      # Yang MEMBLOKIR hanya dependency PRODUKSI (`--omit=dev`) — kode yang benar-benar berjalan
+      # di website. Dipisah 2026-10-05: advisory `braces` (GHSA-vfj7-8cjw-p6xm, tanpa versi
+      # perbaikan) di rantai eslint-config-next memerahkan SEMUA PR padahal tak ikut ke website,
+      # dan seminggu sebelumnya `brace-expansion` melakukan hal yang sama. Gerbang yang merah
+      # karena sebab di luar kendali PR mana pun mengajari orang mengabaikannya — persis yang
+      # dicegah komentar di atas. Advisory Next.js (paket produksi) tetap memblokir.
+      - name: Audit dependencies (produksi, memblokir)
+        run: npm audit --omit=dev --audit-level=high
+
+      # Audit LENGKAP tetap dijalankan supaya advisory di alat pengembangan tidak hilang dari
+      # pandangan: bila ada yang High ke atas, ia muncul sebagai PERINGATAN (anotasi kuning di
+      # ringkasan run/PR), bukan kegagalan. Periksa daftarnya bila anotasi ini muncul.
+      - name: Audit dependencies (lengkap, peringatan saja)
+        run: |
+          if ! npm audit --audit-level=high; then
+            echo "::warning title=Advisory High di dependency pengembangan::npm audit lengkap menemukan advisory High/Critical yang tidak ikut ke website. Tidak memblokir merge — lihat log langkah ini dan perbarui paketnya bila perbaikan sudah tersedia."
+          fi
