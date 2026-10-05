@@ -19,7 +19,7 @@
 import { NextResponse } from 'next/server'
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { requireAdmin } from '@/lib/oms-guard'
-import { getOrderByOrderId, updatePaymentStatus } from '@/lib/mock-db/orders'
+import { claimPaidTransition, getOrderByOrderId } from '@/lib/mock-db/orders'
 import { bookShipmentForPaidOrder } from '@/lib/shipment-booking'
 
 export const runtime = 'nodejs'
@@ -66,13 +66,23 @@ export async function POST(request: Request) {
   // diuji adalah "pembayaran sudah masuk tapi booking gagal, ulangi booking-nya".
   let paidOrder = order
   if (order.paymentStatus !== 'Lunas') {
-    const updated = await updatePaymentStatus(invoice, 'Lunas', { orderStatus: 'Diproses' })
-    if (!updated) {
+    // Jalur yang sama dengan webhook (compare-and-swap). NOT_CLAIMED = webhook atau simulasi lain
+    // baru saja menandai Lunas; booking tetap dicoba dan kunci BOOKING yang mencegah dobel.
+    const claim = await claimPaidTransition(invoice)
+    if (claim.status === 'ERROR') {
       return NextResponse.json({ error: 'Gagal memperbarui status pembayaran.' }, { status: 500 })
     }
-    paidOrder = updated
-    revalidateTag('sales', 'max')
-    revalidatePath('/oms/dashboard')
+    if (claim.status === 'CLAIMED') {
+      paidOrder = claim.order
+      revalidateTag('sales', 'max')
+      revalidatePath('/oms/dashboard')
+    } else {
+      const fresh = await getOrderByOrderId(invoice)
+      if (!fresh || fresh.paymentStatus !== 'Lunas') {
+        return NextResponse.json({ error: 'Gagal memperbarui status pembayaran.' }, { status: 500 })
+      }
+      paidOrder = fresh
+    }
   }
 
   const shipment = await bookShipmentForPaidOrder(paidOrder, LOG)

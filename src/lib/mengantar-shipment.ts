@@ -46,6 +46,7 @@
 // bukan kebocoran yang baru ketahuan setelah kuncinya terbaca di tab Network.
 import 'server-only'
 
+import { describeCourierRejection } from '@/lib/mengantar-booking-response'
 import { courierIdFromLabel } from '@/lib/mengantar-estimate'
 import { mengantarWriteHost } from '@/lib/mengantar-host'
 import { getTodayPickupTimeId } from '@/lib/mengantar-pickup'
@@ -92,6 +93,7 @@ export type ShipmentFailureReason =
   | 'incomplete-order' // data pesanan kurang (alamat/telepon/destination_id)
   | 'http-error' // Mengantar menolak
   | 'partial-error' // success:true tapi ada entri di `errors`/`ordersClosedDestination`
+  | 'courier-rejected' // success:true tapi item berstatus error — kurir menolak rute/kiriman
   | 'no-awb' // respons tanpa cnote_no
   | 'network' // timeout / jaringan
 
@@ -322,9 +324,16 @@ export async function createShipmentOrder(order: Order): Promise<ShipmentResult>
     const partial = collectPartialErrors(parsed)
     if (partial) return { ok: false, reason: 'partial-error', detail: partial }
 
+    // Kurir menolak walau success:true — dibaca sebelum extractShipment supaya alasannya tersimpan
+    // utuh, bukan terpotong di cabang no-awb di bawah (lihat lib/mengantar-booking-response.ts).
+    const rejection = describeCourierRejection(parsed)
+    if (rejection) return { ok: false, reason: 'courier-rejected', detail: rejection }
+
     const shipment = extractShipment(parsed)
     if (!shipment) {
-      return { ok: false, reason: 'no-awb', detail: `tanpa cnote_no: ${text.slice(0, 200)}` }
+      // 450, bukan 200: shipment_error menampung 500 karakter, dan potongan 200 pertama terbukti
+      // berhenti tepat sebelum bagian yang menjelaskan apa pun (INV-20261005-YV2GX0NS).
+      return { ok: false, reason: 'no-awb', detail: `tanpa cnote_no: ${text.slice(0, 450)}` }
     }
 
     // batch_id ada di DUA tempat: di dalam item, dan di akar respons. Yang di item didahulukan

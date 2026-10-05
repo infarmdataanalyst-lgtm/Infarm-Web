@@ -552,6 +552,18 @@ Penanganan kegagalan (poin penting — uang pembeli sudah masuk):
   Tanpa pembedaan ini resi kosong tak bisa dibedakan dari pesanan yang memang belum waktunya.
 - **Idempoten**: resi yang sudah terbit tak pernah diganti resi baru (paket fisiknya sudah
   berlabel). Callback ulang → `ALREADY_BOOKED`.
+- **Satu pembayaran = DUA callback serentak** (`payment_session.completed` + `payment.capture`,
+  terukur 0,17 detik berselisih pada 2026-10-05). Dua penjaga mencegah booking ganda:
+  1. `claimPaidTransition` — perpindahan ke Lunas adalah compare-and-swap; hanya callback yang
+     menang yang membooking kurir dan mengirim `purchase` GA4.
+  2. `claimShipmentBooking` — `shipment_status = 'BOOKING'` dipasang sebelum `POST /order`, dengan
+     syarat belum ber-resi dan status NULL/FAILED. Butuh migration `20261005120000`; tanpa itu
+     booking tetap jalan tanpa kunci (dicatat di log).
+  Pemeriksaan "sudah Lunas?" dari baris yang dibaca lebih dulu BUKAN penjaga — dua callback
+  serentak sama-sama lolos dari sana.
+- **Penolakan kurir ber-`success: true`** (item `status: "error"` tanpa `cnote_no`) → alasan
+  `courier-rejected`, `_id` dan alasannya disimpan di `shipment_error`
+  (`src/lib/mengantar-booking-response.ts`). Saldo tidak terpotong untuk kiriman seperti ini.
 - **Kegagalan booking TIDAK membuat webhook membalas non-2xx.** Pembayarannya sah dan sudah
   tercatat; mengulang callback tak memperbaiki alamat yang salah, hanya menumpuk percobaan booking.
 - `BOOKED_BUT_NOT_SAVED` = resi terbit di Mengantar tapi gagal tercatat. Paling berbahaya (tak ada
