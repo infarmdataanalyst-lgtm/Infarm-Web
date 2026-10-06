@@ -105,7 +105,7 @@ export default function PromosiPage() {
     let active = true
     Promise.all([
       fetch('/api/promotions/list').then((res) => res.json()),
-      fetch('/api/products/list').then((res) => res.json()),
+      fetch('/api/products/list?fresh=1').then((res) => res.json()),
     ])
       .then(([promoData, productData]: [{ promotions?: Promotion[] }, { products?: StoredProduct[] }]) => {
         if (!active) return

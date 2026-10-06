@@ -50,6 +50,7 @@ import {
 import { readGaClientId, readGaSessionId } from '@/lib/ga-client-id'
 import { setGuestPhone, incrementActiveOrderCount } from '@/lib/guest-phone'
 import { setGuestEmail } from '@/lib/guest-email'
+import { freshUrl } from '@/lib/cdn-cache'
 import type { CheckoutItem } from '@/lib/data/dummy-checkout'
 
 // Produk untuk kebutuhan halaman ini: Product + berat (gram) dari OMS. Produk dummy tak punya
@@ -216,7 +217,10 @@ export default function CheckoutPage() {
   const [promoNotice, setPromoNotice] = useState<string | null>(null)
   useEffect(() => {
     let active = true
-    fetch('/api/promotions/active')
+    // Muatan pertama boleh dari cache CDN (60 dtk). Muat ULANG setelah server menolak karena kuota
+    // promo habis WAJIB segar: versi CDN masih memuat promo yang habis, dan pembeli akan tertahan di
+    // total yang terus ditolak (lib/cdn-cache.ts).
+    fetch(promoReloadKey > 0 ? freshUrl('/api/promotions/active') : '/api/promotions/active')
       .then((res) => res.json())
       .then((data: { promotions?: Promotion[]; maxDiscountPercent?: number }) => {
         if (!active) return

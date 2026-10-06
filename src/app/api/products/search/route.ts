@@ -8,6 +8,7 @@
 import { NextResponse } from 'next/server'
 import { getCachedProducts } from '@/lib/mock-db/cached-reads'
 import type { Product } from '@/types/product'
+import { publicCacheHeaders } from '@/lib/cdn-cache'
 
 export const runtime = 'nodejs'
 
@@ -17,7 +18,7 @@ const MAX_RESULTS = 8
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const q = (searchParams.get('q') || '').trim().toLowerCase()
-  if (!q) return NextResponse.json({ products: [] })
+  if (!q) return NextResponse.json({ products: [] }, { headers: publicCacheHeaders(request) })
 
   // HANYA produk OMS non-arsip (real dari Supabase, cached). Tanpa dummy.
   const pool: Product[] = (await getCachedProducts())
@@ -41,5 +42,5 @@ export async function GET(request: Request) {
     })
     .slice(0, MAX_RESULTS)
 
-  return NextResponse.json({ products })
+  return NextResponse.json({ products }, { headers: publicCacheHeaders(request) })
 }

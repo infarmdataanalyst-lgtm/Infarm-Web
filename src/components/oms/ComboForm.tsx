@@ -64,7 +64,7 @@ export default function ComboForm({
   // Ambil produk dari mock DB (Supabase). Hanya yang stok > 0 & tidak diarsipkan yang boleh dipilih.
   useEffect(() => {
     let active = true
-    fetch('/api/products/list')
+    fetch('/api/products/list?fresh=1')
       .then((res) => res.json())
       .then((data: { products?: StoredProduct[] }) => {
         if (!active) return

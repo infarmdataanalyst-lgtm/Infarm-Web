@@ -17,11 +17,14 @@ import { readActivePromotionsPublic } from '@/lib/mock-db/promotions'
 import { readProducts } from '@/lib/mock-db/products'
 import { getMaxDiscountPercent } from '@/lib/mock-db/settings'
 import { isPromotionQuotaFull } from '@/types/promotion'
+import { publicCacheHeaders } from '@/lib/cdn-cache'
 
 export const runtime = 'nodejs'
-export const dynamic = 'force-dynamic' // selalu pakai data promo terbaru
+// Fungsi selalu baca data terbaru; respons disimpan CDN 60 dtk (lib/cdn-cache.ts). Checkout memuat
+// ulang dengan ?fresh=1 setelah 409 PROMO_QUOTA_EXHAUSTED supaya promo yang habis hilang dari layar.
+export const dynamic = 'force-dynamic'
 
-export async function GET() {
+export async function GET(request: Request) {
   const now = Date.now()
   const [all, products, maxDiscountPercent] = await Promise.all([
     // Anon key, tunduk RLS (SEC-031). Filter isActive di bawah tetap dipertahankan sebagai lapis
@@ -53,5 +56,5 @@ export async function GET() {
     })
     .sort((a, b) => a.minPurchase - b.minPurchase)
 
-  return NextResponse.json({ promotions, maxDiscountPercent })
+  return NextResponse.json({ promotions, maxDiscountPercent }, { headers: publicCacheHeaders(request) })
 }

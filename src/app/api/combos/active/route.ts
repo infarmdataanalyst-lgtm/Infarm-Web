@@ -6,11 +6,12 @@
 
 import { NextResponse } from 'next/server'
 import { readActiveCombosPublic } from '@/lib/mock-db/combos'
+import { publicCacheHeaders } from '@/lib/cdn-cache'
 
 export const runtime = 'nodejs'
-export const dynamic = 'force-dynamic' // selalu pakai data combo terbaru
+export const dynamic = 'force-dynamic' // fungsi selalu baca data terbaru; respons disimpan CDN 60 dtk
 
-export async function GET() {
+export async function GET(request: Request) {
   const combos = await readActiveCombosPublic()
-  return NextResponse.json({ combos })
+  return NextResponse.json({ combos }, { headers: publicCacheHeaders(request) })
 }
