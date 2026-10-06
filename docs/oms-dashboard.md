@@ -92,6 +92,13 @@ SATU timestamp per admin: `store_settings` baris `notif_last_seen:<adminId>`. Ku
   `/oms/dashboard`**: guard di `proxy.ts` memakai matcher `/oms/dashboard/:path*`, jadi `/notifikasi`
   di root akan terbuka untuk siapa pun tanpa login. Tak ada entri sidebar — dijangkau dari
   "Lihat Semua" di panel lonceng.
+- **Tab jenis (Semua / Pesanan / Stok / Ulasan)** di panel lonceng DAN halaman notifikasi
+  (`NotificationTabs`, sejak 6 Okt 2026). Alasannya: urutan "pesanan bermasalah dulu" membuat
+  stok habis tenggelam saat ada puluhan peringatan pesanan. Pengelompokan di
+  `src/lib/notification-groups.ts` (murni; `stok_hadiah` ikut tab Stok). API `GET /api/notifications`
+  menerima `?jenis=` (tak dikenal → `semua`): `items`/`total` mengikuti tab, sedangkan `counts`
+  (angka di tiap tab) dan `unreadCount` (lencana) **selalu** dari seluruh notifikasi. Tab di panel
+  selalu dibuka di "Semua"; "Lihat Semua" membawa tab aktif lewat `?jenis=`.
 
 ### Halaman Pengaturan (`/oms/dashboard/pengaturan`) — tiga tab
 

@@ -10,8 +10,8 @@
 // Data dari GET /api/notifications (paginasi lewat limit/offset) — API Route, bukan server action,
 // sesuai pola OMS lain.
 
-import { useCallback, useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useCallback, useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
   AlertTriangle,
   ChevronLeft,
@@ -22,6 +22,8 @@ import {
   ShoppingCart,
 } from 'lucide-react'
 import OmsHeader from '@/components/oms/OmsHeader'
+import NotificationTabs from '@/components/oms/NotificationTabs'
+import { parseNotificationGroup, type NotificationGroup } from '@/lib/notification-groups'
 
 // Hanya PERINGATAN — pesanan baru yang normal tidak lagi masuk notifikasi (pemilik, 23 Sep 2026).
 type NotificationType = 'stok_habis' | 'ulasan_baru' | 'pesanan_bermasalah' | 'stok_hadiah'
@@ -53,35 +55,59 @@ function formatDateTime(iso: string | null): string {
   })
 }
 
+// useSearchParams() di client page WAJIB dibungkus Suspense, kalau tidak build Next gagal saat
+// prerender ("should be wrapped in a suspense boundary").
 export default function NotifikasiPage() {
+  return (
+    <Suspense fallback={null}>
+      <NotifikasiContent />
+    </Suspense>
+  )
+}
+
+function NotifikasiContent() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  // Tab dibaca dari URL (?jenis=), supaya "Lihat Semua" dari tab Stok di lonceng mendarat di tab
+  // yang sama, dan tautannya bisa dibagikan/di-bookmark.
+  const group = parseNotificationGroup(searchParams.get('jenis'))
   const [items, setItems] = useState<NotificationItem[]>([])
   const [total, setTotal] = useState(0)
+  const [counts, setCounts] = useState<Record<NotificationGroup, number> | undefined>(undefined)
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  const load = useCallback(async (targetPage: number) => {
-    setLoading(true)
-    try {
-      const offset = (targetPage - 1) * PAGE_SIZE
-      const res = await fetch(`/api/notifications?limit=${PAGE_SIZE}&offset=${offset}`, {
-        cache: 'no-store',
-      })
-      if (!res.ok) {
-        setError('Gagal memuat notifikasi.')
-        return
+  const load = useCallback(
+    async (targetPage: number) => {
+      setLoading(true)
+      try {
+        const offset = (targetPage - 1) * PAGE_SIZE
+        const jenis = group === 'semua' ? '' : `&jenis=${group}`
+        const res = await fetch(`/api/notifications?limit=${PAGE_SIZE}&offset=${offset}${jenis}`, {
+          cache: 'no-store',
+        })
+        if (!res.ok) {
+          setError('Gagal memuat notifikasi.')
+          return
+        }
+        const data = (await res.json()) as {
+          items?: NotificationItem[]
+          total?: number
+          counts?: Record<NotificationGroup, number>
+        }
+        setItems(data.items ?? [])
+        setTotal(data.total ?? 0)
+        setCounts(data.counts)
+        setError('')
+      } catch {
+        setError('Gagal memuat notifikasi. Periksa koneksi lalu coba lagi.')
+      } finally {
+        setLoading(false)
       }
-      const data = (await res.json()) as { items?: NotificationItem[]; total?: number }
-      setItems(data.items ?? [])
-      setTotal(data.total ?? 0)
-      setError('')
-    } catch {
-      setError('Gagal memuat notifikasi. Periksa koneksi lalu coba lagi.')
-    } finally {
-      setLoading(false)
-    }
-  }, [])
+    },
+    [group],
+  )
 
   // Pemuatan dijadwalkan lewat timer 0ms, BUKAN dipanggil langsung di badan efek: lint
   // `react-hooks/set-state-in-effect` melarang setState sinkron di dalam efek.
@@ -89,6 +115,16 @@ export default function NotifikasiPage() {
     const kickoff = window.setTimeout(() => void load(page), 0)
     return () => window.clearTimeout(kickoff)
   }, [load, page])
+
+  // Ganti tab = kembali ke halaman 1 (halaman 3 tab Semua tak bermakna di tab Stok).
+  function handleGroupChange(next: NotificationGroup) {
+    if (next === group) return
+    setPage(1)
+    router.replace(
+      next === 'semua' ? '/oms/dashboard/notifikasi' : `/oms/dashboard/notifikasi?jenis=${next}`,
+      { scroll: false },
+    )
+  }
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const from = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1
@@ -106,6 +142,10 @@ export default function NotifikasiPage() {
             ulasan yang belum ditanggapi. Daftar ini dihitung dari keadaan terkini, sehingga
             peringatan hilang sendiri begitu masalahnya diselesaikan.
           </p>
+        </div>
+
+        <div className="mb-4">
+          <NotificationTabs active={group} counts={counts} onChange={handleGroupChange} />
         </div>
 
         <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
@@ -126,7 +166,9 @@ export default function NotifikasiPage() {
 
           {!loading && !error && items.length === 0 && (
             <p className="px-4 py-12 text-center text-sm text-gray-500">
-              Tidak ada peringatan. Kurir, pembayaran, stok, dan ulasan semuanya aman.
+              {group === 'semua'
+                ? 'Tidak ada peringatan. Kurir, pembayaran, stok, dan ulasan semuanya aman.'
+                : 'Tidak ada peringatan di tab ini.'}
             </p>
           )}
 

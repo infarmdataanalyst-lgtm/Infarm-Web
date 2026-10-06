@@ -30,6 +30,11 @@ import { readPromotions } from '@/lib/mock-db/promotions'
 import { readStockRows, readWarehouses } from '@/lib/mock-db/warehouses'
 import { isMultiWarehouse } from '@/lib/warehouse'
 import { isPromotionExpired, isPromotionScheduled } from '@/types/promotion'
+import {
+  countByGroup,
+  filterByGroup,
+  type NotificationGroup,
+} from '@/lib/notification-groups'
 
 export type NotificationType = 'stok_habis' | 'ulasan_baru' | 'pesanan_bermasalah' | 'stok_hadiah'
 
@@ -49,7 +54,12 @@ export type OmsNotification = {
 
 export type NotificationPage = {
   items: OmsNotification[]
+  // Jumlah di tab yang DIMINTA (dasar paginasi). Tanpa `group`, sama dengan seluruhnya.
   total: number
+  // Jumlah per tab — label "Stok (3)" dsb. Selalu dihitung dari SELURUH notifikasi.
+  counts: Record<NotificationGroup, number>
+  // SELALU seluruh notifikasi, apa pun tab-nya: lencana merah lonceng tak boleh ikut menyusut
+  // hanya karena admin sedang melihat tab lain.
   unreadCount: number
 }
 
@@ -304,12 +314,14 @@ function sortIssuesFirst(a: OmsNotification, b: OmsNotification): number {
 
 // Daftar notifikasi OMS terurut terbaru dulu, sudah dipotong sesuai limit/offset.
 // `lastSeen` null (admin belum pernah membuka panel) → SEMUA dianggap belum dibaca.
+// `group` menyaring ke satu tab (lib/notification-groups.ts) TANPA mengubah urutannya.
 export async function getOmsNotifications(options: {
   lastSeen: string | null
   limit?: number
   offset?: number
+  group?: NotificationGroup
 }): Promise<NotificationPage> {
-  const { lastSeen, limit = 10, offset = 0 } = options
+  const { lastSeen, limit = 10, offset = 0, group = 'semua' } = options
 
   const [stock, reviews, issues, giftStock] = await Promise.all([
     buildStockNotifications(),
@@ -328,9 +340,12 @@ export async function getOmsNotifications(options: {
     }))
     .sort(sortIssuesFirst)
 
+  const shown = filterByGroup(all, group)
+
   return {
-    items: all.slice(offset, offset + limit),
-    total: all.length,
+    items: shown.slice(offset, offset + limit),
+    total: shown.length,
+    counts: countByGroup(all),
     unreadCount: all.filter((n) => n.unread).length,
   }
 }

@@ -1,6 +1,8 @@
 // src/app/api/notifications/route.ts
 // Daftar notifikasi OMS (dihitung real-time, lihat lib/mock-db/notifications.ts).
-//   GET → ADMIN ONLY. Mengembalikan { items, total, unreadCount, lastSeen }.
+//   GET → ADMIN ONLY. Mengembalikan { items, total, counts, unreadCount, lastSeen }.
+//         ?jenis=pesanan|stok|ulasan menyaring ke satu tab; `total` ikut tab itu, `counts` &
+//         `unreadCount` selalu seluruh notifikasi.
 //
 // ADMIN ONLY termasuk untuk peran 'staff': isinya memuat nama pembeli & nilai pesanan, jadi tak
 // boleh terbuka ke publik. proxy.ts hanya menjaga HALAMAN /oms/dashboard/*, route /api/* wajib
@@ -10,6 +12,7 @@ import { NextResponse } from 'next/server'
 import { getAdminId, requireAdmin } from '@/lib/oms-guard'
 import { getOmsNotifications } from '@/lib/mock-db/notifications'
 import { getNotifLastSeen } from '@/lib/mock-db/settings'
+import { parseNotificationGroup } from '@/lib/notification-groups'
 
 // createAdminClient (Supabase) butuh runtime Node.js, bukan Edge
 export const runtime = 'nodejs'
@@ -33,8 +36,11 @@ export async function GET(request: Request) {
   const limit = Number.isFinite(rawLimit) ? Math.min(MAX_LIMIT, Math.max(1, rawLimit)) : 10
   const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? rawOffset : 0
 
+  // Tab jenis (?jenis=pesanan|stok|ulasan). Tak dikenal → 'semua', bukan galat.
+  const group = parseNotificationGroup(searchParams.get('jenis'))
+
   const lastSeen = await getNotifLastSeen(adminId)
-  const page = await getOmsNotifications({ lastSeen, limit, offset })
+  const page = await getOmsNotifications({ lastSeen, limit, offset, group })
 
   return NextResponse.json({ ...page, lastSeen })
 }
