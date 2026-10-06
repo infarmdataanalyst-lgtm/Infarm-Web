@@ -57,7 +57,7 @@ export default function TambahUlasanPage() {
 
   useEffect(() => {
     let active = true
-    fetch('/api/products/list')
+    fetch('/api/products/list?fresh=1')
       .then((res) => res.json())
       .then((data: { products?: StoredProduct[] }) => {
         if (!active) return

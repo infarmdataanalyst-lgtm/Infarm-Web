@@ -471,6 +471,17 @@ Cache Components (`use cache`/PPR) **belum aktif** → pakai caching klasik Next
   `getCachedRatingSummary`, `getCachedRatingSummaryByProduct` (agregasi rating batch — avg+count per
   product, tag `reviews`; dipakai kartu "Produk Pilihan"), `getCachedCombos`, `getCachedSalesCountByProduct`,
   `getBestSellingCatalogPage` (kini payload sertakan `soldCount`+`rating`+`reviewCount` per kartu).
+- **Cache CDN untuk API publik storefront** (`src/lib/cdn-cache.ts`, sejak 6 Okt 2026): `products/list`,
+  `combos/active`, `promotions/active`, `products/best-selling-catalog`, `products/by-ids`,
+  `products/search` mengirim `Cache-Control: public, max-age=0, s-maxage=60, stale-while-revalidate=60`
+  lewat `publicCacheHeaders(request)`. Sebelumnya keenamnya selalu `x-vercel-cache: MISS` — setiap
+  pengunjung yang sekadar melihat katalog/keranjang menjalankan fungsi. `unstable_cache` TIDAK
+  menggantikan ini: ia cache data DI DALAM fungsi, fungsinya tetap dijalankan.
+  **`?fresh=1` = lolos cache** (`private, no-store`): WAJIB dipakai OMS (`/api/products/list?fresh=1`)
+  dan checkout saat memuat ulang promo setelah 409 `PROMO_QUOTA_EXHAUSTED` (`freshUrl()`).
+  **Endpoint publik baru** yang isinya sama untuk semua orang → pakai `publicCacheHeaders`; yang
+  bergantung sesi/cookie atau galat (4xx/5xx) → JANGAN. Cek: dua `curl -I` berturut-turut ke
+  production harus MISS → HIT.
 - **PENTING — jangan blanket-cache fungsi dasar `mock-db/*`**: API OMS & `orders/create` WAJIB baca
   data FRESH (validasi stok/harga otoritatif). Storefront pakai wrapper cached; OMS/order pakai fungsi dasar.
 - **Invalidasi saat mutasi**: tiap API tulis memanggil `revalidateTag(tag, 'max')` + `revalidatePath`:

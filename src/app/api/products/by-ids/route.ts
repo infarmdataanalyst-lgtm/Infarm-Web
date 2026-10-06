@@ -6,6 +6,7 @@
 
 import { NextResponse } from 'next/server'
 import { getCachedProducts } from '@/lib/mock-db/cached-reads'
+import { publicCacheHeaders } from '@/lib/cdn-cache'
 
 export const runtime = 'nodejs'
 
@@ -13,7 +14,7 @@ export const runtime = 'nodejs'
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const idsParam = (searchParams.get('ids') || '').trim()
-  if (!idsParam) return NextResponse.json({ products: [] })
+  if (!idsParam) return NextResponse.json({ products: [] }, { headers: publicCacheHeaders(request) })
 
   const ids = new Set(
     idsParam
@@ -21,10 +22,10 @@ export async function GET(request: Request) {
       .map((s) => s.trim())
       .filter(Boolean),
   )
-  if (ids.size === 0) return NextResponse.json({ products: [] })
+  if (ids.size === 0) return NextResponse.json({ products: [] }, { headers: publicCacheHeaders(request) })
 
   // Ambil dari cache lalu saring hanya id yang diminta (payload ringan: hanya item terkait).
   const all = await getCachedProducts()
   const products = all.filter((p) => ids.has(p.id))
-  return NextResponse.json({ products })
+  return NextResponse.json({ products }, { headers: publicCacheHeaders(request) })
 }

@@ -6,6 +6,7 @@
 
 import { NextResponse } from 'next/server'
 import { getBestSellingCatalogPage } from '@/lib/mock-db/cached-reads'
+import { publicCacheHeaders } from '@/lib/cdn-cache'
 
 export const runtime = 'nodejs'
 
@@ -18,5 +19,5 @@ export async function GET(request: Request) {
   const pageSize = Math.min(50, Math.max(1, Number(searchParams.get('pageSize')) || 10))
 
   const result = await getBestSellingCatalogPage(page, pageSize)
-  return NextResponse.json(result)
+  return NextResponse.json(result, { headers: publicCacheHeaders(request) })
 }
