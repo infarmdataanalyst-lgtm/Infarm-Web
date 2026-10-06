@@ -1,7 +1,9 @@
 'use client'
 
 // src/components/oms/NotificationBell.tsx
-// Ikon lonceng + lencana jumlah belum dibaca + panel dropdown 10 notifikasi terbaru.
+// Ikon lonceng + lencana jumlah belum dibaca + panel dropdown 10 notifikasi terbaru, dengan tab
+// jenis (Semua / Pesanan / Stok / Ulasan) supaya stok habis tak tenggelam di bawah peringatan
+// pesanan (pemilik, 6 Okt 2026).
 //
 // KENAPA POLLING, BUKAN SUPABASE REALTIME: tabel `orders` & `products` RLS-aktif tanpa policy
 // publik, dan browser admin hanya memegang anon key (autentikasi OMS memakai cookie HMAC sendiri,
@@ -13,6 +15,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { AlertTriangle, Bell, Gift, MessageSquare, PackageX, ShoppingCart } from 'lucide-react'
+import NotificationTabs from '@/components/oms/NotificationTabs'
+import type { NotificationGroup } from '@/lib/notification-groups'
 
 // Hanya PERINGATAN — pesanan baru yang normal tidak lagi masuk lonceng (pemilik, 23 Sep 2026).
 type NotificationType = 'stok_habis' | 'ulasan_baru' | 'pesanan_bermasalah' | 'stok_hadiah'
@@ -30,6 +34,7 @@ type NotificationItem = {
 type NotificationResponse = {
   items?: NotificationItem[]
   total?: number
+  counts?: Record<NotificationGroup, number>
   unreadCount?: number
 }
 
@@ -105,16 +110,23 @@ export default function NotificationBell() {
   const [open, setOpen] = useState(false)
   const [items, setItems] = useState<NotificationItem[]>([])
   const [total, setTotal] = useState(0)
+  const [counts, setCounts] = useState<Record<NotificationGroup, number> | undefined>(undefined)
   const [unread, setUnread] = useState(0)
   const [loading, setLoading] = useState(true)
   const [failed, setFailed] = useState(false)
+  // Tab jenis yang sedang dilihat. Sengaja TIDAK diingat antarbukaan halaman: lonceng dibuka untuk
+  // melihat "ada apa", dan tab "Semua" (pesanan bermasalah di atas) adalah jawaban default-nya.
+  const [group, setGroup] = useState<NotificationGroup>('semua')
   const wrapperRef = useRef<HTMLDivElement>(null)
   // Penunda tutup saat kursor keluar — lihat handleMouseLeave.
   const hoverCloseTimer = useRef<number | null>(null)
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch(`/api/notifications?limit=${PANEL_LIMIT}`, { cache: 'no-store' })
+      const jenis = group === 'semua' ? '' : `&jenis=${group}`
+      const res = await fetch(`/api/notifications?limit=${PANEL_LIMIT}${jenis}`, {
+        cache: 'no-store',
+      })
       if (!res.ok) {
         setFailed(true)
         return
@@ -122,6 +134,7 @@ export default function NotificationBell() {
       const data = (await res.json()) as NotificationResponse
       setItems(data.items ?? [])
       setTotal(data.total ?? 0)
+      setCounts(data.counts)
       setUnread(data.unreadCount ?? 0)
       setFailed(false)
     } catch {
@@ -129,7 +142,15 @@ export default function NotificationBell() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [group])
+
+  // Ganti tab → tampilkan "Memuat…" sampai isi tab itu tiba, supaya daftar tab lama tak sempat
+  // terbaca seolah milik tab baru. Pemuatannya sendiri dipicu efek di bawah (load berganti).
+  function handleGroupChange(next: NotificationGroup) {
+    if (next === group) return
+    setLoading(true)
+    setGroup(next)
+  }
 
   // Muat pertama + polling berkala.
   // Pemuatan pertama dijadwalkan lewat timer 0ms, BUKAN dipanggil langsung di badan efek: lint
@@ -260,7 +281,11 @@ export default function NotificationBell() {
         >
           <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
             <p className="text-sm font-bold text-gray-900">Notifikasi</p>
-            <p className="text-xs text-gray-500">{total} total</p>
+            <p className="text-xs text-gray-500">{counts?.semua ?? total} total</p>
+          </div>
+
+          <div className="border-b border-gray-100">
+            <NotificationTabs active={group} counts={counts} onChange={handleGroupChange} compact />
           </div>
 
           <div className="max-h-80 overflow-y-auto">
@@ -281,7 +306,9 @@ export default function NotificationBell() {
 
             {!loading && !failed && items.length === 0 && (
               <p className="px-4 py-8 text-center text-sm text-gray-500">
-                Tidak ada peringatan. Kurir, pembayaran, stok, dan ulasan semuanya aman.
+                {group === 'semua'
+                  ? 'Tidak ada peringatan. Kurir, pembayaran, stok, dan ulasan semuanya aman.'
+                  : 'Tidak ada peringatan di tab ini.'}
               </p>
             )}
 
@@ -320,7 +347,11 @@ export default function NotificationBell() {
           {/* "Lihat Semua" hanya muncul bila memang ada yang belum tampil di panel */}
           {total > PANEL_LIMIT && (
             <Link
-              href="/oms/dashboard/notifikasi"
+              href={
+                group === 'semua'
+                  ? '/oms/dashboard/notifikasi'
+                  : `/oms/dashboard/notifikasi?jenis=${group}`
+              }
               onClick={() => setOpen(false)}
               className="block border-t border-gray-100 px-4 py-3 text-center text-sm font-semibold text-brand-primary transition hover:bg-gray-50"
             >
