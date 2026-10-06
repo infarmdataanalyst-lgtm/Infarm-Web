@@ -2058,17 +2058,80 @@ export async function settleRefundByReference(
           .slice(0, 1000),
       }
 
-  const { error } = await supabase
+  // `.select()` WAJIB: tanpa itu UPDATE yang tak mengenai baris apa pun tetap "berhasil", dan
+  // callback kembar (atau callback yang kalah cepat dari finalizeClaimedRefund) ikut mengira
+  // dirinya yang menutup refund ini. Status di DB tetap benar, tapi efek samping sesudahnya —
+  // event GA4 `refund` — akan terkirim dua kali. Hanya pemenang yang mendapat orderId.
+  const { data: updated, error } = await supabase
     .from('orders')
     .update(patch)
     .eq('nomor_invoice', row.nomor_invoice)
     .eq('refund_status', 'SEDANG_DIPROSES')
+    .select('id')
+    .maybeSingle()
 
   if (error) {
     console.error(`[orders] gagal menutup refund ${row.nomor_invoice}:`, error.message)
     return null
   }
+  if (!updated) return null
   return { orderId: row.nomor_invoice }
+}
+
+// === Laporan refund ke GA4 ===
+
+// Hasil `claimGaRefundSend`:
+//   CLAIMED     → pemanggil ini satu-satunya yang boleh mengirim event `refund` untuk pesanan ini.
+//   TAKEN       → sudah dikirim (atau sedang dikirim) oleh pemanggil lain — JANGAN kirim.
+//   UNAVAILABLE → kolom belum di-migrate / DB galat. Pemanggil tetap boleh mengirim: ia hanya
+//                 dipanggil oleh PEMENANG perpindahan ke SUDAH_REFUND (compare-and-swap di
+//                 resolveRefund / finalizeClaimedRefund / settleRefundByReference), jadi lapis itu
+//                 masih menjaga satu event per pesanan.
+export type GaRefundClaim = 'CLAIMED' | 'TAKEN' | 'UNAVAILABLE'
+
+// Menandai event GA4 `refund` pesanan ini SEDANG/SUDAH dikirim — sekali saja, walau dipanggil
+// serentak. Syaratnya dinilai database: ga_refund_sent_at masih NULL dan refund-nya SUDAH_REFUND.
+//
+// Kenapa kolom tersendiri, bukan cukup mengandalkan perpindahan status: penjaga di status hanya
+// berlaku bila SETIAP jalur penutupan refund menulis dengan benar. Kolom ini menjaga di satu
+// tempat untuk semua jalur, sekaligus menyisakan jejak pesanan yang refund-nya BELUM sampai ke GA4
+// (pengiriman gagal, atau pesanan dari sebelum fitur ini) — itulah daftar yang perlu disusulkan.
+export async function claimGaRefundSend(orderId: string): Promise<GaRefundClaim> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('orders')
+    .update({ ga_refund_sent_at: new Date().toISOString() })
+    .eq('nomor_invoice', orderId)
+    .eq('refund_status', 'SUDAH_REFUND')
+    .is('ga_refund_sent_at', null)
+    .select('id')
+    .maybeSingle()
+
+  if (error) {
+    if (isUnknownColumnError(error)) {
+      console.error(
+        `[orders] kolom ga_refund_sent_at belum ada (${orderId}) — jalankan migration 20261005130000_orders_ga_refund_sent_at.sql. Event refund tetap dikirim tanpa penanda.`,
+      )
+    } else {
+      console.error(`[orders] gagal mengklaim laporan refund GA4 ${orderId}:`, error.message)
+    }
+    return 'UNAVAILABLE'
+  }
+  return data ? 'CLAIMED' : 'TAKEN'
+}
+
+// Melepas klaim yang ternyata GAGAL terkirim ke GA4, supaya pesanan ini muncul lagi di daftar
+// susulan (ga_refund_sent_at IS NULL). Hanya untuk kegagalan yang pasti tak tercatat di GA4.
+export async function releaseGaRefundClaim(orderId: string): Promise<void> {
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('orders')
+    .update({ ga_refund_sent_at: null })
+    .eq('nomor_invoice', orderId)
+
+  if (error) {
+    console.error(`[orders] gagal melepas klaim laporan refund GA4 ${orderId}:`, error.message)
+  }
 }
 
 // === Hasil mematikan tagihan Xendit ===

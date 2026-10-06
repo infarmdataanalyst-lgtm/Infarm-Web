@@ -1,5 +1,7 @@
 // src/lib/analytics-server.ts
-// Mengirim event `purchase` ke Google Analytics 4 dari SISI SERVER lewat Measurement Protocol.
+// Mengirim event `purchase` dan `refund` ke Google Analytics 4 dari SISI SERVER lewat
+// Measurement Protocol. `refund` dikirim saat dana pesanan SUDAH dikembalikan (lib/ga-refund.ts),
+// dengan transaction_id yang sama dengan purchase-nya supaya revenue GA4 berkurang.
 //
 // ── Kenapa dari server, bukan dari halaman sukses ──
 // Pembayaran di sini asinkron. Pembeli dibawa ke halaman Xendit, dan VA/QRIS bisa dibayar
@@ -134,25 +136,126 @@ export function buildPurchasePayload(
   }
 }
 
-type SendResult =
+export type RefundPayload = {
+  client_id: string
+  events: [
+    {
+      name: 'refund'
+      params: {
+        currency: 'IDR'
+        transaction_id: string
+        value: number
+      }
+    },
+  ]
+}
+
+// Menyusun payload event `refund` untuk pesanan yang dananya SUDAH dikembalikan. Fungsi MURNI.
+//
+// ── Kenapa `value` = totalAmount, bukan refund_amount ──
+// Setiap refund di sistem ini lahir dari pembatalan pesanan UTUH (markRefundNeeded), jadi yang
+// dibatalkan adalah seluruh purchase-nya. refund_amount bisa lebih kecil karena biaya transfer
+// dipotong (jalur manual OMS) — selisih itu biaya toko, bukan pendapatan. Memakainya akan
+// meninggalkan sisa revenue di GA4 untuk pesanan yang sudah batal. Keputusan pemilik 2026-10-05.
+//
+// ── Kenapa tanpa `items` dan tanpa `session_id` ──
+// GA4 menganggap refund TANPA items sebagai refund penuh atas transaction_id-nya. session_id
+// sengaja tak dikirim: refund terjadi berhari-hari setelah sesi pembelian, dan menempelkannya ke
+// sesi selama itu belum terbukti berperilaku benar. Akibatnya refund tampil di kanal "Unassigned"
+// pada laporan Akuisisi — revenue per transaksi tetap berkurang (UNVERIFIED, lihat docs).
+export function buildRefundPayload(order: Order, clientId: string): RefundPayload {
+  return {
+    client_id: clientId,
+    events: [
+      {
+        name: 'refund',
+        params: {
+          currency: 'IDR',
+          // SAMA PERSIS dengan purchase-nya (nomor invoice) — GA4 mencocokkan refund lewat nilai ini.
+          transaction_id: order.orderId,
+          value: order.totalAmount,
+        },
+      },
+    ],
+  }
+}
+
+export type SendResult =
   | { ok: true }
   | { ok: false; reason: 'not-configured' | 'no-client-id' | 'http-error' | 'network' }
 
-// Kirim payload ke GA4. TIDAK PERNAH melempar: pembayaran sudah sah dan sudah tercatat di DB,
-// jadi tak ada kegagalan di file ini yang boleh mengubah balasan ke Xendit.
+// Alasan event GA4 TIDAK boleh dikirim untuk pesanan ini, atau null bila boleh. Dipakai pemanggil
+// refund untuk memutuskan SEBELUM mengklaim ga_refund_sent_at — klaim tanpa pengiriman akan
+// membuat pesanan itu tampak sudah dilaporkan padahal belum.
+export function gaSkipReason(order: Order): 'not-configured' | 'no-client-id' | null {
+  if (!mpConfig()) return 'not-configured'
+  if (!order.gaClientId?.trim()) return 'no-client-id'
+  return null
+}
+
+// Kirim event `purchase` ke GA4. TIDAK PERNAH melempar: pembayaran sudah sah dan sudah tercatat di
+// DB, jadi tak ada kegagalan di file ini yang boleh mengubah balasan ke Xendit.
 export async function sendPurchaseEvent(
   order: Order,
   metaByProduct: Map<string, ProductMeta>,
   log: string,
 ): Promise<SendResult> {
+  const clientId = readyClientId(order, 'purchase', log)
+  if (typeof clientId !== 'string') return clientId
+
+  const result = await postToMeasurementProtocol(
+    buildPurchasePayload(order, clientId, metaByProduct),
+    'purchase',
+    order.orderId,
+    log,
+  )
+  if (result.ok) {
+    // Keadaan sesi ikut dicatat: inilah pembeda antara penjualan yang teratribusi ke kanal dan
+    // yang mendarat di "Unassigned". Tanpa penanda ini, satu-satunya cara mengetahuinya adalah
+    // menunggu 24-48 jam sampai laporan Akuisisi traffic terisi.
+    const sesi = order.gaSessionId?.trim() ? 'dengan sesi' : 'TANPA sesi (akan Unassigned)'
+    console.log(
+      `${log} GA4 purchase terkirim: ${order.orderId} value=${order.totalAmount} ${sesi}`,
+    )
+  }
+  return result
+}
+
+// Kirim event `refund` ke GA4. TIDAK PERNAH melempar: dananya sudah kembali dan sudah tercatat,
+// jadi kegagalan di sini tak boleh menggagalkan penutupan refund maupun balasan webhook.
+//
+// Penjaga "satu event per pesanan" BUKAN di sini — lihat reportRefundToGa (lib/ga-refund.ts).
+export async function sendRefundEvent(order: Order, log: string): Promise<SendResult> {
+  const clientId = readyClientId(order, 'refund', log)
+  if (typeof clientId !== 'string') return clientId
+
+  const result = await postToMeasurementProtocol(
+    buildRefundPayload(order, clientId),
+    'refund',
+    order.orderId,
+    log,
+  )
+  if (result.ok) {
+    console.log(`${log} GA4 refund terkirim: ${order.orderId} value=${order.totalAmount}`)
+  }
+  return result
+}
+
+// === Pengiriman bersama (purchase & refund) ===
+
+function mpConfig(): { measurementId: string; apiSecret: string } | null {
   const measurementId = process.env.NEXT_PUBLIC_GA_ID?.trim()
   const apiSecret = process.env.GA_API_SECRET?.trim()
+  return measurementId && apiSecret ? { measurementId, apiSecret } : null
+}
 
-  if (!measurementId || !apiSecret) {
+// client_id pesanan bila event boleh dikirim; selain itu hasil gagal yang sudah dicatat di log.
+function readyClientId(order: Order, eventName: string, log: string): string | SendResult {
+  if (!mpConfig()) {
     // Bukan kesalahan yang perlu diteriakkan tiap pesanan: di lokal & preview env ini memang
     // sengaja kosong. Dicatat sekali per pesanan pada level info supaya tetap bisa ditelusuri
     // kalau produksi ternyata juga sunyi.
-    console.log(`${log} GA4 purchase dilewati: NEXT_PUBLIC_GA_ID / GA_API_SECRET belum di-set`)
+    console.log(`${log} GA4 ${eventName} dilewati: NEXT_PUBLIC_GA_ID / GA_API_SECRET belum di-set`)
     return { ok: false, reason: 'not-configured' }
   }
 
@@ -160,13 +263,26 @@ export async function sendPurchaseEvent(
   if (!clientId) {
     // Pembeli memblokir GA, memakai mode privat, atau pesanannya dibuat oleh klien versi lama.
     // Normal — jangan kirim dengan client_id karangan: GA4 menerimanya tanpa mengeluh lalu
-    // mencatatnya sebagai pengunjung yang tak pernah ada.
-    console.log(`${log} GA4 purchase dilewati: pesanan ${order.orderId} tanpa ga_client_id`)
+    // mencatatnya sebagai pengunjung yang tak pernah ada. Untuk refund alasannya lebih kuat lagi:
+    // tanpa client_id purchase-nya pun tak pernah terkirim, jadi refund akan mengurangi revenue
+    // transaksi yang tak pernah ada di GA4.
+    console.log(`${log} GA4 ${eventName} dilewati: pesanan ${order.orderId} tanpa ga_client_id`)
     return { ok: false, reason: 'no-client-id' }
   }
+  return clientId
+}
 
-  const url = `${MP_ENDPOINT}?measurement_id=${encodeURIComponent(measurementId)}&api_secret=${encodeURIComponent(apiSecret)}`
-  const payload = buildPurchasePayload(order, clientId, metaByProduct)
+async function postToMeasurementProtocol(
+  payload: PurchasePayload | RefundPayload,
+  eventName: string,
+  orderId: string,
+  log: string,
+): Promise<SendResult> {
+  const config = mpConfig()
+  if (!config) return { ok: false, reason: 'not-configured' }
+
+  // URL memuat api_secret — JANGAN pernah dicatat ke log.
+  const url = `${MP_ENDPOINT}?measurement_id=${encodeURIComponent(config.measurementId)}&api_secret=${encodeURIComponent(config.apiSecret)}`
 
   try {
     const res = await fetch(url, {
@@ -181,22 +297,14 @@ export async function sendPurchaseEvent(
     // dengan benar". Satu-satunya cara memverifikasi bentuk payload adalah endpoint debug
     // (/debug/mp/collect), yang sengaja tidak dipakai di jalur produksi ini.
     if (!res.ok) {
-      console.error(`${log} GA4 purchase ${order.orderId} ditolak HTTP ${res.status}`)
+      console.error(`${log} GA4 ${eventName} ${orderId} ditolak HTTP ${res.status}`)
       return { ok: false, reason: 'http-error' }
     }
-
-    // Keadaan sesi ikut dicatat: inilah pembeda antara penjualan yang teratribusi ke kanal dan
-    // yang mendarat di "Unassigned". Tanpa penanda ini, satu-satunya cara mengetahuinya adalah
-    // menunggu 24-48 jam sampai laporan Akuisisi traffic terisi.
-    const sesi = order.gaSessionId?.trim() ? 'dengan sesi' : 'TANPA sesi (akan Unassigned)'
-    console.log(
-      `${log} GA4 purchase terkirim: ${order.orderId} value=${order.totalAmount} ${sesi}`,
-    )
     return { ok: true }
   } catch (e) {
+    // Hanya `name`: pesan galat fetch di sebagian runtime memuat URL — yang di sini berisi api_secret.
     console.error(
-      `${log} GA4 purchase ${order.orderId} gagal terkirim:`,
-      e instanceof Error ? e.message : e,
+      `${log} GA4 ${eventName} ${orderId} gagal terkirim: ${e instanceof Error ? e.name : 'unknown'}`,
     )
     return { ok: false, reason: 'network' }
   }

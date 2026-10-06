@@ -40,6 +40,7 @@ import { refundPaymentRequest } from '@/lib/xendit/refund'
 import { paymentMethodInfo } from '@/lib/payment-method'
 import { normalizeInvoiceId } from '@/lib/invoice-id'
 import { enforceRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
+import { reportRefundToGa } from '@/lib/ga-refund'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -323,6 +324,12 @@ export async function POST(request: Request) {
   console.log(
     `[oms/refunds/xendit] ${orderId} ref=${hasil.reference || claimReference} status=${hasil.status} → ${tuntas ? 'SUDAH_REFUND' : 'SEDANG_DIPROSES'} oleh ${by}`,
   )
+
+  // Jalur B laporan refund GA4 — hanya bila tuntas DI SINI. Kalau masih SEDANG_DIPROSES, callback
+  // refund.succeeded yang akan melaporkannya (jalur A). Cabang "sudah ditutup callback" di atas
+  // sengaja tidak melapor: callback itulah pemenangnya dan sudah melapor sendiri.
+  if (tuntas) await reportRefundToGa(updated, '[oms/refunds/xendit]')
+
   return NextResponse.json({
     success: true,
     metode: METODE,

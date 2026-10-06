@@ -17,6 +17,7 @@ import { NextResponse } from 'next/server'
 import { requireAdmin, requireAdminRole, getAdminIdentity } from '@/lib/oms-guard'
 import { readOrdersNeedingRefund, resolveRefund, getOrderByOrderId } from '@/lib/mock-db/orders'
 import { normalizeInvoiceId } from '@/lib/invoice-id'
+import { reportRefundToGa } from '@/lib/ga-refund'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -140,5 +141,11 @@ export async function PATCH(request: Request) {
   }
 
   console.log(`[oms/refunds] ${orderId} → ${status} oleh ${by}`)
+
+  // Jalur C laporan refund GA4: pengembalian manual (transfer VA) yang dinyatakan selesai admin.
+  // `updated` hanya didapat pemenang compare-and-swap resolveRefund, jadi tombol yang ditekan dua
+  // kali tak melapor dua kali. TIDAK_PERLU tak dilaporkan — tak ada uang yang kembali.
+  if (status === 'SUDAH_REFUND') await reportRefundToGa(updated, '[oms/refunds]')
+
   return NextResponse.json({ success: true, order: updated })
 }
