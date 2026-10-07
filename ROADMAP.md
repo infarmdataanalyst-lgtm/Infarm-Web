@@ -143,7 +143,7 @@ Search alamat + cek ongkir **sudah jalan**, dan ongkir kini memakai **berat riil
 | Pekerjaan | Detail |
 |---|---|
 | **Halaman Legal dinonaktifkan** (`LEGAL_PAGES_ENABLED = false` → rute balas 404). Sebelum dinyalakan lagi: ganti `LEGAL_CONTACT_EMAIL`/`LEGAL_CONTACT_PHONE` (masih **PLACEHOLDER**) dan perbarui `LEGAL_EFFECTIVE_DATE` | [docs/storefront-pages.md](docs/storefront-pages.md) → Halaman Legal |
-| **Belum ada mekanisme mengaktifkan maintenance mode** — `/maintenance` baru TAMPILAN. Butuh rewrite ber-flag env di `src/proxy.ts` + idealnya balas **HTTP 503**, bukan 200 | [docs/storefront-pages.md](docs/storefront-pages.md) → Halaman Maintenance |
+| **Maintenance mode lewat Vercel Firewall belum membalas 503** — rule "maintenance-mode" me-Redirect ke `/maintenance` (307 → 200). Idealnya mesin pencari menerima **HTTP 503** agar situs tak dianggap pindah | [docs/storefront-pages.md](docs/storefront-pages.md) → Halaman Maintenance |
 | `WHATSAPP_CS_LINK` masih placeholder `/404` — ganti ke `https://wa.me/62…` saat siap | [docs/storefront-pages.md](docs/storefront-pages.md) → Floating WhatsApp CS |
 | Empat dropdown filter di halaman Pesanan (Kurir, Status Pembayaran, Urutkan, arah urut) masih `<select>` native → highlight biru OS masih muncul. `WarehouseMultiFilter` bisa jadi acuan polanya | [docs/warehouse.md](docs/warehouse.md) → Gudang di halaman Pesanan |
 | `src/lib/cart.ts` (helper baca keranjang dari Server Component via `cookies()`) **belum dibuat** | `CLAUDE.md` → Sistem Belanja: Guest Checkout |
