@@ -12,6 +12,7 @@ import { revalidatePath, revalidateTag } from 'next/cache'
 import { requireAdmin } from '@/lib/oms-guard'
 import {
   bulkDeleteProducts,
+  ProductInUseError,
   bulkSetArchived,
   bulkSetCategory,
 } from '@/lib/mock-db/products'
@@ -85,6 +86,10 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true, action, affected })
   } catch (e) {
+    // Produk yang pernah dibeli ditolak database — bukan galat sistem, jadi 409 + pesan yang jelas.
+    if (e instanceof ProductInUseError) {
+      return NextResponse.json({ error: e.message, code: 'PRODUCT_IN_USE' }, { status: 409 })
+    }
     const message = e instanceof Error ? e.message : 'Gagal menjalankan aksi massal.'
     return NextResponse.json({ error: message }, { status: 500 })
   }

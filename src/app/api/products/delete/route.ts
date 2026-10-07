@@ -5,7 +5,7 @@
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/oms-guard'
 import { revalidatePath, revalidateTag } from 'next/cache'
-import { deleteProduct } from '@/lib/mock-db/products'
+import { deleteProduct, PRODUCT_IN_USE_MESSAGE } from '@/lib/mock-db/products'
 
 export const runtime = 'nodejs'
 
@@ -26,9 +26,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'id produk wajib ada.' }, { status: 400 })
   }
 
-  const deleted = await deleteProduct(body.id)
-  if (!deleted) {
+  const result = await deleteProduct(body.id)
+  if (result === 'in-use') {
+    return NextResponse.json({ error: PRODUCT_IN_USE_MESSAGE, code: 'PRODUCT_IN_USE' }, { status: 409 })
+  }
+  if (result === 'not-found') {
     return NextResponse.json({ error: 'Produk tidak ditemukan.' }, { status: 404 })
+  }
+  if (result === 'error') {
+    return NextResponse.json({ error: 'Gagal menghapus produk. Coba lagi.' }, { status: 500 })
   }
 
   // Segarkan cache storefront agar produk yang dihapus hilang dari ecommerce.
