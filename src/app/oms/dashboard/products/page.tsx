@@ -732,19 +732,28 @@ function ProductsContent() {
     if (!deleteTarget) return
     setDeleting(true)
 
+    // Produk hanya dihilangkan dari layar bila server BENAR-BENAR menghapusnya. Dulu ("mode
+    // prototipe") ia dihapus dari layar apa pun jawabannya — produk yang pernah dibeli ditolak
+    // database tapi tetap lenyap di layar, lalu muncul lagi saat halaman dimuat ulang.
     try {
-      await fetch('/api/products/delete', {
+      const res = await fetch('/api/products/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: deleteTarget.id }),
       })
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string }
+        setToast(data.error ?? 'Gagal menghapus produk.')
+        return
+      }
+      setProducts((prev) => prev.filter((p) => p.id !== deleteTarget.id))
     } catch {
-      // Mode prototipe: tetap hapus dari layar walau API gagal
+      setToast('Gagal menghapus produk. Periksa koneksi lalu coba lagi.')
+    } finally {
+      // Dialog ditutup di semua cabang supaya pesan (toast) di belakangnya terbaca.
+      setDeleting(false)
+      setDeleteTarget(null)
     }
-
-    setProducts((prev) => prev.filter((p) => p.id !== deleteTarget.id))
-    setDeleting(false)
-    setDeleteTarget(null)
   }
 
   // === Aksi Arsip ===

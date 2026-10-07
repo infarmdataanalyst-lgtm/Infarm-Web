@@ -479,21 +479,45 @@ export async function bulkSetCategory(ids: string[], category: ProductCategory):
   return data?.length ?? 0
 }
 
+// Pesan untuk admin saat produk tak bisa dihapus karena sudah dipakai.
+export const PRODUCT_IN_USE_MESSAGE =
+  'Produk ini sudah pernah dibeli atau dipakai di data lain, jadi tidak bisa dihapus. Arsipkan saja — produk hilang dari toko, riwayat pesanannya tetap utuh.'
+
+// Dilempar bulkDeleteProducts bila database menolak penghapusan karena produknya masih dirujuk.
+export class ProductInUseError extends Error {
+  constructor() {
+    super(PRODUCT_IN_USE_MESSAGE)
+    this.name = 'ProductInUseError'
+  }
+}
+
+// 23503 = foreign_key_violation. order_items.product_id (dan varian/promo di pesanan) memakai
+// ON DELETE RESTRICT, jadi produk yang PERNAH DIBELI ditolak database — disengaja, itulah yang
+// menjaga riwayat pesanan. Sampai 2026-10-07 penolakan ini dilaporkan sebagai "tidak ditemukan".
+function isInUseError(error: { code?: string } | null): boolean {
+  return error?.code === '23503'
+}
+
 // Menghapus BANYAK produk sekaligus. Baris stok per gudang & varian ikut terhapus lewat
-// FK ON DELETE CASCADE; order_items menyimpan product_id nullable sehingga riwayat pesanan aman.
+// FK ON DELETE CASCADE. Produk yang pernah dibeli DITOLAK database (lihat isInUseError) — satu saja
+// di antara `ids` sudah membatalkan seluruh penghapusan, karena DELETE-nya satu pernyataan.
 export async function bulkDeleteProducts(ids: string[]): Promise<number> {
   if (ids.length === 0) return 0
   const supabase = createAdminClient()
   const { data, error } = await supabase.from('products').delete().in('id', ids).select('id')
 
+  if (isInUseError(error)) throw new ProductInUseError()
   if (error) throw new Error(`Gagal menghapus produk: ${error.message}`)
   return data?.length ?? 0
 }
 
 // === Hapus ===
 
-// Menghapus produk berdasarkan id. true bila terhapus, false bila tidak ditemukan.
-export async function deleteProduct(id: string): Promise<boolean> {
+export type DeleteProductResult = 'deleted' | 'not-found' | 'in-use' | 'error'
+
+// Menghapus produk berdasarkan id. Hasilnya dibedakan supaya admin tak lagi diberi tahu "tidak
+// ditemukan" untuk produk yang sebenarnya ada tapi sudah pernah dibeli.
+export async function deleteProduct(id: string): Promise<DeleteProductResult> {
   const supabase = createAdminClient()
   const { data, error } = await supabase
     .from('products')
@@ -501,10 +525,11 @@ export async function deleteProduct(id: string): Promise<boolean> {
     .eq('id', id)
     .select('id')
 
+  if (isInUseError(error)) return 'in-use'
   if (error) {
     console.error('Gagal menghapus produk di Supabase:', error.message)
-    return false
+    return 'error'
   }
 
-  return (data?.length ?? 0) > 0
+  return (data?.length ?? 0) > 0 ? 'deleted' : 'not-found'
 }
