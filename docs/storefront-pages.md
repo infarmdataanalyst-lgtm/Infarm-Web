@@ -209,12 +209,22 @@ mengambang. Jangan menambah lapis baru tanpa memperbarui tabel ini.
   Perbaikan", 2 paragraf, pemisah `bg-brand-primary`, tautan CS WhatsApp, copyright.
   `metadata.robots = { index: false, follow: false }` (kondisi sementara, jangan diindeks).
 - Link CS memakai **`WHATSAPP_CS_LINK`** dari `src/lib/data/contact.ts` (satu sumber untuk semua
-  tautan CS). Masih placeholder `/404` selama `WHATSAPP_CS_NUMBER` kosong.
-- **Belum ada mekanisme mengaktifkan maintenance mode** — halaman ini baru TAMPILAN. Untuk
-  mengalihkan seluruh trafik ke sini, tambahkan rewrite ber-flag env di `src/proxy.ts`
-  (mis. `MAINTENANCE_MODE=1`), kecualikan `/maintenance` sendiri + aset `_next/*` + `/oms/*` bila
-  admin tetap perlu akses. Idealnya balas **HTTP 503** (bukan 200) agar mesin pencari tak menganggap
-  situs hilang permanen — butuh route handler/response kustom, bukan `page.tsx` biasa.
+  tautan CS). Nomor CS sudah terisi sejak 2026-09-28; fallback `/404` hanya bila nomornya dikosongkan.
+- **Maintenance mode diaktifkan lewat Vercel Firewall**, bukan kode: rule "maintenance-mode"
+  me-Redirect semua path ke `/maintenance` KECUALI yang diawali `/maintenance`, `/oms`,
+  `/api/webhooks`, `/api/cron`, `/_next`. Menyalakan/mematikannya di dashboard Vercel, tanpa deploy.
+- **Aset halaman ini WAJIB berpath `/maintenance/...` atau `/_next/...`** — aset di path lain
+  (mis. `/images/...`) ikut dialihkan dan browser menerima HTML, sehingga gambarnya tak tampil.
+  Karena itu logo memakai salinan khusus **`public/maintenance/logo-infarm.png`** (aslinya
+  `public/images/logo-infarm.png` tetap dipakai halaman lain). Ikon `Wrench` aman: SVG inline.
+  Font `next/font` & CSS/JS ada di `/_next/`.
+- **Favicon** (`src/app/icon.png` → `/icon.png?<hash>`) tak bisa ditimpa per halaman. Agar ikon tab
+  tetap tampil selama maintenance, tambahkan `/icon.png` ke pengecualian rule firewall.
+- **GA4 tidak dipasang di `/maintenance`** (`GoogleAnalyticsGate`): halaman tanpa skrip domain luar,
+  dan kunjungan saat maintenance tak mengotori laporan.
+- Halaman ini statis (tanpa Supabase, `cookies()`, `headers()`), jadi tetap tampil saat Supabase
+  mati. Kekurangan yang tersisa: Redirect firewall membalas **307 → 200** (UNVERIFIED), bukan **503**, sehingga
+  mesin pencari tak diberi tahu bahwa situs hanya tutup sementara.
 
 ## Kanal WhatsApp CS (di footer, bukan mengambang)
 

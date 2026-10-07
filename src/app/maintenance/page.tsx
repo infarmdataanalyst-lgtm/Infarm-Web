@@ -3,8 +3,12 @@
 // selama maintenance tidak ada halaman lain yang layak dituju, jadi satu-satunya elemen interaktif
 // adalah tautan CS WhatsApp.
 //
-// Halaman ini hanya TAMPILAN. Mengalihkan seluruh trafik ke sini saat maintenance dilakukan di
-// `src/proxy.ts` (rewrite ber-flag env) — belum diaktifkan; lihat catatan di CLAUDE.md.
+// Halaman ini hanya TAMPILAN. Trafik dialihkan ke sini oleh rule Vercel Firewall "maintenance-mode"
+// (Redirect semua path KECUALI yang diawali /maintenance, /oms, /api/webhooks, /api/cron, /_next).
+//
+// ⚠️ Setiap aset yang dimuat halaman ini WAJIB berpath di bawah /maintenance/ atau /_next/. Aset di
+// path lain (mis. /images/...) ikut dialihkan ke halaman ini — browser menerima HTML, bukan gambar,
+// dan gambarnya tak tampil. Karena itu logonya disalin ke public/maintenance/.
 
 import type { Metadata } from 'next'
 import Image from 'next/image'
@@ -25,9 +29,10 @@ export default function MaintenancePage() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-brand-surface px-6 py-12 text-center text-zinc-900">
       <main className="w-full max-w-md">
-        {/* Logo — statis, bukan tautan (tak ada halaman tujuan selama maintenance) */}
+        {/* Logo — statis, bukan tautan (tak ada halaman tujuan selama maintenance). Salinan khusus
+            di /maintenance/ supaya lolos rule firewall — lihat catatan di kepala berkas. */}
         <Image
-          src="/images/logo-infarm.png"
+          src="/maintenance/logo-infarm.png"
           alt="infarm"
           width={56}
           height={56}
