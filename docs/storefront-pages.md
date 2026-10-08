@@ -104,6 +104,12 @@
 
 - **`ProductCatalog`** (client) merakit filter + grid; `products/page.tsx` hanya membungkus dengan `<Suspense>`
   (butuh `useSearchParams`). Data = produk OMS non-arsip via `/api/products/list`.
+- **Kartu dirender bertahap, 20 per "Muat lebih banyak"** (`PAGE_SIZE` di `ProductCatalog`). Datanya
+  tetap diambil lengkap (JSON ±20 KB) supaya filter/sort instan; yang dibatasi hanya jumlah KARTU,
+  karena tiap kartu mengunduh satu foto (±100 KB) dari Supabase Storage. Merender 100 produk
+  sekaligus = 100 foto per kunjungan katalog = egress Supabase. Batas kembali ke 20 saat filter/sort
+  berubah. Sengaja tombol, bukan infinite scroll: pembeli yang sekadar melirik tak memicu unduhan
+  seluruh katalog.
 - **Desktop (lg+)**: sidebar kiri sticky (kategori **multi-checkbox** custom [box putih border → hijau+centang putih],
   rentang harga Min–Maks, tombol **Terapkan**) + konten kanan (judul, jumlah, sort). **Mobile**: baris kontrol
   (Filter, Urutkan, chip kategori aktif ×) → **bottom-sheet** (reuse `checkout/BottomSheet`) untuk filter & sort.

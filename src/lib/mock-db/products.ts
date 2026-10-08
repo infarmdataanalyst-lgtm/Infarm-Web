@@ -30,6 +30,8 @@ import type {
 // Bucket 'product-images' (public). Helper di bawah mengubah data-URL base64 → file di Storage → URL.
 
 const IMAGE_BUCKET = 'product-images'
+// Nilai Cache-Control (detik) berkas di bucket — 1 tahun. Dipakai juga oleh skrip penyetel ulang.
+export const IMAGE_CACHE_SECONDS = '31536000'
 
 // Bila string berupa data-URL base64 → validasi, decode, upload ke Storage, kembalikan URL publik.
 // Bila sudah URL (http) / placeholder / kosong → kembalikan apa adanya (idempoten).
@@ -68,11 +70,14 @@ async function uploadImageIfDataUrl(value: string): Promise<string> {
   const path = `products/${randomUUID()}.${ext}`
 
   const supabase = createAdminClient()
-  // cacheControl '3600' → CDN Supabase (Cloudflare) menyimpan gambar 1 jam. Gambar produk
-  // jarang berubah (URL baru per upload), jadi aman di-cache lama. Hanya berlaku untuk upload baru.
+  // cacheControl 1 TAHUN: path memakai UUID baru per upload dan `upsert: false`, jadi isi di balik
+  // sebuah URL tidak pernah berubah — browser & CDN Supabase boleh menyimpannya selamanya. Dulu
+  // '3600' (1 jam): pengunjung yang kembali mengunduh ulang seluruh foto tiap jam, dan setiap
+  // unduhan itu egress Supabase. Foto yang diunggah sebelum perubahan ini disetel ulang lewat
+  // scripts/set-product-image-cache.mjs.
   const { error } = await supabase.storage
     .from(IMAGE_BUCKET)
-    .upload(path, buffer, { contentType: mime, upsert: false, cacheControl: '3600' })
+    .upload(path, buffer, { contentType: mime, upsert: false, cacheControl: IMAGE_CACHE_SECONDS })
 
   if (error) {
     console.error('Gagal upload gambar ke Storage:', error.message)

@@ -412,6 +412,14 @@ Migration `20260819120000_add_products_berat.sql`. **NULL-able tanpa DEFAULT —
   Kolom `image_url`/`images` = URL `https://<proj>.supabase.co/storage/v1/object/public/product-images/...`.
   **Jangan pernah simpan base64 ke `image_url`/`images`** (dulu bikin payload `products/list` ~5MB;
   setelah pindah Storage jadi ~20KB). Migrasi data lama: `scripts/migrate-product-images-to-storage.mjs`.
+- **Cache-Control berkas Storage = 1 tahun** (`IMAGE_CACHE_SECONDS` di `mock-db/products.ts`). Aman
+  karena path = UUID baru per upload dan `upsert: false` — isi di balik satu URL tak pernah berubah.
+  Dulu 1 jam: pengunjung yang kembali mengunduh ulang semua foto tiap jam (egress Supabase). Berkas
+  lama disetel ulang dengan `node scripts/set-product-image-cache.mjs` (`--dry-run` untuk melihat
+  dulu; unggah ulang ke path yang sama, URL di DB tak berubah).
+- **Tidak ada resize/kompresi** di client maupun server — batasnya hanya 2 MB/berkas. Foto produksi
+  per Okt 2026 rata-rata ±104 KB (WebP), jadi belum jadi masalah; bila nanti admin mengunggah JPG
+  kamera 1–2 MB, pertimbangkan kompresi di browser sebelum upload (lihat ROADMAP).
 - Detail produk: `ProductImageSlider` (thumbnail clickable desktop+mobile, dots); fallback ke
   `imageUrl` bila galeri kosong.
 
