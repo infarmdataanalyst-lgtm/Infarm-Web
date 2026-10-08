@@ -25,6 +25,12 @@ const SORTS: { value: SortKey; label: string }[] = [
   { value: 'termahal', label: 'Harga Tertinggi' },
 ]
 
+// Jumlah kartu yang dirender per "Muat lebih banyak". Daftar produknya tetap diambil LENGKAP
+// (JSON ±20 KB, murah) supaya filter/sort tetap instan di client; yang dibatasi hanya berapa KARTU
+// yang dirender — tiap kartu memuat satu foto dari Supabase Storage (±100 KB), dan merender 100
+// produk sekaligus berarti 100 foto terunduh dalam satu kunjungan katalog.
+const PAGE_SIZE = 20
+
 // Memecah nilai ?category=a,b menjadi array slug (buang entri kosong)
 function parseCategoryParam(param: string): string[] {
   return param.split(',').filter(Boolean)
@@ -164,6 +170,19 @@ export default function ProductCatalog() {
     return list as Product[]
   }, [products, categories, minPrice, maxPrice, sort])
 
+  // === Batas kartu yang dirender ===
+  // Kembali ke PAGE_SIZE setiap filter/sort berubah — pola "setState saat render" yang sama dengan
+  // syncedCategoryParam di atas, supaya tak ada kedipan daftar panjang sebelum terpotong.
+  const filterKey = `${categories.join(',')}|${minPrice}|${maxPrice}|${sort}`
+  const [shownFor, setShownFor] = useState(filterKey)
+  const [shown, setShown] = useState(PAGE_SIZE)
+  if (filterKey !== shownFor) {
+    setShownFor(filterKey)
+    setShown(PAGE_SIZE)
+  }
+  const rendered = visible.slice(0, shown)
+  const hasMore = visible.length > rendered.length
+
   const heading =
     categories.length === 1 ? getCategoryLabel(categories[0]) ?? 'Semua Produk' : 'Semua Produk'
 
@@ -267,13 +286,31 @@ export default function ProductCatalog() {
 
         {/* Grid produk */}
         {visible.length > 0 ? (
-          <ul className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
-            {visible.map((product) => (
-              <li key={product.id}>
-                <ProductCard product={product} />
-              </li>
-            ))}
-          </ul>
+          <>
+            <ul className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
+              {rendered.map((product) => (
+                <li key={product.id}>
+                  <ProductCard product={product} />
+                </li>
+              ))}
+            </ul>
+            {/* Muat bertahap: tombol eksplisit (bukan infinite scroll) supaya pembeli yang hanya
+                melirik katalog tidak memicu unduhan foto seluruh produk. */}
+            {hasMore && (
+              <div className="mt-6 text-center">
+                <p className="text-xs text-zinc-500">
+                  Menampilkan {rendered.length} dari {visible.length} produk
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShown((n) => n + PAGE_SIZE)}
+                  className="mt-2 rounded-xl border border-brand-primary px-6 py-2.5 text-sm font-semibold text-brand-primary transition hover:bg-brand-surface active:scale-[0.98]"
+                >
+                  Muat lebih banyak
+                </button>
+              </div>
+            )}
+          </>
         ) : (
           !loading && (
             <p className="py-16 text-center text-sm text-zinc-400">

@@ -482,6 +482,12 @@ Cache Components (`use cache`/PPR) **belum aktif** → pakai caching klasik Next
   **Endpoint publik baru** yang isinya sama untuk semua orang → pakai `publicCacheHeaders`; yang
   bergantung sesi/cookie atau galat (4xx/5xx) → JANGAN. Cek: dua `curl -I` berturut-turut ke
   production harus MISS → HIT.
+- **Foto produk = egress Supabase, bukan Vercel.** Semua `<Image>` URL Storage memakai `unoptimized`
+  (tak ada `images.remotePatterns`), jadi browser mengunduh berkas asli langsung dari Supabase.
+  Dua pagar yang menjaganya: Cache-Control berkas Storage **1 tahun** (`IMAGE_CACHE_SECONDS`,
+  `mock-db/products.ts` — jangan diturunkan; URL per upload unik) dan katalog merender kartu
+  **bertahap 20** (`PAGE_SIZE` di `ProductCatalog`). Komponen baru yang menampilkan banyak foto
+  produk sekaligus → batasi jumlah kartunya, jangan render seluruh daftar.
 - **PENTING — jangan blanket-cache fungsi dasar `mock-db/*`**: API OMS & `orders/create` WAJIB baca
   data FRESH (validasi stok/harga otoritatif). Storefront pakai wrapper cached; OMS/order pakai fungsi dasar.
 - **Invalidasi saat mutasi**: tiap API tulis memanggil `revalidateTag(tag, 'max')` + `revalidatePath`:

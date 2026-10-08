@@ -135,6 +135,8 @@ Search alamat + cek ongkir **sudah jalan**, dan ongkir kini memakai **berat riil
 | `/api/products/list` (full, tanpa cache) masih dipakai OMS & sebagian storefront lama (checkout/ProductCatalog/ReviewForm) — **kandidat migrasi** ke by-ids/paginasi saat katalog membesar | `CLAUDE.md` → Caching & Revalidasi |
 | Rate limiting masih in-memory per-instance, **belum terpusat lintas-instance Vercel** — kandidat migrasi ke tabel Supabase atau Redis bila traffic/serangan naik | `CLAUDE.md` → Rate Limiting |
 | Perbandingan ongkir antar gudang di-cache in-memory 10 menit (per-instance, keterbatasan yang sama) | [docs/warehouse.md](docs/warehouse.md) |
+| **Thumbnail foto produk terpisah (±400 px) + kompresi di browser saat upload** — kartu katalog/beranda kini mengunduh foto ukuran penuh (±100 KB) untuk kotak 200 px; thumbnail bisa menekan egress Supabase 5–7×. Belum mendesak selama foto tetap kecil dan paket Supabase Pro dipilih sebelum launch. Kompresi client juga menutup risiko body function Vercel 4,5 MB saat banyak foto 2 MB dikirim sebagai base64 dalam satu JSON (UNVERIFIED) | [docs/oms-dashboard.md](docs/oms-dashboard.md) → Foto Produk |
+| **Hero versi mobile** (`public/images/hero-background-mobile.*`, kode `HeroSection` sudah mendukung) — saat ini mobile memakai JPG landscape 171 KB yang sama dengan desktop. Butuh berkas portrait dari pemilik | `src/components/home/HeroSection.tsx` |
 
 ---
 
