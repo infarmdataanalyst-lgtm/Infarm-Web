@@ -278,7 +278,7 @@ function ProfilTokoSection({
               setError('')
             }}
             placeholder={loading ? 'Memuat…' : 'infarm'}
-            className="w-full rounded-xl border border-gray-300 px-3 py-2.5 text-sm outline-none transition focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20 disabled:bg-gray-50 disabled:text-gray-500"
+            className="w-full rounded-xl border border-gray-300 px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 outline-none transition focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20 disabled:bg-gray-50 disabled:text-gray-500"
           />
         </div>
 
@@ -434,7 +434,7 @@ function ThresholdStokSection({
             setError('')
           }}
           placeholder={loading ? 'Memuat…' : '10'}
-          className="w-full rounded-xl border border-gray-300 px-3 py-2.5 text-sm outline-none transition focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20 disabled:bg-gray-50 disabled:text-gray-500"
+          className="w-full rounded-xl border border-gray-300 px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 outline-none transition focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20 disabled:bg-gray-50 disabled:text-gray-500"
         />
         {error && <p className="mt-1 text-xs font-medium text-red-600">{error}</p>}
       </div>
@@ -542,7 +542,7 @@ function MinimumBelanjaSection({
             setError('')
           }}
           placeholder={loading ? 'Memuat…' : '15000'}
-          className="w-full rounded-xl border border-gray-300 px-3 py-2.5 text-sm outline-none transition focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20 disabled:bg-gray-50 disabled:text-gray-500"
+          className="w-full rounded-xl border border-gray-300 px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 outline-none transition focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20 disabled:bg-gray-50 disabled:text-gray-500"
         />
         {amount !== '' && (
           <p className="mt-1 text-xs font-medium text-emerald-700">{formatRupiah(Number(amount))}</p>
@@ -751,7 +751,7 @@ function HariLiburSection({
               setError('')
             }}
             aria-label="Tanggal libur"
-            className="rounded-xl border border-gray-300 px-3 py-2.5 text-sm outline-none transition focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20 disabled:bg-gray-50"
+            className="rounded-xl border border-gray-300 px-3 py-2.5 text-sm text-gray-900 outline-none transition focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20 disabled:bg-gray-50 disabled:text-gray-500"
           />
           <input
             type="text"
@@ -766,7 +766,7 @@ function HariLiburSection({
               }
             }}
             placeholder="Keterangan (opsional), mis. Idul Fitri"
-            className="rounded-xl border border-gray-300 px-3 py-2.5 text-sm outline-none transition focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20 disabled:bg-gray-50"
+            className="rounded-xl border border-gray-300 px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 outline-none transition focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20 disabled:bg-gray-50 disabled:text-gray-500"
           />
           <button
             type="button"
