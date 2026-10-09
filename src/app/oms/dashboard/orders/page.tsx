@@ -10,6 +10,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { Download, ChevronLeft, ChevronRight, Inbox, Eye, AlertTriangle } from 'lucide-react'
 import OmsHeader from '@/components/oms/OmsHeader'
 import OrderStatusModal from '@/components/oms/OrderStatusModal'
+import PickupScheduleCard from '@/components/oms/PickupScheduleCard'
 import WarehouseMultiFilter from '@/components/oms/WarehouseMultiFilter'
 import DateRangePicker from '@/components/oms/DateRangePicker'
 import { paymentMethodLabel } from '@/lib/payment-method'
@@ -451,6 +452,11 @@ function OrdersContent() {
             Ekspor Laporan
           </button>
         </div>
+
+        {/* === Jadwal penjemputan kurir (hari ini / Minggu / libur) ===
+            Informasi rutin ditaruh di kartu, bukan di lonceng — lonceng hanya untuk penyimpangan
+            (keputusan pemilik 2026-10-09). */}
+        <PickupScheduleCard />
 
         {/* === Filter Section === */}
         <div className="mt-6 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">

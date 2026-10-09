@@ -164,6 +164,11 @@ export type Order = {
   shipmentStatus?: "BOOKING" | "BOOKED" | "FAILED" | "CANCELLED" | "CANCEL_FAILED"
   shipmentError?: string // alasan kegagalan terakhir (untuk admin OMS)
   shipmentBookedAt?: string // ISO, kapan resi terbit
+  // Tanggal (WIB, YYYY-MM-DD) kurir DIJADWALKAN mengambil paket dari gudang — slot pickup Mengantar
+  // yang dipakai saat booking (lib/pickup-schedule.ts: hari kerja, cutoff 15.00, Minggu & libur
+  // dilompati). Sumber kartu jadwal di halaman Pesanan dan alarm "tidak dijemput sesuai jadwal".
+  // undefined untuk pesanan yang dibooking sebelum migration 20261009120000.
+  pickupDate?: string
   // Kapan KURIR menyatakan paket diterima — diisi otomatis dari peristiwa pelacakan, dan inilah
   // yang memberi pembeli hak mengulas selama 14 hari (lihat lib/review-eligibility.ts).
   //

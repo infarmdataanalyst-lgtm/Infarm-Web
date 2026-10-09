@@ -30,13 +30,17 @@ import 'server-only'
 
 import { mengantarWriteHost } from '@/lib/mengantar-host'
 import { getPickupByDate, savePickup, type DailyPickup } from '@/lib/mock-db/pickup'
+import { getPickupHolidays } from '@/lib/mock-db/settings'
 import {
+  NO_HOLIDAYS,
   PICKUP_TIME_HHMM,
   isPickupDay,
   parsePickupDate,
   resolvePickupDate,
+  toHolidaySet,
   toMengantarDate,
   type PickupDateReason,
+  type PickupHolidays,
 } from '@/lib/pickup-schedule'
 
 const LOG = '[mengantar-pickup]'
@@ -193,9 +197,13 @@ export type EnsurePickupOutcome =
 //
 // Urutan disengaja: BACA DULU, baru panggil Mengantar. Kalau dibalik, setiap re-run cron membuat
 // slot pickup baru di sisi Mengantar (sampah di sistem kurir) meski barisnya sudah ada di DB kita.
+//
+// `holidays` = daftar libur admin (lib/pickup-schedule.ts). Dibawa pemanggil, bukan dibaca di sini:
+// cron memanggil fungsi ini sekali PER ALAMAT dan tak perlu membuka setting yang sama berulang.
 export async function ensurePickupForDate(
   date: string,
   addressId: string,
+  holidays: PickupHolidays = NO_HOLIDAYS,
 ): Promise<EnsurePickupOutcome> {
   if (parsePickupDate(date) === null) {
     return { status: 'failed', reason: `format tanggal tidak valid: ${date}` }
@@ -205,8 +213,8 @@ export async function ensurePickupForDate(
     // dibedakan supaya log cron tidak menuding pihak ketiga untuk kesalahan kita sendiri.
     return { status: 'failed', reason: 'alamat-pickup-kosong' }
   }
-  if (!isPickupDay(date)) {
-    // Minggu: tak ada penjemputan, jadi tak ada slot yang perlu dibuat.
+  if (!isPickupDay(date, holidays)) {
+    // Minggu atau hari libur admin: tak ada penjemputan, jadi tak ada slot yang perlu dibuat.
     return { status: 'skipped-non-pickup-day' }
   }
 
@@ -274,11 +282,17 @@ export type PickupTimeId = {
 //
 // null hanya bila ketiga lapis gagal; pemanggil yang memutuskan apakah order tetap dibuat tanpa
 // jadwal pickup (dijadwalkan manual) atau ditolak.
+//
+// `holidays` opsional: bila tak diberikan, daftar libur admin dibaca dari store_settings (satu
+// SELECT kecil per pesanan lunas — dibaca di sini, bukan dibiarkan terlewat, karena pesanan yang
+// masuk saat libur Lebaran harus lari ke hari kerja berikutnya, persis seperti pesanan Minggu).
 export async function getTodayPickupTimeId(
   addressId: string,
   nowMs: number = Date.now(),
+  holidays?: PickupHolidays,
 ): Promise<PickupTimeId | null> {
-  const { date, reason, today, hour } = resolvePickupDate(nowMs)
+  const libur = holidays ?? toHolidaySet(await getPickupHolidays())
+  const { date, reason, today, hour } = resolvePickupDate(nowMs, libur)
 
   const existing = await getPickupByDate(date, addressId)
   if (existing) return { timeId: existing.timeId, addressId, date, reason, source: 'tabel' }
@@ -286,7 +300,7 @@ export async function getTodayPickupTimeId(
   console.warn(
     `${LOG} tabel kosong untuk ${date} alamat ${addressId} (sekarang ${today} jam ${hour} WIB, alasan ${reason}) — fallback panggil Mengantar`,
   )
-  const outcome = await ensurePickupForDate(date, addressId)
+  const outcome = await ensurePickupForDate(date, addressId, libur)
   if (outcome.status === 'created' || outcome.status === 'raced' || outcome.status === 'existing') {
     return { timeId: outcome.pickup.timeId, addressId, date, reason, source: 'fallback-api' }
   }

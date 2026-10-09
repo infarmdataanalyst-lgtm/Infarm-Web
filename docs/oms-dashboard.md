@@ -100,11 +100,22 @@ SATU timestamp per admin: `store_settings` baris `notif_last_seen:<adminId>`. Ku
   (angka di tiap tab) dan `unreadCount` (lencana) **selalu** dari seluruh notifikasi. Tab di panel
   selalu dibuka di "Semua"; "Lihat Semua" membawa tab aktif lewat `?jenis=`.
 
-### Halaman Pengaturan (`/oms/dashboard/pengaturan`) — tiga tab
+### Halaman Pengaturan (`/oms/dashboard/pengaturan`) — empat tab
 
-Tiga section lewat tab horizontal, semuanya baris di **`store_settings`** (tak ada tabel baru,
+Empat section lewat tab horizontal, semuanya baris di **`store_settings`** (tak ada tabel baru,
 tak ada migration): **Profil Toko** (`store_name`, `store_description`) · **Threshold Stok**
-(`low_stock_threshold`) · **Minimum Belanja** (`min_order_amount`, yang sudah ada sebelumnya).
+(`low_stock_threshold`) · **Minimum Belanja** (`min_order_amount`, yang sudah ada sebelumnya) ·
+**Hari Libur** (`pickup_holidays`, sejak 2026-10-09).
+
+- **Hari Libur** = tanggal gudang tutup di luar Minggu (Idul Fitri, cuti bersama, tutup dadakan);
+  pada tanggal itu kurir tidak dijadwalkan dan pesanan ikut penjemputan hari kerja berikutnya.
+  Form menyimpan SELURUH daftar sekali tekan Simpan (`PATCH /api/settings/pickup-holidays`, body
+  `{ holidays: [{date, label?}] }`); tanggal lampau dibuang server dan dilaporkan di toast. Batas
+  bawah input tanggal = `today` dari respons GET (tanggal WIB server), bukan `Date.now()` di klien.
+  Aturan & pemakainya: [docs/checkout-flow.md](checkout-flow.md) → "Jadwal Pickup Harian".
+  Efeknya terlihat di kartu **Penjemputan kurir** di atas daftar Pesanan (`PickupScheduleCard`,
+  data `GET /api/oms/pickup-schedule`): jadwal rutin di kartu, penyimpangan
+  (`jadwal_jemput_terlewat`) tetap di lonceng.
 
 - **Peran**: halaman terbuka untuk sesi OMS apa pun, tapi **tombol Simpan hanya untuk `admin`**.
   Penyembunyian tombol BUKAN penjagaan — tiap endpoint tulis memanggil **`requireAdminRole(pesan)`**

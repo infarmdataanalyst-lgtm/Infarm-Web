@@ -262,11 +262,36 @@ perantara yang diisi cron, dan checkout hanya **membaca**.
 | Berkas | Peran |
 |---|---|
 | `supabase/migrations/20260820120000_init_mengantar_daily_pickup.sql` | tabel `mengantar_daily_pickup` (`date` UNIQUE, `time_id`) |
-| `src/lib/pickup-schedule.ts` | **murni** — hari kerja, cutoff, tanggal pickup efektif |
+| `src/lib/pickup-schedule.ts` | **murni** — hari kerja, cutoff, **hari libur admin**, tanggal pickup efektif, validasi daftar libur |
 | `src/lib/mock-db/pickup.ts` | akses tabel (server-only) |
 | `src/lib/mengantar-pickup.ts` | **satu pintu** `POST /time` + `getTodayPickupTimeId()` |
 | `src/app/api/cron/mengantar-pickup/route.ts` | GET, dipicu Vercel Cron, guard `CRON_SECRET` |
 | `vercel.json` | `"schedule": "0 23 * * 0-5"` |
+| `src/app/api/settings/pickup-holidays/route.ts` | GET/PATCH daftar libur (`store_settings.pickup_holidays`), tab **Hari Libur** di Pengaturan |
+| `supabase/migrations/20261009120000_orders_pickup_date.sql` | `orders.pickup_date` & `pickup_time_id` — jadwal jemput yang dipakai saat booking |
+| `src/lib/mock-db/pickup-summary.ts` + `GET /api/oms/pickup-schedule` | angka untuk kartu **Penjemputan kurir** di halaman Pesanan |
+
+- **Hari libur (gudang tutup) diatur ADMIN, bukan di kode** (2026-10-09). Minggu tetap aturan tetap;
+  Idul Fitri, cuti bersama, dan tutup dadakan masuk `store_settings.pickup_holidays` (JSON
+  `[{date, label?}]`) lewat tab **Hari Libur** di `/oms/dashboard/pengaturan`. `isPickupDay`,
+  `nextPickupDate`, dan `resolvePickupDate` menerima daftar itu sebagai parameter (`PickupHolidays`)
+  — modulnya tetap murni; cron membacanya **sekali** per jalan, `getTodayPickupTimeId()` sekali per
+  pesanan lunas (satu SELECT kecil). **Gagal-terbuka**: gangguan membaca setting = dianggap tak ada
+  libur, dicatat di log — booking yang tertahan lebih mahal daripada kurir dijadwalkan saat libur.
+  Libur **harus terdaftar sebelum hari H**; booking yang sudah terkirim ke Mengantar tidak ditarik.
+  Alasan `hari-libur` dibedakan dari `bukan-hari-pickup` (Minggu) supaya log & kartu bisa menyebutnya.
+  Validasi masukan admin di `normalizePickupHolidays` (format, tanggal nyata, lampau dibuang &
+  dilaporkan, ≤ `MAX_PICKUP_HOLIDAYS` = 60); pembacaan simpanan di `parsePickupHolidays` toleran.
+- **Jadwal jemput DICATAT per pesanan** (`orders.pickup_date`, migration `20261009120000`): nilai
+  `pickup.date`/`time_id` yang dikirim ke `POST /order`, ditulis `updateShipment`. Dipakai (1) kartu
+  **Penjemputan kurir** di atas daftar Pesanan — hari ini ada penjemputan atau tidak (Minggu/libur,
+  dengan labelnya), jumlah paket per gudang, jadwal berikutnya; (2) alarm lonceng
+  `jadwal_jemput_terlewat` (order-issues.ts) — jadwal lewat tapi masih Diproses, tepat ke hari dan
+  **menggantikan** tebakan 2 hari untuk pesanan berjadwal (tebakan itu berbunyi palsu saat libur
+  panjang); (3) estimasi tiba di halaman sukses dihitung dari tanggal jemput 17.00 WIB, bukan dari
+  waktu resi terbit. Pesanan lama (NULL) sengaja **tidak di-backfill**; kartu menyebut jumlahnya
+  sebagai "tanpa jadwal tercatat". Keputusan pemilik: jadwal rutin di **kartu**, penyimpangan di
+  **lonceng** — kartu tidak pernah menghasilkan notifikasi.
 
 - **⚠️ Cron Vercel memakai UTC, bukan WIB.** 06:00 WIB = **23:00 UTC hari SEBELUMNYA**, jadi
   "Senin–Sabtu WIB" ditulis sebagai **Minggu–Jumat UTC** → `0 23 * * 0-5`. Menulis `0 6 * * 1-6`

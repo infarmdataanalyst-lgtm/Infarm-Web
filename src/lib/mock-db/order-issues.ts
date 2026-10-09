@@ -46,17 +46,28 @@ type IssueRow = OrderIssueInput & {
 
 // Penyaringan KASAR di database (ORDER_ISSUE_CANDIDATE_FILTER), penilaian TEPAT di JS —
 // kriteria yang bergantung waktu (15 menit, 2 hari) tak praktis ditulis sebagai filter PostgREST.
+const ISSUE_COLUMNS =
+  'nomor_invoice, nama_customer, jumlah_total, order_status, status_pembayaran, no_tracking, ' +
+  'shipment_status, shipment_booked_at, refund_status, invoice_expire_error, invoice_expired_at, created_at'
+
 export async function readOrderIssues(nowMs: number = Date.now()): Promise<OrderIssue[]> {
   const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from('orders')
-    .select(
-      'nomor_invoice, nama_customer, jumlah_total, order_status, status_pembayaran, no_tracking, ' +
-        'shipment_status, shipment_booked_at, refund_status, invoice_expire_error, invoice_expired_at, created_at',
-    )
-    .or(ORDER_ISSUE_CANDIDATE_FILTER)
-    .order('created_at', { ascending: false })
-    .limit(SOURCE_LIMIT)
+  const baca = (columns: string) =>
+    supabase
+      .from('orders')
+      .select(columns)
+      .or(ORDER_ISSUE_CANDIDATE_FILTER)
+      .order('created_at', { ascending: false })
+      .limit(SOURCE_LIMIT)
+
+  // pickup_date (migration 20261009120000) diminta terpisah supaya bisa diulang tanpanya bila
+  // kolomnya belum ada — select eksplisit ke kolom yang tak dikenal menggagalkan SELURUH query
+  // (42703), dan lonceng OMS tak boleh kosong hanya karena satu migration belum dijalankan.
+  let { data, error } = await baca(`${ISSUE_COLUMNS}, pickup_date`)
+  if (error?.code === '42703' || error?.code === 'PGRST204') {
+    console.error('[order-issues] kolom pickup_date belum di-migrate — alarm jadwal jemput nonaktif')
+    ;({ data, error } = await baca(ISSUE_COLUMNS))
+  }
 
   if (error) {
     // Termasuk kolom yang belum di-migrate. Daftar kosong lebih jujur daripada halaman yang
@@ -78,9 +89,11 @@ export async function readOrderIssues(nowMs: number = Date.now()): Promise<Order
       customer: row.nama_customer?.trim() || 'Pembeli',
       total: row.jumlah_total ?? 0,
       since:
-        kind === 'diproses_terlalu_lama' && row.shipment_booked_at
-          ? row.shipment_booked_at
-          : row.created_at,
+        kind === 'jadwal_jemput_terlewat' && row.pickup_date
+          ? row.pickup_date
+          : kind === 'diproses_terlalu_lama' && row.shipment_booked_at
+            ? row.shipment_booked_at
+            : row.created_at,
     })
   }
 
