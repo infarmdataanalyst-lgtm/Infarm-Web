@@ -169,6 +169,12 @@ export const RATE_LIMITS = {
   // otomatis menjadi segelintir per menit. Pencarian nama/HP berbagi ember yang sama dengan
   // invoice: jatah terpisah hanya memberi penyedot dua kali lipat jatah.
   OMS_SEARCH_ADMIN: { max: 40, windowMs: 1 * MINUTE },
+
+  // === Endpoint kesehatan (GET /api/health) ===
+  // Publik tanpa auth — pemantau luar tak punya kredensial. Pemantau wajar memanggil tiap 1–5 menit
+  // dari beberapa lokasi, jadi 30/menit per IP tak pernah tersentuh pemakaian normal, tetapi
+  // menutup endpoint ini sebagai alat membanjiri database lewat kita (tiap panggilan = satu query).
+  HEALTH_IP: { max: 30, windowMs: 1 * MINUTE },
 } as const satisfies Record<string, RateRule>
 
 // Pesan generik untuk user (JANGAN bocorkan angka limit persis ke klien)
