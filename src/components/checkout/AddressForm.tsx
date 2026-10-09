@@ -317,12 +317,10 @@ const AddressForm = forwardRef<AddressFormHandle, {
         if (result.firstInvalid) {
           fieldRefs[result.firstInvalid].current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
         }
-        // Format lolos semua, tapi domain email sudah terbukti tak menerima surat → tahan di sini
-        // juga, supaya pembeli tak perlu menunggu penolakan server untuk melihat field-nya.
-        if (result.valid && domainError) {
-          emailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-          return false
-        }
+        // Domain email SENGAJA tidak dinilai di sini, walau pesannya sedang tampil: penolakan dari
+        // sini membuat checkout menampilkan toast "Lengkapi alamat pengiriman", padahal alamatnya
+        // lengkap. Domain ditangani ensureEmailDomain() (dipanggil handlePay sesudah fungsi ini),
+        // yang memakai hasil cek yang sama dan menampilkan pesan yang tepat.
         return result.valid
       },
       focusPhone() {
@@ -348,9 +346,9 @@ const AddressForm = forwardRef<AddressFormHandle, {
         emailInputRef.current?.focus()
       },
     }),
-    // fieldRefs stabil (ref); cukup bergantung pada form & hasil cek domain
+    // fieldRefs stabil (ref); cukup bergantung pada form
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [form, domainError],
+    [form],
   )
 
   return (
