@@ -643,10 +643,29 @@ export default function CheckoutPage() {
       return
     }
 
+    // Domain email harus selesai diperiksa SEBELUM popup konfirmasi terbuka. Menekan tombol ini
+    // memicu blur field email, dan pemeriksaan dari blur itu masih berjalan di titik ini; tanpa
+    // menunggu, popup muncul lebih dulu lalu pesan galat domain menyusul di belakangnya.
+    // Biasanya instan (domain populer / cache), paling lama ±1,5 detik.
+    if (isCheckingEmail.current) return
+    isCheckingEmail.current = true
+    try {
+      const emailOk = (await addressFormRef.current?.ensureEmailDomain()) ?? true
+      if (!emailOk) {
+        setToast('Periksa kembali email Anda')
+        return
+      }
+    } finally {
+      isCheckingEmail.current = false
+    }
+
     // Validasi lolos → JANGAN langsung bayar. Tampilkan popup konfirmasi email dulu.
     // Proses bayar sebenarnya dijalankan proceedPayment() saat user tekan "Lanjutkan Checkout".
     setIsEmailConfirmOpen(true)
   }
+
+  // Penjaga klik ganda selama menunggu cek domain email di handlePay (bukan state: tak perlu render).
+  const isCheckingEmail = useRef(false)
 
   // Proses bayar sebenarnya — dipanggil dari popup konfirmasi ("Lanjutkan Checkout").
   async function proceedPayment() {

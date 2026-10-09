@@ -49,6 +49,9 @@ export type AddressFormHandle = {
   revealErrors: () => boolean // mengembalikan true bila valid
   focusPhone: () => void // scroll + fokus ke field nomor telepon
   focusEmail: () => void // scroll + fokus ke field email (dipakai popup konfirmasi "Kembali")
+  // Tunggu cek domain email (memakai hasil blur bila masih berjalan). false = domain ditolak,
+  // pesan sudah tampil di bawah field dan field sudah difokuskan.
+  ensureEmailDomain: () => Promise<boolean>
 }
 
 // Tombol kontrol yang tidak boleh diblok di input telepon
@@ -215,6 +218,7 @@ const AddressForm = forwardRef<AddressFormHandle, {
     if (errors.email && isValidEmail(trimmed)) setFieldError('email', '')
     // Email berubah → hasil cek domain sebelumnya (atau yang masih dalam perjalanan) tak berlaku.
     domainCheckSeq.current += 1
+    domainCheck.current = null
     setDomainError('')
   }
 
@@ -236,23 +240,33 @@ const AddressForm = forwardRef<AddressFormHandle, {
   // penegakan sebenarnya ada di /api/orders/create.
   const [domainError, setDomainError] = useState('')
   const domainCheckSeq = useRef(0)
+  // Pemeriksaan terakhir untuk email tertentu (selesai atau masih berjalan). Disimpan supaya
+  // tombol Bayar bisa MENUNGGU hasil yang dipicu blur, bukan memulai permintaan kedua.
+  const domainCheck = useRef<{ email: string; result: Promise<string> } | null>(null)
 
-  async function checkDomain(email: string) {
+  // Memeriksa domain; hasilnya pesan galat ('' = lolos / tak bisa disimpulkan).
+  function checkDomain(email: string): Promise<string> {
+    if (domainCheck.current?.email === email) return domainCheck.current.result
     const seq = ++domainCheckSeq.current
-    try {
-      const res = await fetch('/api/email/check-domain', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
-      })
-      if (!res.ok) return
-      const data = (await res.json()) as { ok?: boolean; message?: string }
-      // Jawaban untuk email lama (pembeli sudah mengetik ulang) dibuang.
-      if (seq !== domainCheckSeq.current) return
-      setDomainError(data.ok === false ? data.message ?? EMAIL_DOMAIN_NOT_FOUND_MESSAGE : '')
-    } catch {
-      // Jaringan gagal → tak menampilkan apa pun.
-    }
+    const result = (async () => {
+      try {
+        const res = await fetch('/api/email/check-domain', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email }),
+        })
+        if (!res.ok) return ''
+        const data = (await res.json()) as { ok?: boolean; message?: string }
+        const message = data.ok === false ? data.message ?? EMAIL_DOMAIN_NOT_FOUND_MESSAGE : ''
+        // Jawaban untuk email lama (pembeli sudah mengetik ulang) tak ditampilkan.
+        if (seq === domainCheckSeq.current) setDomainError(message)
+        return message
+      } catch {
+        return '' // jaringan gagal → diam; server tetap memeriksa ulang
+      }
+    })()
+    domainCheck.current = { email, result }
+    return result
   }
 
   const emailError = errors.email || domainError
@@ -315,6 +329,18 @@ const AddressForm = forwardRef<AddressFormHandle, {
         phoneRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
         // Fokus input setelah scroll agar cursor langsung di field nomor telepon
         phoneInputRef.current?.focus()
+      },
+      // Dipanggil tombol Bayar SEBELUM popup konfirmasi email. Klik tombol memicu blur field
+      // email, dan pemeriksaan domain dari blur itu masih berjalan saat handler Bayar dieksekusi —
+      // tanpa menunggu, popup terbuka lebih dulu dan pesan galatnya muncul di belakangnya.
+      async ensureEmailDomain() {
+        if (!isValidEmail(form.email)) return true // galat format sudah ditangani revealErrors
+        const message = await checkDomain(form.email)
+        if (!message) return true
+        setDomainError(message)
+        emailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        emailInputRef.current?.focus()
+        return false
       },
       focusEmail() {
         emailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
