@@ -297,7 +297,7 @@ function ProfilTokoSection({
               setError('')
             }}
             placeholder={loading ? 'Memuat…' : 'Sayuran & kebutuhan berkebun segar dari infarm.'}
-            className="w-full resize-y rounded-xl border border-gray-300 px-3 py-2.5 text-sm outline-none transition focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20 disabled:bg-gray-50 disabled:text-gray-500"
+            className="w-full resize-y rounded-xl border border-gray-300 px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 outline-none transition focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20 disabled:bg-gray-50 disabled:text-gray-500"
           />
           <p className="mt-1 text-right text-xs text-gray-400">
             {description.length}/{STORE_DESCRIPTION_MAX}
