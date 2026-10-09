@@ -4,6 +4,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Montserrat } from "next/font/google";
 import GoogleAnalyticsGate from "@/components/analytics/GoogleAnalyticsGate";
+import SpeedInsightsGate from "@/components/analytics/SpeedInsightsGate";
 import "./globals.css";
 
 // Font identitas merek: dipakai untuk judul & tombol utama (class `font-heading`), BUKAN teks isi —
@@ -44,6 +45,8 @@ export default function RootLayout({
   // supaya placeholder tidak ikut jalan di lokal/dev. Gate membatasi GA hanya di
   // routing e-commerce (buyer), bukan di OMS/admin.
   const gaId = process.env.NEXT_PUBLIC_GA_ID;
+  // Speed Insights (Core Web Vitals dari browser pembeli) memakai gate yang sama: hanya halaman
+  // toko, bukan OMS/maintenance. Tanpa ID — skripnya dilayani Vercel di /_vercel/speed-insights/.
 
   return (
     <html
@@ -53,6 +56,7 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col">
         {children}
         {gaId && <GoogleAnalyticsGate gaId={gaId} />}
+        <SpeedInsightsGate />
       </body>
     </html>
   );
