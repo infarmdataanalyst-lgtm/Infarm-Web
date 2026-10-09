@@ -18,6 +18,7 @@ import PayNowButton from '@/components/payment/PayNowButton'
 import ShippingStepper from '@/components/track/ShippingStepper'
 import TrackingDetail from '@/components/track/TrackingDetail'
 import OrderItemsCard from '@/components/track/OrderItemsCard'
+import TrackOrderActions from '@/components/track/TrackOrderActions'
 import { getOrderByOrderId, markOrderDelivered } from '@/lib/mock-db/orders'
 import {
   displayStatus,
@@ -52,8 +53,8 @@ export default async function TrackPage({ searchParams }: TrackPageProps) {
         {/* max-w mengikuti <main> di lg+ supaya logo sejajar dengan tepi kiri kartu, bukan
             mengapung di tengah saat halaman melebar jadi dua kolom. */}
         <div className="mx-auto flex h-14 max-w-3xl items-center gap-3 px-4 lg:max-w-5xl">
-          {/* Back → halaman Lacak Pesanan (satu halaman sebelumnya), bukan beranda */}
-          <Link href="/track-order" aria-label="Kembali ke Lacak Pesanan" className="rounded-md p-1 transition active:scale-95">
+          {/* Back → halaman Pesanan Saya (satu halaman sebelumnya), bukan beranda */}
+          <Link href="/pesanan-saya" aria-label="Kembali ke Pesanan Saya" className="rounded-md p-1 transition active:scale-95">
             <BackIcon />
           </Link>
           <Link href="/" className="flex items-center gap-2">
@@ -221,6 +222,26 @@ async function TrackResult({ order }: { order: Order }) {
         </section>
       )}
 
+      {/* 5c — Pembatalan: di bawah blok pembayaran, SELALU di atas alamat (permintaan pemilik
+          2026-10-09). Tampil hanya bila pesanan masih boleh dibatalkan sendiri atau lewat CS;
+          komponennya mengembalikan null untuk pesanan terkirim/dibatalkan. Tombol batal sengaja
+          tidak ada di daftar Pesanan Saya supaya tak mengajak-ajak pembeli. */}
+      <TrackOrderActions
+        order={{
+          orderId: order.orderId,
+          status: order.status ?? 'Diproses',
+          date: order.date,
+          items: order.items.map((it) => ({
+            productId: it.productId,
+            name: it.name,
+            quantity: it.quantity,
+            imageUrl: it.imageUrl ?? null,
+          })),
+        }}
+        trackingNumber={order.trackingNumber ?? null}
+        shipmentStatus={order.shipmentStatus ?? null}
+      />
+
       {/* 6 — Alamat pengiriman */}
       <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
         <h2 className="mb-3 flex items-center gap-1.5 text-sm font-bold text-gray-900">
@@ -240,8 +261,8 @@ async function TrackResult({ order }: { order: Order }) {
       </div>
 
       <div className="pt-1 text-center">
-        <Link href="/track-order" className="text-sm font-medium text-brand-primary transition hover:brightness-90">
-          ← Lacak pesanan lain
+        <Link href="/pesanan-saya" className="text-sm font-medium text-brand-primary transition hover:brightness-90">
+          ← Kembali ke Pesanan Saya
         </Link>
       </div>
     </div>

@@ -870,7 +870,7 @@ export async function getOrdersByPhone(phone: string): Promise<Order[]> {
   return readOrdersByColumn('no_telepon', phone, 'by phone')
 }
 
-// Semua pesanan milik satu EMAIL, terbaru dulu. Dipakai Lacak Pesanan (/track-order).
+// Semua pesanan milik satu EMAIL, terbaru dulu. Dipakai halaman Pesanan Saya (/pesanan-saya).
 //
 // Kolomnya bernama `email`, BUKAN `customer_email`. Migration
 // 20260624120000_add_orders_customer_email.sql menyebut nama yang kedua, tapi kolom itu tak pernah

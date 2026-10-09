@@ -1,7 +1,7 @@
 // src/lib/guest-email.ts
 // Helper SISI-KLIEN menyimpan/membaca email guest terakhir di cookie, untuk auto-fill + auto-cari
-// di halaman Lacak Pesanan (/track-order). Ditulis setelah checkout sukses; dibaca saat halaman
-// dibuka. Opsional — halaman tetap berfungsi penuh bila cookienya kosong.
+// di halaman Pesanan Saya (/pesanan-saya — lacak, batalkan, ulas). Ditulis setelah checkout sukses;
+// dibaca saat halaman dibuka. Opsional — halaman tetap berfungsi penuh bila cookienya kosong.
 //
 // ── Kenapa cookie TERPISAH dari infarm_phone, bukan menggantinya ──
 // Setelah Lacak Pesanan pindah ke email, halaman lain TETAP berbasis no_telepon: /cancel-order,

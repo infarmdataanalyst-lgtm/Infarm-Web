@@ -73,26 +73,33 @@ Dokumen pendukung lain yang sudah ada: `docs/security/`, `docs/design/`, `docs/t
   Kolom `email` sudah ada sejak tabel dibuat dan itulah yang diisi RPC `create_order_with_items`
   lewat parameter `p_email`. Jangan "memperbaiki" kode mengikuti file migration itu.
 - **Pesanan lama ber-email NULL.** Pesanan yang dibuat selama field email absen tak bisa dilacak
-  lewat `/track-order`; halaman itu mengarahkan mereka ke pencarian by no. telepon.
+  lewat `/pesanan-saya`; halaman itu mengarahkan mereka ke pencarian by nomor invoice (`/track`).
   (Detail: [docs/checkout-flow.md](docs/checkout-flow.md) → "Email Konfirmasi Pesanan".)
 
 **Identitas guest TERBELAH menjadi dua — disengaja, jangan disatukan tanpa memindahkan semuanya:**
 
 | Layanan | Kunci PENCARIAN | Cookie auto-recognize |
 |---|---|---|
-| Lacak pesanan (`/track-order`) | **email** | `infarm_email` |
-| Batalkan (`/cancel-order`) | **email** (+ no_telepon sebagai konfirmasi kedua) | `infarm_email` |
-| Review (`/review`) | **email** | `infarm_email` |
-| Badge pesanan aktif (`ActiveOrdersSummary`) | **no_telepon** | `infarm_phone` |
+| Pesanan Saya (`/pesanan-saya`): lacak, batalkan, ulas | **email** | `infarm_email` |
+| ↳ Batalkan (sheet di halaman detail `/track`, `TrackOrderActions`) | email + **no_telepon** sebagai konfirmasi kedua | email dari cookie boleh; telepon tak pernah di-prefill |
+| Badge pesanan aktif di header | dihitung dari daftar `/pesanan-saya` (email cookie) | `infarm_active_orders` |
 
-Ketiga halaman layanan pesanan kini **mencari dengan email**, memakai pola yang sama persis:
-validasi + normalisasi di klien untuk UX, lalu DIULANG di server sebagai yang otoritatif.
+**Sejak 2026-10-09 ketiga layanan itu SATU halaman** (`/pesanan-saya`, komponen
+`components/pesanan-saya/*`): cari email sekali → daftar pesanan dalam tab **Aktif / Selesai** →
+aksi: Beri Ulasan di kartu (`ReviewSheet`, badge kuning `brand-accent`), Lihat detail (`/track`),
+dan **Batalkan hanya di halaman detail** (`TrackOrderActions` → `CancelOrderSheet`, di bawah blok
+pembayaran, di atas alamat) — sengaja TIDAK di daftar supaya tombol batal tak mengajak-ajak pembeli
+(keputusan pemilik 2026-10-09). Ikon akun di header langsung ke `/pesanan-saya`, tanpa dropdown. `/track-order`, `/cancel-order`, `/review` tinggal
+redirect di `next.config.ts`. Keadaan ulasan tiap pesanan dihitung SERVER di
+`/api/orders/track-by-email` (`lib/buyer-orders.ts` + tabel `reviews`), dan daftarnya sudah terurut:
+menunggu ulasan di atas, lalu terbaru. Pola pencarian tetap: validasi + normalisasi di klien untuk
+UX, lalu DIULANG di server sebagai yang otoritatif.
 
-**`/cancel-order` memakai DUA identitas, dan itu disengaja.** Pencariannya email (langkah 1),
-tapi pembatalannya baru jalan setelah pembeli memasukkan **no_telepon** pesanan itu (langkah 2).
-Kalau keduanya email, konfirmasi kedua tak menambah apa pun — yang lolos langkah 1 otomatis lolos
-langkah 2. Dengan telepon, aksi yang tak bisa ditarik kembali itu menuntut dua data berbeda dari
-pesanan yang sama. `/review` **tidak** punya langkah ini: memberi ulasan tak merusak apa pun.
+**Pembatalan memakai DUA identitas, dan itu disengaja.** Sheet konfirmasi meminta **email** (boleh
+dari cookie) dan **no_telepon** pesanan itu, karena `/track` bisa dibuka siapa pun lewat nomor invoice. Kalau keduanya
+email, konfirmasi kedua tak menambah apa pun — yang lolos pencarian otomatis lolos konfirmasi.
+Dengan telepon, aksi yang tak bisa ditarik kembali itu menuntut dua data berbeda dari pesanan yang
+sama. Ulasan **tidak** punya langkah ini: memberi ulasan tak merusak apa pun.
 
 Badge pesanan aktif sengaja ditinggal di `infarm_phone`: ia cuma menghitung angka di ikon profil,
 dan memindahkannya berarti pengguna lama yang hanya punya cookie telepon kehilangan badgenya.
@@ -122,8 +129,8 @@ punya pemilik yang bisa dibuktikan lewat jalur email, jadi tak akan pernah muncu
 
 | Cookie | Ditulis oleh | Dibaca di |
 |---|---|---|
-| `infarm_phone` | `setGuestPhone` (`src/lib/guest-phone.ts`) | badge `ActiveOrdersSummary` |
-| `infarm_email` | `setGuestEmail` (`src/lib/guest-email.ts`) | `/track-order`, `/cancel-order`, `/review` |
+| `infarm_phone` | `setGuestPhone` (`src/lib/guest-phone.ts`) | tak dibaca halaman mana pun sejak 2026-10-09 (`infarm_active_orders` di modul yang sama masih dipakai badge header) |
+| `infarm_email` | `setGuestEmail` (`src/lib/guest-email.ts`) | `/pesanan-saya` (`OrdersView`) |
 
 - Keduanya ditulis setelah checkout sukses, 30 hari, plain cookie (bukan base64). Bukan data
   sensitif kritis — no. HP & email milik user sendiri di device-nya; TIDAK menyimpan
@@ -132,12 +139,12 @@ punya pemilik yang bisa dibuktikan lewat jalur email, jadi tak akan pernah muncu
   tanpa ketik; kedaluwarsa/tak ada → input manual.
 - **Cookie = sumber IDENTITAS saja; status pesanan SELALU di-fetch fresh dari server.** Jangan
   pernah menjadikannya dasar otorisasi.
-- **Kenapa masih dua, bukan satu**: ketiga halaman layanan pesanan sudah pindah ke `infarm_email`,
-  tapi badge pesanan aktif masih membaca `infarm_phone`. Menghapus cookie telepon berarti pengguna
-  lama yang belum checkout lagi kehilangan badgenya tanpa alasan yang sepadan.
-- **Cookie TIDAK berlaku untuk langkah konfirmasi.** Di `/cancel-order`, no_telepon langkah 2
-  selalu diketik manual dan tak pernah di-prefill dari mana pun — kalau di-prefill, konfirmasinya
-  berhenti mengonfirmasi apa pun.
+- **Kenapa `infarm_phone` masih ditulis**: badge pesanan aktif kini dihitung `OrdersView` dari daftar
+  email, jadi cookie telepon tak dibaca lagi. Ia dibiarkan ditulis agar `/api/orders/track-by-phone`
+  (jalur telepon yang masih ada) tetap punya identitas bila suatu saat dipakai lagi.
+- **Cookie TIDAK berlaku untuk langkah konfirmasi.** Di sheet pembatalan, no_telepon selalu diketik
+  manual dan tak pernah di-prefill dari mana pun — kalau di-prefill, konfirmasinya berhenti
+  mengonfirmasi apa pun.
 
 **Catatan sinkronisasi "Beli Langsung" vs "Checkout":**
 - Halaman `/checkout` membaca cookie **`infarm_checkout`** (bukan `infarm_cart`).
@@ -236,12 +243,10 @@ src/
 │   │   ├── page.tsx              # Guest checkout
 │   │   └── success/page.tsx      # Pesanan Berhasil (2 kolom di lg+, + tombol batalkan pesanan)
 │   ├── order-cancellation/page.tsx  # Pembatalan pesanan Guest (token-protected, dari link email/sukses)
-│   ├── review/page.tsx           # Beri Review by EMAIL (pembeli terverifikasi; nama penulis diisi server)
+│   ├── (review/, track-order/, cancel-order/ DIHAPUS 2026-10-09 → redirect ke /pesanan-saya, lihat next.config.ts)
 │   │                             #   (ReviewForm.tsx/ReviewProductCard.tsx = flow invoice lama, kini dead code)
 │   ├── track/page.tsx            # Lacak pesanan by NOMOR INVOICE (dipakai untuk detail timeline ?order=)
-│   ├── track-order/page.tsx      # Lacak pesanan by EMAIL (entry utama; honeypot + auto-recognize cookie)
-│   ├── cancel-order/page.tsx     # Batalkan pesanan: cari by EMAIL, lalu konfirmasi NO. TELEPON ke DB (2 langkah)
-│   ├── pesanan-saya/page.tsx     # Hub "Pesanan Saya": kartu lacak / batalkan / review (ikon profil header → sini)
+│   ├── pesanan-saya/page.tsx     # "Pesanan Saya" TERPADU: cari by EMAIL → tab Aktif/Selesai → batalkan & ulas di kartu (components/pesanan-saya/*)
 │   ├── privacy-policy/page.tsx   # Kebijakan Privasi (statis, LegalPageShell) — NONAKTIF (404),
 │   │                             #   kode utuh; tuas LEGAL_PAGES_ENABLED di lib/data/legal.ts
 │   ├── terms-and-conditions/page.tsx  # Syarat & Ketentuan (idem — NONAKTIF, kode utuh)
@@ -292,7 +297,7 @@ src/
 │   ├── checkout/                 # AddressForm, AddressSearchCombobox, ShippingOptions (bottom sheet
 │   │                             #   cek ongkir), PaymentModal, BottomSheet, OrderSummary, dll
 │   ├── order-cancellation/       # OrderCancellationView (client)
-│   ├── review/                   # Komponen review
+│   ├── pesanan-saya/             # OrdersView (daftar + tab), OrderCard, CancelOrderSheet, ReviewSheet, HoneypotField
 │   ├── track/                    # Komponen pelacakan (TrackSearchForm, ShippingStepper,
 │   │                             #   TrackingTimeline, OrderItemsCard = kartu produk dipesan)
 │   ├── oms/                      # Sidebar (mendukung sub-menu), header, ComboForm,

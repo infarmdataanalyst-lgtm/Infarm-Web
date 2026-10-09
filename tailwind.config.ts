@@ -17,6 +17,11 @@ const config: Config = {
           soil: '#6B4E3D', // cokelat tanah — teks aksen/eyebrow, kontras hangat
           cream: '#EDE3D0', // krem biji — background lembut alternatif / kartu
           dark: '#3B4A2E', // hijau zaitun gelap — header storefront (teks terang di atasnya)
+          // Kuning aksen — HANYA untuk ajakan yang menunggu tindakan pembeli (mis. badge "Beri
+          // Ulasan" di Pesanan Saya). Sengaja beda dari hijau status supaya langsung terbaca
+          // sebagai "ada yang perlu dilakukan", bukan sekadar informasi.
+          accent: '#F5C242',
+          'accent-ink': '#4A3200', // teks gelap di atas kuning aksen (kontras ≥ 7:1)
           header: '#00843b', // hijau-kuning muda — background header storefront (teks gelap)
         },
       },

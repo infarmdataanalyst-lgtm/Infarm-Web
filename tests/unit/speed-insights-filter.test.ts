@@ -66,18 +66,19 @@ describe('filterSpeedInsightsEvent — pembersihan URL', () => {
 
   it('segmen path setelah rute pesanan disamarkan menjadi [id]', () => {
     expect(sanitizeSpeedInsightsPath('/track/INV-20261009-K7QM4T2X')).toBe(`/track/${ID_PLACEHOLDER}`)
-    expect(sanitizeSpeedInsightsPath('/track-order/081234567890')).toBe(`/track-order/${ID_PLACEHOLDER}`)
-    expect(sanitizeSpeedInsightsPath('/cancel-order/budi%40example.com')).toBe(`/cancel-order/${ID_PLACEHOLDER}`)
+    expect(sanitizeSpeedInsightsPath('/pesanan-saya/081234567890')).toBe(`/pesanan-saya/${ID_PLACEHOLDER}`)
+    expect(sanitizeSpeedInsightsPath('/track/budi%40example.com')).toBe(`/track/${ID_PLACEHOLDER}`)
     expect(sanitizeSpeedInsightsPath('/order-cancellation/INV-1/m1x.0123abcd.4567ef89')).toBe(
       `/order-cancellation/${ID_PLACEHOLDER}/${ID_PLACEHOLDER}`,
     )
-    expect(sanitizeSpeedInsightsPath('/review/apa-pun')).toBe(`/review/${ID_PLACEHOLDER}`)
     expect(sanitizeSpeedInsightsPath('/pesanan-saya/xyz')).toBe(`/pesanan-saya/${ID_PLACEHOLDER}`)
   })
 
-  it('anak statis rute pesanan yang memang ada di src/app tetap tampil', () => {
-    expect(sanitizeSpeedInsightsPath('/review/submitted')).toBe('/review/submitted')
-    expect(sanitizeSpeedInsightsPath('/review/submitted/INV-1')).toBe(`/review/submitted/${ID_PLACEHOLDER}`)
+  it('rute pesanan itu sendiri (tanpa segmen pengenal) tetap tampil apa adanya', () => {
+    // Sejak /review (dengan anak statis /review/submitted) dilebur ke /pesanan-saya (2026-10-09)
+    // tak ada lagi rute pesanan yang punya anak statis; yang dijaga tinggal: path tanpa segmen
+    // tambahan tidak boleh ikut disamarkan.
+    expect(sanitizeSpeedInsightsPath('/pesanan-saya')).toBe('/pesanan-saya')
     expect(sanitizeSpeedInsightsPath('/checkout/success')).toBe('/checkout/success')
   })
 

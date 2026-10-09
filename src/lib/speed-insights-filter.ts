@@ -32,15 +32,13 @@ export const SPEED_INSIGHTS_EXCLUDED_PREFIXES = ['/oms', '/maintenance', '/api',
 
 // === Rute yang membawa pengenal pembeli / pesanan ===
 // Segmen apa pun setelah awalan ini dianggap pengenal, KECUALI anak statis yang memang ada di
-// src/app (mis. /review/submitted). Awalan lebih panjang ditulis lebih dulu agar /track-order
-// tidak tertangkap /track.
+// src/app. Awalan lebih panjang ditulis lebih dulu agar yang pendek tak menangkapnya.
+// (/track-order, /cancel-order, /review dilebur ke /pesanan-saya pada 2026-10-09 dan kini hanya
+// redirect — tak pernah dimuat sebagai halaman, jadi tak perlu di daftar ini.)
 const SENSITIVE_ROUTES: ReadonlyArray<{ prefix: string; staticChildren?: readonly string[] }> = [
   { prefix: '/checkout/success' },
   { prefix: '/order-cancellation' },
-  { prefix: '/cancel-order' },
-  { prefix: '/track-order' },
   { prefix: '/track' },
-  { prefix: '/review', staticChildren: ['submitted'] },
   { prefix: '/pesanan-saya' },
 ]
 
