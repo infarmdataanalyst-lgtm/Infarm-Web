@@ -78,6 +78,10 @@ export type ShipmentResult =
       ok: true
       trackingNumber: string // cnote_no — nomor resi
       serviceCode: string // SERVICE_CODE (mis. 'REG')
+      // Jadwal penjemputan yang dikirim di payload (pickup.time_id & tanggalnya, WIB). Dicatat ke
+      // orders.pickup_date supaya OMS tahu kapan kurir dijadwalkan datang — bukan hanya di log.
+      pickupDate: string // YYYY-MM-DD
+      pickupTimeId: string
       // Ketiganya OPSIONAL: booking yang berhasil tanpa salah satunya tetap booking yang berhasil,
       // dan menggagalkannya berarti membuang resi yang sudah terlanjur terbit di sisi kurir.
       mengantarObjectId?: string // _id — dipakai DELETE /order (`ids`)
@@ -354,6 +358,8 @@ export async function createShipmentOrder(order: Order): Promise<ShipmentResult>
       ok: true,
       trackingNumber: shipment.trackingNumber,
       serviceCode: shipment.serviceCode,
+      pickupDate: pickup.date,
+      pickupTimeId: pickup.timeId,
       ...(shipment.mengantarObjectId ? { mengantarObjectId: shipment.mengantarObjectId } : {}),
       ...(shipment.mengantarOrderId ? { mengantarOrderId: shipment.mengantarOrderId } : {}),
       ...(batchId ? { mengantarBatchId: batchId } : {}),

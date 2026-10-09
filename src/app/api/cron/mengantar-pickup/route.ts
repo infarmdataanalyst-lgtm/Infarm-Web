@@ -18,7 +18,8 @@
 
 import { NextResponse } from 'next/server'
 import { ensurePickupForDate } from '@/lib/mengantar-pickup'
-import { resolvePickupDate, wibDateString, wibHour } from '@/lib/pickup-schedule'
+import { getPickupHolidays } from '@/lib/mock-db/settings'
+import { resolvePickupDate, toHolidaySet, wibDateString, wibHour } from '@/lib/pickup-schedule'
 import { listPickupAddressIds } from '@/lib/warehouse'
 import { timingSafeEqual } from 'node:crypto'
 
@@ -64,7 +65,10 @@ export async function GET(request: Request) {
   // sebelum cutoff, dan tugasnya menyiapkan slot untuk hari kerja berjalan. resolvePickupDate
   // hanya ikut dicatat sebagai konteks log agar mudah membandingkan saat menelusuri masalah.
   const today = wibDateString(nowMs)
-  const resolved = resolvePickupDate(nowMs)
+  // Daftar libur admin dibaca SEKALI di sini lalu diteruskan ke tiap alamat — bukan dibaca ulang
+  // di dalam ensurePickupForDate untuk setiap gudang.
+  const holidays = toHolidaySet(await getPickupHolidays())
+  const resolved = resolvePickupDate(nowMs, holidays)
 
   // Satu slot per ALAMAT penjemputan. Sebelum tiap gudang punya alamat sendiri, satu panggilan
   // sudah cukup; sekarang alamat yang tak kebagian slot akan menjatuhkan booking-nya ke jalur
@@ -86,7 +90,7 @@ export async function GET(request: Request) {
   const results = await Promise.all(
     addressIds.map(async (addressId) => ({
       addressId,
-      outcome: await ensurePickupForDate(today, addressId),
+      outcome: await ensurePickupForDate(today, addressId, holidays),
     })),
   )
 
@@ -110,11 +114,13 @@ export async function GET(request: Request) {
     return NextResponse.json({ date: today, status: 'failed', items }, { status: 500 })
   }
 
-  // Minggu. Terjadi bila jadwal cron diubah atau cron dipicu manual — bukan kesalahan. Seluruh
-  // alamat sama-sama dilewati karena isPickupDay tak bergantung pada alamat.
+  // Minggu (bila jadwal cron diubah atau dipicu manual) atau hari libur yang didaftarkan admin —
+  // bukan kesalahan. Seluruh alamat sama-sama dilewati karena isPickupDay tak bergantung pada
+  // alamat. Alasannya dibedakan supaya log hari libur tak terbaca seperti cron yang salah jadwal.
   if (items.every((i) => i.status === 'skipped-non-pickup-day')) {
-    console.log(`${LOG} ${today} bukan hari pickup — dilewati`)
-    return NextResponse.json({ date: today, status: 'skipped', reason: 'BUKAN_HARI_PICKUP' })
+    const reason = holidays.has(today) ? 'HARI_LIBUR' : 'BUKAN_HARI_PICKUP'
+    console.log(`${LOG} ${today} ${reason === 'HARI_LIBUR' ? 'hari libur' : 'bukan hari pickup'} — dilewati`)
+    return NextResponse.json({ date: today, status: 'skipped', reason })
   }
 
   return NextResponse.json({ date: today, status: 'ok', items })

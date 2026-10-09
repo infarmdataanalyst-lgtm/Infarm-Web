@@ -137,6 +137,9 @@ type OrderRow = {
   shipment_status?: string | null
   shipment_error?: string | null
   shipment_booked_at?: string | null
+  // Jadwal penjemputan kurir saat booking (migration 20261009120000) — optional, alasan sama.
+  pickup_date?: string | null // YYYY-MM-DD (WIB)
+  pickup_time_id?: string | null
   // Kapan kurir menyatakan paket diterima (migration 20260914120000) — optional, alasan sama
   // seperti kolom baru lain di atas: PostgREST tak mengembalikan kolom yang belum ada.
   delivered_at?: string | null
@@ -330,6 +333,7 @@ function rowToOrder(row: OrderRow, items: OrderItem[], warehouseNames?: Map<stri
   }
   if (row.shipment_error) order.shipmentError = row.shipment_error
   if (row.shipment_booked_at) order.shipmentBookedAt = row.shipment_booked_at
+  if (row.pickup_date) order.pickupDate = row.pickup_date
   if (row.delivered_at) order.deliveredAt = row.delivered_at
   if (row.mengantar_order_object_id) order.mengantarObjectId = row.mengantar_order_object_id
   if (row.mengantar_order_id) order.mengantarOrderId = row.mengantar_order_id
@@ -1573,6 +1577,8 @@ export type ShipmentUpdate =
       mengantarObjectId?: string // _id — dipakai DELETE /order
       mengantarOrderId?: string // ORDER_ID — alternatifnya
       mengantarBatchId?: string // batch_id — dipakai DELETE /batch
+      pickupDate?: string // YYYY-MM-DD (WIB) — jadwal kurir datang ke gudang
+      pickupTimeId?: string // slot Mengantar yang dipakai
     }
   | { booked: false; error: string }
 
@@ -1593,6 +1599,8 @@ export async function updateShipment(
     // Identitas pembatalan Mengantar. Hanya ditulis bila ada — menulis null akan MENGHAPUS nilai
     // yang mungkin sudah diisi backfill, dan booking ulang atas pesanan yang sudah ber-resi memang
     // sudah dicegah di hulu (bookShipmentForPaidOrder), jadi tak ada alasan menimpanya dengan kosong.
+    if (update.pickupDate) patch.pickup_date = update.pickupDate
+    if (update.pickupTimeId) patch.pickup_time_id = update.pickupTimeId
     if (update.mengantarObjectId) patch.mengantar_order_object_id = update.mengantarObjectId
     if (update.mengantarOrderId) patch.mengantar_order_id = update.mengantarOrderId
     if (update.mengantarBatchId) patch.mengantar_batch_id = update.mengantarBatchId
@@ -1629,6 +1637,8 @@ export async function updateShipment(
     delete fallback.mengantar_order_object_id
     delete fallback.mengantar_order_id
     delete fallback.mengantar_batch_id
+    delete fallback.pickup_date // migration 20261009120000
+    delete fallback.pickup_time_id
     if (Object.keys(fallback).length === 0) return getOrderByOrderId(orderId)
     ;({ data, error } = await supabase
       .from('orders')

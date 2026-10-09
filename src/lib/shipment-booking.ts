@@ -84,6 +84,8 @@ export async function bookShipmentForPaidOrder(
     trackingNumber: result.trackingNumber,
     courier: courierDisplayName(courierIdFromLabel(order.logistics?.courier)),
     service: result.serviceCode,
+    pickupDate: result.pickupDate,
+    pickupTimeId: result.pickupTimeId,
     ...(result.mengantarObjectId ? { mengantarObjectId: result.mengantarObjectId } : {}),
     ...(result.mengantarOrderId ? { mengantarOrderId: result.mengantarOrderId } : {}),
     ...(result.mengantarBatchId ? { mengantarBatchId: result.mengantarBatchId } : {}),

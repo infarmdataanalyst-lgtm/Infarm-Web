@@ -51,14 +51,19 @@ function formatShortDate(iso: string): string {
 // lamanya diambil dari estimasi Mengantar yang tersimpan di pesanan (orders.estimasi_kirim) —
 // janji yang sama dengan yang pembeli lihat di baris kurir saat checkout.
 //
-// Dihitung sejak resi terbit bila ada (kurir baru bergerak setelah pembayaran masuk & booking),
-// jatuh ke tanggal pesanan untuk pesanan tanpa waktu booking. Pesanan lama tanpa estimasi →
-// perkiraan 2–4 hari seperti sebelumnya.
-function estimasiTiba(order: Pick<Order, 'date' | 'shipmentBookedAt' | 'deliveryEstimate'>): string {
-  return formatArrivalRange(
-    order.shipmentBookedAt ?? order.date,
-    parseEstimateDays(order.deliveryEstimate),
-  )
+// Dihitung sejak kurir DIJADWALKAN mengambil paket (orders.pickup_date, pukul 17.00 WIB — jam slot
+// penjemputan), bukan sejak resi terbit: pesanan Sabtu sore, Minggu, atau saat libur Lebaran
+// baru bergerak pada hari kerja berikutnya, dan menghitung dari waktu booking menjanjikan tanggal
+// tiba yang mustahil. Pesanan tanpa jadwal tercatat (dibooking sebelum kolomnya ada) jatuh ke
+// waktu resi terbit, lalu ke tanggal pesanan. Pesanan lama tanpa estimasi → perkiraan 2–4 hari.
+function estimasiTiba(
+  order: Pick<Order, 'date' | 'shipmentBookedAt' | 'deliveryEstimate' | 'pickupDate'>,
+): string {
+  // 17.00 WIB = 10.00 UTC pada tanggal yang sama.
+  const start = order.pickupDate
+    ? `${order.pickupDate}T10:00:00.000Z`
+    : (order.shipmentBookedAt ?? order.date)
+  return formatArrivalRange(start, parseEstimateDays(order.deliveryEstimate))
 }
 
 export default async function CheckoutSuccessPage({

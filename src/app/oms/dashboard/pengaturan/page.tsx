@@ -1,10 +1,11 @@
 'use client'
 
 // src/app/oms/dashboard/pengaturan/page.tsx
-// Halaman Pengaturan Toko OMS — tiga section lewat tab horizontal (pola sama GudangTabs):
+// Halaman Pengaturan Toko OMS — empat section lewat tab horizontal (pola sama GudangTabs):
 //   1. Profil Toko        → store_settings.store_name / store_description
 //   2. Threshold Stok     → store_settings.low_stock_threshold (ambang "stok menipis")
 //   3. Minimum Belanja    → store_settings.min_order_amount
+//   4. Hari Libur         → store_settings.pickup_holidays (gudang tutup, kurir tak dijadwalkan)
 //
 // AKSES: halaman ini terbuka untuk sesi OMS apa pun perannya (staff perlu melihat aturan yang
 // berlaku), tapi TOMBOL SIMPAN hanya untuk peran 'admin'. Penyembunyian tombol BUKAN penjagaan —
@@ -14,16 +15,33 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { CheckCircle2, Info, Lock, Store, TriangleAlert, Wallet, Warehouse } from 'lucide-react'
+import {
+  CalendarOff,
+  CheckCircle2,
+  Info,
+  Lock,
+  Store,
+  Trash2,
+  TriangleAlert,
+  Wallet,
+  Warehouse,
+} from 'lucide-react'
 import OmsHeader from '@/components/oms/OmsHeader'
 import { formatRupiah } from '@/lib/format'
+import {
+  MAX_PICKUP_HOLIDAYS,
+  PICKUP_CUTOFF_HOUR_WIB,
+  PICKUP_HOLIDAY_LABEL_MAX,
+  type PickupHoliday,
+} from '@/lib/pickup-schedule'
 
-type TabKey = 'profil' | 'stok' | 'minimum'
+type TabKey = 'profil' | 'stok' | 'minimum' | 'libur'
 
 const TABS: { key: TabKey; label: string; icon: typeof Store }[] = [
   { key: 'profil', label: 'Profil Toko', icon: Store },
   { key: 'stok', label: 'Threshold Stok', icon: TriangleAlert },
   { key: 'minimum', label: 'Minimum Belanja', icon: Wallet },
+  { key: 'libur', label: 'Hari Libur', icon: CalendarOff },
 ]
 
 // Batas yang sama dengan validasi server (lib/mock-db/settings.ts) — dipakai untuk maxLength
@@ -112,6 +130,7 @@ export default function PengaturanPage() {
         {tab === 'profil' && <ProfilTokoSection canEdit={canEdit} onSaved={setToast} />}
         {tab === 'stok' && <ThresholdStokSection canEdit={canEdit} onSaved={setToast} />}
         {tab === 'minimum' && <MinimumBelanjaSection canEdit={canEdit} onSaved={setToast} />}
+        {tab === 'libur' && <HariLiburSection canEdit={canEdit} onSaved={setToast} />}
       </div>
 
       {/* Toast sukses */}
@@ -545,6 +564,242 @@ function MinimumBelanjaSection({
         <SaveButton
           saving={saving}
           disabled={loading || saving || amount === ''}
+          onClick={() => void handleSave()}
+        />
+      )}
+    </SettingCard>
+  )
+}
+
+// === Section 4: Hari Libur penjemputan ===
+//
+// Minggu selalu libur dan tidak perlu didaftarkan. Yang diatur di sini adalah hari gudang tutup di
+// luar itu: Idul Fitri, cuti bersama, tutup dadakan. Aturannya di lib/pickup-schedule.ts; yang
+// membaca daftar ini cron slot pickup (06.00 WIB) dan booking kurir setelah pembayaran masuk.
+//
+// Disimpan SELURUH daftar sekali tekan Simpan (bukan per baris) supaya yang tersimpan selalu
+// persis yang terlihat di layar. Tanggal lampau dibuang server dan dilaporkan di `dropped`.
+function HariLiburSection({
+  canEdit,
+  onSaved,
+}: {
+  canEdit: boolean
+  onSaved: (msg: string) => void
+}) {
+  const [holidays, setHolidays] = useState<PickupHoliday[]>([])
+  const [saved, setSaved] = useState<PickupHoliday[]>([]) // salinan terakhir dari server
+  const [date, setDate] = useState('')
+  const [label, setLabel] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  // Tanggal WIB "hari ini" menurut SERVER (ikut respons GET) — bukan Date.now() di render, yang
+  // dilarang aturan kemurnian komponen dan bisa berbeda zona waktu dengan laptop admin.
+  const [today, setToday] = useState('')
+
+  useEffect(() => {
+    let active = true
+    fetch('/api/settings/pickup-holidays', { cache: 'no-store' })
+      .then((res) => res.json())
+      .then((data: { holidays?: PickupHoliday[]; today?: string }) => {
+        if (!active) return
+        if (Array.isArray(data.holidays)) {
+          setHolidays(data.holidays)
+          setSaved(data.holidays)
+        }
+        if (typeof data.today === 'string') setToday(data.today)
+      })
+      .catch(() => {
+        if (active) setError('Gagal memuat daftar libur.')
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const dirty = JSON.stringify(holidays) !== JSON.stringify(saved)
+
+  function tambah() {
+    setError('')
+    if (!date) {
+      setError('Pilih tanggalnya dulu.')
+      return
+    }
+    if (today && date < today) {
+      setError('Tanggal sudah lewat — libur harus didaftarkan sebelum hari H.')
+      return
+    }
+    if (holidays.some((h) => h.date === date)) {
+      setError('Tanggal itu sudah ada di daftar.')
+      return
+    }
+    if (holidays.length >= MAX_PICKUP_HOLIDAYS) {
+      setError(`Maksimal ${MAX_PICKUP_HOLIDAYS} tanggal.`)
+      return
+    }
+    const clean = label.trim().slice(0, PICKUP_HOLIDAY_LABEL_MAX)
+    setHolidays(
+      [...holidays, clean ? { date, label: clean } : { date }].sort((a, b) =>
+        a.date.localeCompare(b.date),
+      ),
+    )
+    setDate('')
+    setLabel('')
+  }
+
+  function hapus(target: string) {
+    setHolidays(holidays.filter((h) => h.date !== target))
+    setError('')
+  }
+
+  async function handleSave() {
+    setSaving(true)
+    setError('')
+    try {
+      const res = await fetch('/api/settings/pickup-holidays', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ holidays }),
+      })
+      const data = (await res.json().catch(() => ({}))) as {
+        holidays?: PickupHoliday[]
+        dropped?: string[]
+        error?: string
+      }
+      if (!res.ok) {
+        setError(data.error ?? 'Gagal menyimpan daftar libur.')
+        return
+      }
+      if (Array.isArray(data.holidays)) {
+        setHolidays(data.holidays)
+        setSaved(data.holidays)
+      }
+      const dibuang = data.dropped?.length ?? 0
+      onSaved(
+        dibuang > 0
+          ? `Daftar libur tersimpan; ${dibuang} tanggal yang sudah lewat dibuang.`
+          : 'Daftar libur tersimpan.',
+      )
+    } catch {
+      setError('Gagal menyimpan daftar libur. Periksa koneksi lalu coba lagi.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const tanggalPanjang = (d: string) =>
+    new Intl.DateTimeFormat('id-ID', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      timeZone: 'Asia/Jakarta',
+    }).format(new Date(`${d}T00:00:00+07:00`))
+
+  return (
+    <SettingCard
+      title="Hari Libur Penjemputan"
+      description="Hari gudang tutup di luar hari Minggu. Pada tanggal ini kurir tidak dijadwalkan menjemput; pesanan yang masuk otomatis ikut penjemputan hari kerja berikutnya."
+    >
+      {/* Daftar tanggal */}
+      <div className="mt-4">
+        {loading ? (
+          <p className="text-sm text-gray-500">Memuat…</p>
+        ) : holidays.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-gray-300 px-3 py-4 text-center text-sm text-gray-500">
+            Belum ada hari libur terdaftar. Minggu selalu libur tanpa perlu didaftarkan.
+          </p>
+        ) : (
+          <ul className="divide-y divide-gray-100 rounded-xl border border-gray-200">
+            {holidays.map((h) => (
+              <li key={h.date} className="flex items-center gap-3 px-3 py-2.5 text-sm">
+                <CalendarOff className="h-4 w-4 flex-none text-gray-400" aria-hidden />
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium text-gray-900">{tanggalPanjang(h.date)}</p>
+                  {h.label && <p className="truncate text-xs text-gray-500">{h.label}</p>}
+                </div>
+                {canEdit && (
+                  <button
+                    type="button"
+                    onClick={() => hapus(h.date)}
+                    disabled={saving}
+                    aria-label={`Hapus libur ${h.date}`}
+                    className="rounded-lg p-1.5 text-gray-400 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                  >
+                    <Trash2 className="h-4 w-4" aria-hidden />
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {/* Form tambah */}
+      {canEdit && (
+        <div className="mt-4 grid gap-2 sm:grid-cols-[160px_1fr_auto]">
+          <input
+            type="date"
+            value={date}
+            min={today || undefined}
+            disabled={loading || saving}
+            onChange={(e) => {
+              setDate(e.target.value)
+              setError('')
+            }}
+            aria-label="Tanggal libur"
+            className="rounded-xl border border-gray-300 px-3 py-2.5 text-sm outline-none transition focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20 disabled:bg-gray-50"
+          />
+          <input
+            type="text"
+            value={label}
+            maxLength={PICKUP_HOLIDAY_LABEL_MAX}
+            disabled={loading || saving}
+            onChange={(e) => setLabel(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                tambah()
+              }
+            }}
+            placeholder="Keterangan (opsional), mis. Idul Fitri"
+            className="rounded-xl border border-gray-300 px-3 py-2.5 text-sm outline-none transition focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20 disabled:bg-gray-50"
+          />
+          <button
+            type="button"
+            onClick={tambah}
+            disabled={loading || saving}
+            className="rounded-xl border border-brand-primary px-4 py-2.5 text-sm font-semibold text-brand-primary transition hover:bg-brand-primary/5 disabled:opacity-50"
+          >
+            Tambah
+          </button>
+        </div>
+      )}
+      {error && <p className="mt-2 text-xs font-medium text-red-600">{error}</p>}
+
+      <div className="mt-4 flex gap-2 rounded-xl bg-orange-50 px-3 py-2.5 text-xs leading-relaxed text-orange-700">
+        <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+        <div className="space-y-1">
+          <p>
+            Daftarkan <strong>sebelum hari H</strong>. Pesanan yang masuk pada tanggal libur
+            otomatis mendapat jadwal jemput hari kerja pertama sesudahnya; pesanan sehari sebelum
+            libur yang masuk sebelum {PICKUP_CUTOFF_HOUR_WIB}.00 WIB tetap dijemput hari itu.
+          </p>
+          <p>
+            Berlaku pada pesanan berikutnya begitu disimpan. Booking yang <em>sudah terkirim</em> ke
+            Mengantar sebelum libur didaftarkan tidak ditarik kembali — periksa kartu jadwal di
+            halaman Pesanan.
+          </p>
+        </div>
+      </div>
+
+      {canEdit && (
+        <SaveButton
+          saving={saving}
+          disabled={loading || saving || !dirty}
           onClick={() => void handleSave()}
         />
       )}

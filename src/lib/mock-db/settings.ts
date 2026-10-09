@@ -5,11 +5,13 @@
 
 import { createAdminClient } from '@/lib/supabase/server'
 import { DEFAULT_LOW_STOCK_THRESHOLD } from '@/lib/product-validation'
+import { parsePickupHolidays, type PickupHoliday } from '@/lib/pickup-schedule'
 
 // Kunci setting yang dikenal aplikasi
 export const MIN_ORDER_AMOUNT_KEY = 'min_order_amount'
 export const WAREHOUSE_MODE_KEY = 'warehouse_mode'
 export const LOW_STOCK_THRESHOLD_KEY = 'low_stock_threshold'
+export const PICKUP_HOLIDAYS_KEY = 'pickup_holidays'
 export const MAX_DISCOUNT_PERCENT_KEY = 'max_discount_percent'
 export const STORE_NAME_KEY = 'store_name'
 export const STORE_DESCRIPTION_KEY = 'store_description'
@@ -175,6 +177,27 @@ export async function setStoreProfile(profile: StoreProfile): Promise<StoreProfi
   await setSetting(STORE_NAME_KEY, safe.name)
   await setSetting(STORE_DESCRIPTION_KEY, safe.description)
   return safe
+}
+
+// === Hari libur penjemputan (gudang tutup) ===
+//
+// Daftar tanggal YYYY-MM-DD (WIB) ketika kurir TIDAK dijadwalkan menjemput, di luar aturan tetap
+// Minggu. Diatur admin dari tab "Hari Libur" halaman Pengaturan; dibaca cron slot pickup (sekali
+// sehari) dan jalur booking kurir (sekali per pesanan lunas) — lihat lib/pickup-schedule.ts.
+//
+// GAGAL-TERBUKA: gangguan membaca setting → daftar kosong, dan sudah dicatat getSetting. Booking
+// yang tertahan karena gagal membaca daftar libur jauh lebih mahal (pesanan lunas tanpa resi)
+// daripada risiko kecil kurir dijadwalkan pada hari gudang tutup.
+export async function getPickupHolidays(): Promise<PickupHoliday[]> {
+  return parsePickupHolidays(await getSetting(PICKUP_HOLIDAYS_KEY))
+}
+
+// Menyimpan daftar libur. Pemanggil WAJIB memvalidasi lewat normalizePickupHolidays dulu —
+// di sini hanya diserialkan apa adanya. Daftar kosong tetap disimpan sebagai "[]" (bukan dihapus)
+// supaya jejak "admin pernah mengosongkannya" terlihat di updated_at.
+export async function setPickupHolidays(list: PickupHoliday[]): Promise<PickupHoliday[]> {
+  await setSetting(PICKUP_HOLIDAYS_KEY, JSON.stringify(list))
+  return list
 }
 
 // === Penanda "notifikasi sudah dibaca" per admin ===

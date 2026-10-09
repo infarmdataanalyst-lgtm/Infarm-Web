@@ -28,7 +28,8 @@ export type OrderIssueKind =
   | 'lunas_tanpa_resi' // lunas, tak ada resi, tak ada tanda FAILED — webhook/booking macet diam-diam
   | 'tagihan_masih_hidup' // dibatalkan tapi tagihan Xendit gagal dimatikan — masih bisa dibayar
   | 'perlu_refund' // uang pembeli masih di kita
-  | 'diproses_terlalu_lama' // resi ada tapi kurir tak kunjung memindai paket
+  | 'jadwal_jemput_terlewat' // tanggal penjemputan tercatat sudah lewat, status masih Diproses
+  | 'diproses_terlalu_lama' // resi ada tapi kurir tak kunjung memindai paket (pesanan tanpa jadwal)
 
 // Berapa lama pesanan lunas boleh tanpa resi sebelum dianggap macet (keputusan pemilik 23 Sep 2026).
 //
@@ -46,6 +47,10 @@ export const LUNAS_TANPA_RESI_MENIT = 15
 // Ini soal paket FISIK: kurir tak datang, paket belum diserahkan, atau salah gudang (MGT-57).
 // Tak ada satu pun yang bisa dideteksi selain lewat waktu. 2 hari cukup longgar untuk akhir pekan
 // dan kurir yang terlambat sehari; paket yang benar-benar terlupakan ketahuan di hari ketiga.
+//
+// Sejak 2026-10-09 aturan ini hanya untuk pesanan TANPA jadwal penjemputan tercatat (dibooking
+// sebelum kolom orders.pickup_date ada). Pesanan berjadwal dinilai tepat ke harinya oleh
+// 'jadwal_jemput_terlewat' — tebakan 2 hari salah saat libur panjang.
 export const DIPROSES_TERLALU_LAMA_HARI = 2
 
 // Bentuk minimum yang dibutuhkan penilaian — nama kolom DB apa adanya supaya bisa dipakai langsung
@@ -56,11 +61,14 @@ export type OrderIssueInput = {
   no_tracking: string | null
   shipment_status?: string | null
   shipment_booked_at?: string | null
+  pickup_date?: string | null // YYYY-MM-DD (WIB) — jadwal kurir datang; null untuk pesanan lama
   refund_status?: string | null
   invoice_expire_error?: string | null
   invoice_expired_at?: string | null
   created_at: string
 }
+
+import { wibDateString } from '@/lib/pickup-schedule'
 
 const MENIT_MS = 60_000
 const HARI_MS = 24 * 60 * MENIT_MS
@@ -108,9 +116,19 @@ export function classifyOrderIssue(row: OrderIssueInput, nowMs: number): OrderIs
     return 'perlu_refund'
   }
 
-  // 6. Resi sudah terbit tapi status tak pernah naik ke Dikirim → kurir belum memindai paket.
-  //    Diukur dari shipment_booked_at, bukan created_at: yang ditunggu adalah penjemputan, dan
-  //    jamnya baru berjalan sejak kurir punya perintah jemput.
+  // 6. Jadwal penjemputan yang tercatat sudah LEWAT (tanggal WIB kemarin atau sebelumnya) tapi
+  //    status masih Diproses → kurir tidak mengambil paket pada harinya, atau resinya belum
+  //    disinkronkan. Dinilai tepat ke hari dari pickup_date, dan HANYA cabang ini yang berlaku bila
+  //    jadwal tercatat: aturan 2 hari di bawah salah saat libur panjang (paket yang dibooking Jumat
+  //    dengan jadwal Senin depan akan berbunyi di hari Minggu), dan terlalu lambat sehari untuk
+  //    kasus biasa.
+  if (diproses && lunas && punyaResi && row.pickup_date) {
+    return row.pickup_date < wibDateString(nowMs) ? 'jadwal_jemput_terlewat' : null
+  }
+
+  // 7. Pesanan TANPA jadwal tercatat: resi sudah terbit tapi status tak pernah naik ke Dikirim →
+  //    kurir belum memindai paket. Diukur dari shipment_booked_at, bukan created_at: yang ditunggu
+  //    adalah penjemputan, dan jamnya baru berjalan sejak kurir punya perintah jemput.
   if (diproses && lunas && punyaResi) {
     const umur = umurMs(row.shipment_booked_at, nowMs)
     if (umur !== null && umur >= DIPROSES_TERLALU_LAMA_HARI * HARI_MS) return 'diproses_terlalu_lama'
@@ -165,6 +183,14 @@ export const ORDER_ISSUE_META: Record<OrderIssueKind, OrderIssueMeta> = {
     tindakan: 'Selesaikan di halaman Pengembalian Dana.',
     href: '/oms/dashboard/refund',
   },
+  jadwal_jemput_terlewat: {
+    kind: 'jadwal_jemput_terlewat',
+    label: 'Paket tidak dijemput sesuai jadwal',
+    labelJamak: (n) => `${n} paket tidak dijemput kurir pada jadwalnya`,
+    tindakan:
+      'Sinkronkan resi dulu (status naik ke Dikirim bila kurir sudah memindai). Bila tetap Diproses, pastikan paketnya ada di gudang yang tercatat lalu hubungi Mengantar atau jadwalkan ulang.',
+    href: '/oms/dashboard/orders?masalah=jadwal_jemput_terlewat',
+  },
   diproses_terlalu_lama: {
     kind: 'diproses_terlalu_lama',
     label: 'Paket belum dijemput kurir',
@@ -181,6 +207,7 @@ export const ORDER_ISSUE_ORDER: OrderIssueKind[] = [
   'lunas_tanpa_resi',
   'tagihan_masih_hidup',
   'perlu_refund',
+  'jadwal_jemput_terlewat',
   'diproses_terlalu_lama',
 ]
 

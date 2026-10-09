@@ -121,4 +121,47 @@ describe('classifyOrderIssue', () => {
       ).toBeNull()
     })
   })
+
+  // NOW = 23 Sep 2026 08.00 UTC = 15.00 WIB, Rabu. "Hari ini" dalam WIB = 2026-09-23.
+  describe('jadwal jemput terlewat (pesanan dengan pickup_date)', () => {
+    it('berbunyi begitu tanggal jemput lewat, tanpa menunggu 2 hari', () => {
+      expect(
+        classifyOrderIssue(pesanan({ pickup_date: '2026-09-22', shipment_booked_at: hariLalu(1) }), NOW),
+      ).toBe('jadwal_jemput_terlewat')
+    })
+
+    it('diam selama hari jemputnya belum berganti, meski sudah malam', () => {
+      expect(classifyOrderIssue(pesanan({ pickup_date: '2026-09-23' }), NOW)).toBeNull()
+    })
+
+    it('jadwal di masa depan (libur panjang) MEMBUNGKAM aturan 2 hari', () => {
+      // Dibooking 5 hari lalu, tapi jadwal jemputnya memang masih Senin depan. Tanpa cabang ini,
+      // aturan diproses_terlalu_lama berbunyi palsu sepanjang libur.
+      expect(
+        classifyOrderIssue(pesanan({ pickup_date: '2026-09-28', shipment_booked_at: hariLalu(5) }), NOW),
+      ).toBeNull()
+    })
+
+    it('tanggal WIB, bukan UTC: 01.00 WIB sudah hari berikutnya', () => {
+      // 23 Sep 18.00 UTC = 24 Sep 01.00 WIB → jadwal 23 Sep sudah lewat.
+      const dini = Date.parse('2026-09-23T18:00:00.000Z')
+      expect(classifyOrderIssue(pesanan({ pickup_date: '2026-09-23' }), dini)).toBe('jadwal_jemput_terlewat')
+    })
+
+    it('berhenti begitu status naik ke Dikirim atau pesanan batal', () => {
+      expect(classifyOrderIssue(pesanan({ pickup_date: '2026-09-20', order_status: 'SHIPPED' }), NOW)).toBeNull()
+      expect(
+        classifyOrderIssue(
+          pesanan({ pickup_date: '2026-09-20', order_status: 'CANCELLED', shipment_status: 'CANCELLED' }),
+          NOW,
+        ),
+      ).toBeNull()
+    })
+
+    it('pesanan lama tanpa pickup_date tetap memakai aturan 2 hari', () => {
+      expect(
+        classifyOrderIssue(pesanan({ pickup_date: null, shipment_booked_at: hariLalu(DIPROSES_TERLALU_LAMA_HARI) }), NOW),
+      ).toBe('diproses_terlalu_lama')
+    })
+  })
 })
