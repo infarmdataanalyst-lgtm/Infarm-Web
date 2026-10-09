@@ -18,6 +18,7 @@ import PayNowButton from '@/components/payment/PayNowButton'
 import ShippingStepper from '@/components/track/ShippingStepper'
 import TrackingDetail from '@/components/track/TrackingDetail'
 import OrderItemsCard from '@/components/track/OrderItemsCard'
+import TrackOrderActions from '@/components/track/TrackOrderActions'
 import { getOrderByOrderId, markOrderDelivered } from '@/lib/mock-db/orders'
 import {
   displayStatus,
@@ -220,6 +221,26 @@ async function TrackResult({ order }: { order: Order }) {
           </div>
         </section>
       )}
+
+      {/* 5c — Pembatalan: di bawah blok pembayaran, SELALU di atas alamat (permintaan pemilik
+          2026-10-09). Tampil hanya bila pesanan masih boleh dibatalkan sendiri atau lewat CS;
+          komponennya mengembalikan null untuk pesanan terkirim/dibatalkan. Tombol batal sengaja
+          tidak ada di daftar Pesanan Saya supaya tak mengajak-ajak pembeli. */}
+      <TrackOrderActions
+        order={{
+          orderId: order.orderId,
+          status: order.status ?? 'Diproses',
+          date: order.date,
+          items: order.items.map((it) => ({
+            productId: it.productId,
+            name: it.name,
+            quantity: it.quantity,
+            imageUrl: it.imageUrl ?? null,
+          })),
+        }}
+        trackingNumber={order.trackingNumber ?? null}
+        shipmentStatus={order.shipmentStatus ?? null}
+      />
 
       {/* 6 — Alamat pengiriman */}
       <section className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">

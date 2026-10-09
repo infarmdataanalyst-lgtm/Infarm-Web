@@ -81,20 +81,22 @@ Dokumen pendukung lain yang sudah ada: `docs/security/`, `docs/design/`, `docs/t
 | Layanan | Kunci PENCARIAN | Cookie auto-recognize |
 |---|---|---|
 | Pesanan Saya (`/pesanan-saya`): lacak, batalkan, ulas | **email** | `infarm_email` |
-| ↳ Batalkan (sheet di kartu pesanan) | + **no_telepon** sebagai konfirmasi kedua | — (tak pernah di-prefill) |
+| ↳ Batalkan (sheet di halaman detail `/track`, `TrackOrderActions`) | email + **no_telepon** sebagai konfirmasi kedua | email dari cookie boleh; telepon tak pernah di-prefill |
 | Badge pesanan aktif di header | dihitung dari daftar `/pesanan-saya` (email cookie) | `infarm_active_orders` |
 
 **Sejak 2026-10-09 ketiga layanan itu SATU halaman** (`/pesanan-saya`, komponen
 `components/pesanan-saya/*`): cari email sekali → daftar pesanan dalam tab **Aktif / Selesai** →
-aksi di dalam kartu: Batalkan (`CancelOrderSheet`), Beri Ulasan (`ReviewSheet`, badge kuning
-`brand-accent`), Lihat detail (`/track`). `/track-order`, `/cancel-order`, `/review` tinggal
+aksi: Beri Ulasan di kartu (`ReviewSheet`, badge kuning `brand-accent`), Lihat detail (`/track`),
+dan **Batalkan hanya di halaman detail** (`TrackOrderActions` → `CancelOrderSheet`, di bawah blok
+pembayaran, di atas alamat) — sengaja TIDAK di daftar supaya tombol batal tak mengajak-ajak pembeli
+(keputusan pemilik 2026-10-09). Ikon akun di header langsung ke `/pesanan-saya`, tanpa dropdown. `/track-order`, `/cancel-order`, `/review` tinggal
 redirect di `next.config.ts`. Keadaan ulasan tiap pesanan dihitung SERVER di
 `/api/orders/track-by-email` (`lib/buyer-orders.ts` + tabel `reviews`), dan daftarnya sudah terurut:
 menunggu ulasan di atas, lalu terbaru. Pola pencarian tetap: validasi + normalisasi di klien untuk
 UX, lalu DIULANG di server sebagai yang otoritatif.
 
-**Pembatalan memakai DUA identitas, dan itu disengaja.** Pencariannya email, tapi pembatalannya
-baru jalan setelah pembeli memasukkan **no_telepon** pesanan itu di sheet konfirmasi. Kalau keduanya
+**Pembatalan memakai DUA identitas, dan itu disengaja.** Sheet konfirmasi meminta **email** (boleh
+dari cookie) dan **no_telepon** pesanan itu, karena `/track` bisa dibuka siapa pun lewat nomor invoice. Kalau keduanya
 email, konfirmasi kedua tak menambah apa pun — yang lolos pencarian otomatis lolos konfirmasi.
 Dengan telepon, aksi yang tak bisa ditarik kembali itu menuntut dua data berbeda dari pesanan yang
 sama. Ulasan **tidak** punya langkah ini: memberi ulasan tak merusak apa pun.

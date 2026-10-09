@@ -21,7 +21,7 @@
 ### Siapa boleh membatalkan, dan kapan — `src/lib/order-cancellation.ts`
 
 Aturannya **satu fungsi murni**, `evaluateBuyerCancel`, dipakai EMPAT tempat: `orders/cancel`,
-`orders/cancel-by-phone`, `orders/verify-cancel`, dan tampilannya (`OrderCard` di `/pesanan-saya` +
+`orders/cancel-by-phone`, `orders/verify-cancel`, dan tampilannya (`TrackOrderActions` di `/track` +
 `OrderCancellationView`). Jangan menuliskan daftar status sendiri di tempat baru — sebelum ini tiga
 berkas memegang salinan masing-masing, dan salinan berarti kesempatan untuk menyimpang.
 
@@ -48,7 +48,7 @@ balik seolah barang masih ada, dan uang pembeli wajib dikembalikan (refund masih
 Antrean permintaan + tombol Setujui/Tolak di OMS **sengaja belum dibuat**. Untuk volume sekarang,
 alurnya diputuskan berjalan manual:
 
-1. Pembeli menekan **"Ajukan Pembatalan lewat WhatsApp"** di kartu pesanan `/pesanan-saya` atau
+1. Pembeli menekan **"Ajukan Pembatalan lewat WhatsApp"** di halaman detail `/track` atau
    `/order-cancellation`. Pesannya sudah terisi lengkap dengan nomor invoice.
 2. Admin memeriksa: apakah paketnya benar-benar sudah dijemput kurir?
 3. **Setuju** → admin membuka OMS → Pesanan → ubah status jadi **Dibatalkan**.
@@ -145,7 +145,7 @@ Keluarga fitur guest yang menemukan pesanan **tanpa login**. Entry lewat **hub `
 | Layanan | Tempat | Kunci PENCARIAN | Endpoint | Query | Cookie |
 |---|---|---|---|---|---|
 | **Daftar + ulasan** | `/pesanan-saya` (`OrdersView`) | **email** | `track-by-email` (membawa keadaan ulasan tiap pesanan, terurut) | `getOrdersByEmail` + `getReviewedProductIdsByOrders` | `infarm_email` |
-| **Batalkan** | sheet di kartu (`CancelOrderSheet`) | email, lalu **no_telepon** sebagai konfirmasi | `verify-cancel` → `cancel-by-phone` | cocokkan `no_telepon` & `email` pesanan | — (telepon tak pernah di-prefill) |
+| **Batalkan** | halaman detail `/track` (`TrackOrderActions` → `CancelOrderSheet`), di bawah blok pembayaran | **email** + **no_telepon** di sheet | `verify-cancel` → `cancel-by-phone` | cocokkan `no_telepon` & `email` pesanan | email dari cookie boleh; telepon tak pernah di-prefill |
 | **Beri ulasan** | sheet di kartu (`ReviewSheet`) | email | `create-by-email` | verifikasi email↔pesanan, produk∈pesanan, dedup, jendela | `infarm_email` |
 | **Badge pesanan aktif** | header | dihitung `OrdersView` dari daftar email | — | — | `infarm_active_orders` |
 

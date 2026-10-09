@@ -1,38 +1,36 @@
 'use client'
 
 // src/components/pesanan-saya/OrderCard.tsx
-// Kartu satu pesanan di halaman Pesanan Saya: info non-sensitif + AKSI yang sesuai keadaannya.
+// Kartu satu pesanan di halaman Pesanan Saya: info non-sensitif + ajakan ulasan + tautan detail.
 //
-// ── Aksi ditentukan aturan yang sama dengan server ──
-//   Batalkan   → evaluateBuyerCancel (dipakai juga /api/orders/verify-cancel & cancel-by-phone)
-//   Beri Ulasan → order.review, dihitung server dari review-eligibility + tabel reviews
-// Kalau kartu menebak sendiri, pembeli bisa menekan tombol yang pasti ditolak server — dan
-// penolakan yang bisa diramalkan sejak awal adalah kegagalan desain, bukan keamanan.
+// ── Yang SENGAJA tidak ada di sini: tombol Batalkan ──
+// Pembatalan ada di halaman detail (/track → TrackOrderActions), di bawah blok pembayaran.
+// Keputusan pemilik 2026-10-09: tombol batal yang besar di daftar justru mengajak pembeli
+// membatalkan; ia cukup tersedia bagi yang memang mencarinya, setelah membuka detail pesanan.
+//
+// ── Keadaan ulasan datang dari server ──
+// order.review dihitung di /api/orders/track-by-email (review-eligibility + tabel reviews). Kalau
+// kartu menebak sendiri, pembeli bisa menekan tombol yang pasti ditolak server — dan penolakan
+// yang bisa diramalkan sejak awal adalah kegagalan desain, bukan keamanan.
 //
 // ── Badge "Beri Ulasan" sengaja kuning, bukan hijau ──
 // Hijau sudah dipakai badge status (informasi). Kuning aksen hanya untuk hal yang MENUNGGU
 // tindakan pembeli, supaya ia langsung tahu ada yang bisa dilakukan tanpa membaca teks.
 
 import Link from 'next/link'
-import { Ban, CheckCircle2, Package, Star } from 'lucide-react'
+import { CheckCircle2, Package, Star } from 'lucide-react'
 import type { PublicTrackOrder } from '@/types/public-order'
-import { evaluateBuyerCancel } from '@/lib/order-cancellation'
 import { fullyReviewed, needsReview } from '@/lib/buyer-orders'
-import { waCancelRequestLink } from '@/lib/data/contact'
-import WhatsAppIcon from '@/components/ui/WhatsAppIcon'
 
 export default function OrderCard({
   order,
-  onCancel,
   onReview,
 }: {
   order: PublicTrackOrder
-  onCancel: (order: PublicTrackOrder) => void
   onReview: (order: PublicTrackOrder) => void
 }) {
   const cancelled = order.status === 'Dibatalkan'
   const itemSummary = order.items.map((i) => `${i.name} ×${i.quantity}`).join(', ')
-  const verdict = evaluateBuyerCancel(order)
   const reviewPending = needsReview(order)
   const reviewed = fullyReviewed(order)
 
@@ -102,53 +100,12 @@ export default function OrderCard({
         <p className="mt-3 text-xs text-gray-400">Masa ulasan untuk pesanan ini sudah berakhir.</p>
       )}
 
-      {/* === Pembatalan (pesanan aktif) === */}
-      {verdict.ok && (
-        <button
-          type="button"
-          onClick={() => onCancel(order)}
-          className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-rose-200 bg-rose-50 py-2.5 text-sm font-semibold text-rose-700 transition hover:bg-rose-100 active:scale-[0.99]"
-        >
-          <Ban className="h-4 w-4" />
-          Batalkan Pesanan
-        </button>
-      )}
-      {/* Sudah dijadwalkan kurir: keputusannya pindah ke CS. Hanya NEEDS_CS yang punya jalur
-          pengajuan; pesanan terkirim/dibatalkan tak punya yang perlu diajukan. */}
-      {!verdict.ok && verdict.code === 'NEEDS_CS' && (
-        <div className="mt-3 space-y-2">
-          <p className="rounded-xl bg-gray-50 px-3.5 py-2.5 text-xs leading-relaxed text-gray-600">
-            {verdict.message}
-          </p>
-          {(() => {
-            const waLink = waCancelRequestLink(order.orderId)
-            return waLink ? (
-              <a
-                href={waLink}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#25D366] py-2.5 text-sm font-semibold text-white transition hover:brightness-95 active:scale-[0.99]"
-              >
-                <WhatsAppIcon />
-                Ajukan Pembatalan lewat WhatsApp
-              </a>
-            ) : (
-              // Nomor CS belum dikonfigurasi: katakan terus terang, jangan tampilkan tombol mati.
-              <p className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs leading-relaxed text-amber-800">
-                Hubungi admin kami untuk mengajukan pembatalan, sertakan nomor pesanan{' '}
-                <strong>{fmtInvoice(order.orderId)}</strong>.
-              </p>
-            )
-          })()}
-        </div>
-      )}
-
-      {/* Tautan ke detail perjalanan (halaman /track by invoice) */}
+      {/* Tautan ke detail pesanan (halaman /track by invoice) — di sanalah tombol Batalkan berada */}
       <Link
         href={`/track?order=${encodeURIComponent(order.orderId)}`}
         className="mt-3 inline-block text-sm font-medium text-brand-primary transition hover:brightness-90"
       >
-        Lihat detail perjalanan →
+        Lihat detail pesanan →
       </Link>
     </div>
   )

@@ -84,15 +84,11 @@
       setState + timer per baris, yang dilarang lint `react-hooks/set-state-in-effect`.
       Dihormati `prefers-reduced-motion: reduce`.
 - **`ProfileIconLink`** (`components/ui/`, client) = ikon akun + badge angka pesanan aktif (cookie
-  `infarm_active_orders`, tanpa query DB). Klik/tap ikon → dropdown `absolute right-0 top-full`
-  berisi baris kepala "N pesanan aktif" + **satu tautan** "Lihat Semua Pesanan" → `/pesanan-saya`;
-  tutup via klik-luar (`pointerdown`), `Escape`, atau klik item. **Satu perilaku untuk semua ukuran
-  layar** (mobile tak navigate otomatis) supaya pembeli tak kehilangan konteks halaman yang sedang
-  dibuka. Sejak 2026-10-09 halaman lacak/batalkan/review dilebur ke `/pesanan-saya` (tab
-  Aktif/Selesai, aksi di kartu pesanan; detail di CLAUDE.md → Guest Checkout); tiga route lama tinggal
-  redirect. Baris menu `py-3 sm:py-2.5` agar
-  target sentuh mobile nyaman. Dropdown pakai `absolute`, BUKAN `fixed`, jadi tak kena masalah
-  containing block `backdrop-filter` seperti `MenuDrawer`.
+  `infarm_active_orders`, tanpa query DB). Klik/tap ikon → **langsung** ke `/pesanan-saya`, tanpa
+  dropdown (dihapus 2026-10-09 atas permintaan pemilik: sejak tiga halaman lacak/batalkan/review
+  dilebur ke satu halaman, pop-up perantara hanya menambah satu klik). Aksi di halaman itu: tab
+  Aktif/Selesai, ulasan di kartu, pembatalan di halaman detail `/track` (detail di CLAUDE.md →
+  Guest Checkout); tiga route lama tinggal redirect.
   **Tanpa Profil/Logout/Alamat Tersimpan/Pengaturan** — proyek ini guest checkout, tak ada akun
   pelanggan; jangan tambahkan item itu tanpa membangun sistem auth pelanggan dulu.
 - **`HeaderSearch`** (`components/ui/`, client) = search autocomplete PERSISTEN (dulu `HeroSearchBar` di hero, sudah dihapus):

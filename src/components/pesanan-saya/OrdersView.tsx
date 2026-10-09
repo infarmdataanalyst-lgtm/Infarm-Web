@@ -6,8 +6,9 @@
 //
 // ── Satu halaman, dulu tiga ──
 // Sampai 2026-10-09 lacak, batalkan, dan ulasan adalah tiga halaman yang masing-masing meminta
-// email lagi lalu menampilkan daftar pesanan yang sama. Kini pencariannya satu kali, dan tiap aksi
-// hidup di kartu pesanannya. Mekanismenya tidak berubah:
+// email lagi lalu menampilkan daftar pesanan yang sama. Kini pencariannya satu kali: ulasan di
+// kartu pesanannya, pembatalan di halaman detail (/track → TrackOrderActions) supaya tombolnya
+// tak mengajak-ajak dari daftar. Mekanismenya tidak berubah:
 //   - identitas: email (cookie infarm_email → auto-cari; kedaluwarsa → ketik manual)
 //   - pembatalan tetap menuntut no_telepon sebagai identitas KEDUA (lihat CancelOrderSheet)
 //   - semua keputusan "boleh/tidak" datang dari server (review-eligibility, evaluateBuyerCancel)
@@ -26,7 +27,6 @@ import { needsReview, splitBuyerOrders } from '@/lib/buyer-orders'
 import type { PublicTrackOrder } from '@/types/public-order'
 import HoneypotField from '@/components/pesanan-saya/HoneypotField'
 import OrderCard from '@/components/pesanan-saya/OrderCard'
-import CancelOrderSheet from '@/components/pesanan-saya/CancelOrderSheet'
 import ReviewSheet from '@/components/pesanan-saya/ReviewSheet'
 
 // 'aktif' = masih berjalan (Menunggu Pembayaran / Diproses / Dikirim), 'selesai' = sudah final
@@ -45,7 +45,6 @@ export default function OrdersView({ initialTab }: { initialTab?: OrderTab }) {
   // null = pembeli belum memilih → tab awal mengikuti data (lihat `tab`). Dibedakan dari pilihan
   // eksplisit supaya hasil pencarian baru tak menimpa tab yang sedang dibuka.
   const [tabChoice, setTabChoice] = useState<OrderTab | null>(initialTab ?? null)
-  const [cancelTarget, setCancelTarget] = useState<PublicTrackOrder | null>(null)
   const [reviewTarget, setReviewTarget] = useState<PublicTrackOrder | null>(null)
   const [toast, setToast] = useState('')
 
@@ -126,17 +125,6 @@ export default function OrdersView({ initialTab }: { initialTab?: OrderTab }) {
     // Dinormalisasi sebelum dikirim supaya cocok dengan bentuk di orders.email; server
     // menormalkannya lagi — sengaja, agar pemanggil lain pun tak bisa lolos tanpa itu.
     runSearch(normalizeEmail(email), honeypot)
-  }
-
-  // Pesanan dibatalkan dari sheet: ubah statusnya di daftar (tanpa fetch ulang) → kartunya pindah
-  // ke tab Selesai; buka tab itu supaya pembeli melihat hasilnya, bukan daftar yang berkurang.
-  function handleCancelled(orderId: string) {
-    setOrders((prev) =>
-      (prev ?? []).map((o) => (o.orderId === orderId ? { ...o, status: 'Dibatalkan' } : o)),
-    )
-    setCancelTarget(null)
-    setTabChoice('selesai')
-    setToast('Pesanan berhasil dibatalkan. Stok produk telah dikembalikan.')
   }
 
   // Satu ulasan tersimpan: coret produknya dari daftar tunggu pesanan itu. Sheet tetap terbuka
@@ -264,7 +252,7 @@ export default function OrdersView({ initialTab }: { initialTab?: OrderTab }) {
                 </div>
               ) : (
                 shownOrders.map((o) => (
-                  <OrderCard key={o.orderId} order={o} onCancel={setCancelTarget} onReview={setReviewTarget} />
+                  <OrderCard key={o.orderId} order={o} onReview={setReviewTarget} />
                 ))
               )}
             </>
@@ -272,7 +260,6 @@ export default function OrdersView({ initialTab }: { initialTab?: OrderTab }) {
         </div>
       )}
 
-      <CancelOrderSheet order={cancelTarget} email={email} onClose={() => setCancelTarget(null)} onCancelled={handleCancelled} />
       <ReviewSheet order={reviewTarget} email={email} honeypot={honeypot} onClose={() => setReviewTarget(null)} onReviewed={handleReviewed} />
 
       {toast && (
