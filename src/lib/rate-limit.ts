@@ -106,6 +106,11 @@ export const RATE_LIMITS = {
   // Checkout / buat pesanan — cegah order spam
   ORDER_CREATE_IP: { max: 3, windowMs: 1 * MINUTE },
 
+  // Cek domain email di form checkout (dipanggil saat field email kehilangan fokus). Satu pembeli
+  // wajar memicunya beberapa kali saat mengoreksi salah ketik; 20/menit memberi ruang itu, sambil
+  // mencegah endpoint ini dipakai sebagai layanan pengecek DNS gratis.
+  EMAIL_DOMAIN_CHECK_IP: { max: 20, windowMs: 1 * MINUTE },
+
   // === Baca satu pesanan by nomor invoice (orders/get, dipakai form ulasan) ===
   // Nomor invoice berpola INV-YYYYMMDD-xxxx, jadi ruang tebakannya kecil untuk satu hari tertentu.
   // Tanpa pembatas, seluruh ruang satu hari bisa disapu dari satu IP dalam hitungan menit.

@@ -17,6 +17,12 @@
 // pesanannya sendiri padahal mengetik alamat yang sama. Normalisasi dilakukan di SATU tempat ini
 // dan wajib dipakai baik saat menyimpan maupun saat mencari.
 
+// Pesan saat DOMAIN email terbukti tak bisa menerima surat (lib/email-domain.ts). Dipakai bersama
+// oleh pesan di bawah field checkout dan penolakan server di /api/orders/create, supaya pembeli
+// melihat kalimat yang sama di kedua jalur.
+export const EMAIL_DOMAIN_NOT_FOUND_MESSAGE =
+  'Domain email tidak ditemukan. Periksa kembali penulisan email Anda.'
+
 // Panjang maksimal alamat email (batas praktis; RFC membatasi 254 oktet).
 export const EMAIL_MAX_LENGTH = 254
 

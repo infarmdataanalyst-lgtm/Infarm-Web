@@ -44,7 +44,8 @@ import { shippingWeightKg } from '@/lib/shipping-weight'
 import type { Warehouse } from '@/types/warehouse'
 import { formatRupiah } from '@/lib/format'
 import { isValidPhone } from '@/lib/phone'
-import { isValidEmail } from '@/lib/email'
+import { EMAIL_DOMAIN_NOT_FOUND_MESSAGE, isValidEmail } from '@/lib/email'
+import { checkEmailDomain } from '@/lib/email-domain'
 import { isPromotionExpired } from '@/types/promotion'
 import { courierDisplayName } from '@/lib/mengantar-estimate'
 import type {
@@ -277,6 +278,17 @@ export async function POST(request: Request) {
   if (emailInput && !isValidEmail(emailInput)) {
     return NextResponse.json(
       { error: 'Email tidak valid. Contoh: nama@gmail.com' },
+      { status: 422 },
+    )
+  }
+  // Domain yang PASTI tak bisa menerima email ditolak sebelum pesanan memotong stok: tagihan
+  // Xendit akan terkirim ke kotak surat yang tak ada, dan pembelinya tak bisa menemukan
+  // pesanannya lagi (lacak/batalkan/ulasan mencari berdasarkan email). DNS ragu-ragu atau lambat
+  // = diloloskan — lihat prinsipnya di lib/email-domain.ts. Kode khusus supaya checkout bisa
+  // memfokuskan field email, bukan sekadar menampilkan toast.
+  if (emailInput && (await checkEmailDomain(emailInput)) === 'no-mail') {
+    return NextResponse.json(
+      { error: EMAIL_DOMAIN_NOT_FOUND_MESSAGE, code: 'EMAIL_DOMAIN_NOT_FOUND' },
       { status: 422 },
     )
   }

@@ -753,6 +753,15 @@ export default function CheckoutPage() {
         return
       }
 
+      // Domain email terbukti tak bisa menerima surat (lib/email-domain.ts) → arahkan pembeli
+      // langsung ke field email, bukan sekadar toast yang mudah terlewat.
+      if (res.status === 422 && data.code === 'EMAIL_DOMAIN_NOT_FOUND') {
+        setToast(data.error ?? 'Domain email tidak ditemukan. Periksa kembali penulisan email Anda.')
+        addressFormRef.current?.focusEmail()
+        setIsPaying(false)
+        return
+      }
+
       if (!res.ok || !data.invoice) {
         // Mis. stok tidak cukup (409) → tampilkan pesan dari server
         setToast(data.error ?? 'Gagal memproses pesanan. Silakan coba lagi.')
