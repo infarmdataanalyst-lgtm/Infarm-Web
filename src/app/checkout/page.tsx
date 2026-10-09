@@ -802,9 +802,9 @@ export default function CheckoutPage() {
       // naikkan estimasi pesanan aktif (badge angka header; di-refresh akurat saat buka
       // /pesanan-saya). Keranjang BELUM dikosongkan di sini — lihat catatan di bawah.
       //
-      // DUA cookie, bukan satu, karena halamannya memakai identitas berbeda:
-      //   infarm_phone → /cancel-order, /review, badge pesanan aktif
-      //   infarm_email → /track-order
+      // DUA cookie: infarm_email → auto-cari di /pesanan-saya (lacak/batalkan/ulas);
+      // infarm_phone → jalur telepon (/api/orders/track-by-phone) yang kini tak dibaca halaman mana
+      // pun, tetap ditulis agar identitasnya tersedia bila jalur itu dipakai lagi.
       setGuestPhone(address.phone)
       setGuestEmail(address.email)
       incrementActiveOrderCount()
@@ -934,7 +934,7 @@ export default function CheckoutPage() {
                 {tidakTersedia ? 'Lihat Produk Lain' : 'Ke Keranjang'}
               </Link>
               <Link
-                href={tidakTersedia ? '/keranjang' : '/track-order'}
+                href={tidakTersedia ? '/keranjang' : '/pesanan-saya'}
                 className="block rounded-xl border border-zinc-200 py-3 text-sm font-semibold text-zinc-600 transition hover:bg-zinc-50"
               >
                 {tidakTersedia ? 'Ke Keranjang' : 'Lacak Pesanan'}

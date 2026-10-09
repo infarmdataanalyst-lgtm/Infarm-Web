@@ -1,12 +1,12 @@
 'use client'
 
 // src/components/ui/ProfileIconLink.tsx
-// Ikon akun di header + akses layanan pesanan guest (lacak/batalkan/review).
+// Ikon akun di header + akses ke Pesanan Saya (lacak/batalkan/ulas pesanan guest).
 // Klik/tap ikon → dropdown menempel di bawah ikon (rata kanan). SATU perilaku untuk semua ukuran
 // layar: di mobile pun tidak berpindah halaman, supaya pembeli tak kehilangan konteks katalog/
-// keranjang yang sedang dibuka. Dropdown langsung menuju tiga aksi (lacak/batalkan/review) —
-// halaman hub /pesanan-saya tidak lagi ditautkan dari header (masih dipakai tombol "kembali"
-// di ketiga halaman tersebut).
+// keranjang yang sedang dibuka.
+// Sejak 2026-10-09 dropdown hanya punya SATU tujuan: /pesanan-saya. Tiga halaman lama (lacak,
+// batalkan, review) dilebur ke sana; aksinya kini di dalam kartu tiap pesanan.
 // Menu ini menggantikan section "Pesanan" yang dulu ada di MenuDrawer — drawer kini murni katalog.
 //
 // Catatan: proyek ini GUEST CHECKOUT (tanpa login pelanggan), jadi tidak ada Profil/Logout/
@@ -20,7 +20,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
-import { Search, XCircle, Star } from 'lucide-react'
+import { Package } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { getActiveOrderCount, ACTIVE_ORDERS_EVENT } from '@/lib/guest-phone'
 
@@ -31,12 +31,9 @@ type AccountLink = {
   href: string
 }
 
-// Layanan pesanan guest — tiga aksi langsung, tanpa perantara halaman hub.
-// (Item "Pesanan Saya" → /pesanan-saya sengaja DIHAPUS: hub-nya hanya mengulang ketiga aksi ini.)
+// Satu tujuan: halaman Pesanan Saya memuat daftar pesanan beserta aksi lacak/batalkan/ulas.
 const ACCOUNT_MENU: AccountLink[] = [
-  { icon: Search, label: 'Lacak Pesanan', href: '/track-order' },
-  { icon: XCircle, label: 'Batalkan Pesanan', href: '/cancel-order' },
-  { icon: Star, label: 'Beri Review Produk', href: '/review' },
+  { icon: Package, label: 'Lihat Semua Pesanan', href: '/pesanan-saya' },
 ]
 
 export default function ProfileIconLink() {
@@ -102,7 +99,7 @@ export default function ProfileIconLink() {
             <div className="border-b border-brand-light/60 bg-brand-surface px-4 py-2.5">
               <p className="text-sm font-bold text-zinc-900">Pesanan Saya</p>
               <p className="text-xs text-zinc-500">
-                {count > 0 ? `${count} pesanan aktif` : 'Kelola pesanan tanpa perlu akun'}
+                {count > 0 ? `${count} pesanan aktif` : 'Lacak, batalkan & ulas tanpa perlu akun'}
               </p>
             </div>
 

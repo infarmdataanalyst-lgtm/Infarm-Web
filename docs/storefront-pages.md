@@ -21,7 +21,7 @@
   hijau `#00843b` + teks/ikon putih, `rounded-b-[2rem]`, `backdrop-blur`). Layout: `[hamburger+logo] — [HeaderSearch] — [cart+profil]`.
 - **Halaman mana yang memakai `AppBar`**: HANYA route group `(store)` — beranda, `/products`,
   `/produk/[id]`. Halaman di luar group punya header sendiri: `/keranjang` → `CartHeader`,
-  `/checkout` → `CheckoutHeader`, `/pesanan-saya` & layanan pesanan → header masing-masing,
+  `/checkout` → `CheckoutHeader`, `/pesanan-saya` → header sendiri,
   halaman legal → `LegalPageShell`. Jadi "menyembunyikan elemen header" di halaman-halaman itu
   tidak perlu conditional apa pun — elemennya memang tak pernah dirender.
 - **`CheckoutHeader`** sengaja minimal demi fokus pembayaran: tombol kembali + **logo NON-tautan**
@@ -29,8 +29,8 @@
   **Jangan menambah navigasi keluar baru di header ini**; logo tidak dibungkus `<Link>` agar user
   tak tercampak dari alur pembayaran karena menyenggolnya.
 - **Pembagian tugas navigasi header (jangan dicampur lagi)**: `MenuDrawer` = **navigasi katalog**
-  (beranda/produk/keranjang + kategori); `ProfileIconLink` = **layanan pesanan** (hub/lacak/
-  batalkan/review). Section "Pesanan" DIHAPUS dari drawer agar tak tumpang tindih dengan ikon akun.
+  (beranda/produk/keranjang + kategori); `ProfileIconLink` = **layanan pesanan** (→ `/pesanan-saya`).
+  Section "Pesanan" DIHAPUS dari drawer agar tak tumpang tindih dengan ikon akun.
 - **`MenuDrawer`** (`components/ui/`, client) = tombol hamburger + panel geser dari kiri. Dua section:
   Navigasi (Beranda / Semua Produk / Keranjang) dan Kategori Produk (dari `PRODUCT_CATEGORIES` —
   satu sumber dengan `CategoryGrid` & filter katalog).
@@ -85,12 +85,12 @@
       Dihormati `prefers-reduced-motion: reduce`.
 - **`ProfileIconLink`** (`components/ui/`, client) = ikon akun + badge angka pesanan aktif (cookie
   `infarm_active_orders`, tanpa query DB). Klik/tap ikon → dropdown `absolute right-0 top-full`
-  berisi **3 aksi**: Lacak / Batalkan / Beri Review (+ baris kepala "N pesanan aktif"); tutup via
-  klik-luar (`pointerdown`), `Escape`, atau klik item. **Satu perilaku untuk semua ukuran layar**
-  (mobile TIDAK lagi navigate ke `/pesanan-saya`) supaya pembeli tak kehilangan konteks halaman
-  yang sedang dibuka. Item "Pesanan Saya" sengaja dihapus dari dropdown — hub `/pesanan-saya`
-  kini TIDAK ditautkan dari header, hanya dari tombol "kembali" di `/track-order`, `/cancel-order`,
-  `/review`. Baris menu `py-3 sm:py-2.5` agar
+  berisi baris kepala "N pesanan aktif" + **satu tautan** "Lihat Semua Pesanan" → `/pesanan-saya`;
+  tutup via klik-luar (`pointerdown`), `Escape`, atau klik item. **Satu perilaku untuk semua ukuran
+  layar** (mobile tak navigate otomatis) supaya pembeli tak kehilangan konteks halaman yang sedang
+  dibuka. Sejak 2026-10-09 halaman lacak/batalkan/review dilebur ke `/pesanan-saya` (tab
+  Aktif/Selesai, aksi di kartu pesanan; detail di CLAUDE.md → Guest Checkout); tiga route lama tinggal
+  redirect. Baris menu `py-3 sm:py-2.5` agar
   target sentuh mobile nyaman. Dropdown pakai `absolute`, BUKAN `fixed`, jadi tak kena masalah
   containing block `backdrop-filter` seperti `MenuDrawer`.
   **Tanpa Profil/Logout/Alamat Tersimpan/Pengaturan** — proyek ini guest checkout, tak ada akun

@@ -330,17 +330,17 @@ export default async function CheckoutSuccessPage({
             {canPay && <PayNowButton invoice={data.orderId} />}
 
             <Link
-              href="/track-order"
+              href="/pesanan-saya"
               className="flex items-center justify-center gap-2 rounded-xl bg-brand-primary py-3 font-heading text-sm font-bold text-white shadow-sm transition hover:brightness-90 active:scale-[0.99]"
             >
               <MapPin className="h-4 w-4" />
               Lacak Pesanan
             </Link>
 
-            {/* Halaman ulasan kini berbasis no_telepon (verified) — cukup arahkan ke /review;
-                nomor telepon auto-fill dari cookie checkout untuk menampilkan produk yang bisa diulas. */}
+            {/* Ulasan kini di dalam kartu pesanan di Pesanan Saya (tab Selesai); email auto-fill
+                dari cookie checkout sehingga daftar pesanannya langsung tampil. */}
             <Link
-              href="/review"
+              href="/pesanan-saya?tab=selesai"
               className="flex items-center justify-center gap-2 rounded-xl border border-brand-primary bg-white py-3 text-sm font-semibold text-brand-primary transition hover:bg-brand-surface active:scale-[0.99]"
             >
               <Star className="h-4 w-4" />

@@ -3,11 +3,10 @@
 // nomor invoice, status, no resi, tanggal, ringkasan barang (nama+qty), dan NAMA yang DIMASK.
 // TIDAK mengembalikan alamat lengkap / nama penuh / nomor telepon.
 //
-// ── Kenapa endpoint BARU, bukan mengganti track-by-phone ──
-// `/api/orders/track-by-phone` masih dipakai DUA pemanggil lain yang tetap berbasis no_telepon:
-// halaman /cancel-order (langkah verifikasi pertama) dan komponen ActiveOrdersSummary (badge
-// jumlah pesanan aktif di ikon profil). Mengubah endpoint itu menjadi berbasis email akan
-// mematikan keduanya. Jadi jalur email berdiri sendiri; jalur telepon dibiarkan utuh.
+// ── Satu-satunya pemasok data halaman Pesanan Saya ──
+// Sejak halaman lacak/batalkan/ulasan dilebur (2026-10-09), endpoint ini melayani ketiganya
+// sekaligus. `/api/orders/track-by-phone` dibiarkan utuh sebagai jalur telepon (tak lagi dipanggil
+// halaman mana pun; pemakai terakhirnya, ActiveOrdersSummary, ikut dilebur ke OrdersView).
 //
 // Perlindungan (kompensasi karena identifikasi hanya via email — sama persis dengan jalur telepon):
 //  - Honeypot: field tersembunyi `website` — bila terisi → dianggap bot, balas kosong senyap.
@@ -18,8 +17,11 @@
 
 import { NextResponse } from 'next/server'
 import { getOrdersByEmail } from '@/lib/mock-db/orders'
+import { getReviewedProductIdsByOrders } from '@/lib/mock-db/reviews'
 import { normalizeEmail, isValidEmail } from '@/lib/email'
 import { maskName } from '@/lib/mask'
+import { sortBuyerOrders, summarizeOrderReview } from '@/lib/buyer-orders'
+import type { PublicTrackOrder } from '@/types/public-order'
 import {
   RATE_LIMITS,
   enforceRateLimit,
@@ -33,19 +35,12 @@ import {
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-// Bentuk pesanan aman-publik (tanpa alamat/nama penuh/email/telepon).
-// Sengaja identik dengan bentuk di track-by-phone supaya halaman /track-order tak perlu tahu
-// lewat jalur mana datanya datang.
-type PublicTrackOrder = {
-  orderId: string
-  status: string
-  paymentStatus: string
-  trackingNumber: string | null
-  courier: string | null
-  date: string
-  customerNameMasked: string
-  items: { name: string; quantity: number; imageUrl: string | null }[]
-}
+// Bentuk pesanan aman-publik (tanpa alamat/nama penuh/email/telepon): lihat types/public-order.ts.
+//
+// Sejak halaman Pesanan Saya dilebur (2026-10-09), respons ini juga membawa keadaan ULASAN tiap
+// pesanan (boleh diulas? produk mana yang belum?) dan datang SUDAH TERURUT: pesanan yang menunggu
+// ulasan di atas, sisanya terbaru → terlama. Dulu itu pekerjaan /api/reviews/reviewable-by-email
+// yang dipanggil halaman /review secara terpisah; kini satu permintaan cukup untuk seluruh halaman.
 
 export async function POST(request: Request) {
   let body: Record<string, unknown>
@@ -102,6 +97,9 @@ export async function POST(request: Request) {
   const orders = await getOrdersByEmail(email)
   if (orders.length === 0) recordAttempt(missKey, RATE_LIMITS.EMAIL_LOOKUP_IP_MISS)
 
+  // Ulasan yang sudah ada untuk SEMUA pesanan ini — satu query, bukan satu per pesanan.
+  const reviewedByOrder = await getReviewedProductIdsByOrders(orders.map((o) => o.orderId))
+
   // Petakan ke bentuk non-sensitif saja
   const publicOrders: PublicTrackOrder[] = orders.map((o) => ({
     orderId: o.orderId,
@@ -112,11 +110,13 @@ export async function POST(request: Request) {
     date: o.date,
     customerNameMasked: maskName(o.customerName),
     items: o.items.map((it) => ({
+      productId: it.productId, // dibutuhkan form ulasan untuk menunjuk produk yang diulas
       name: it.name,
       quantity: it.quantity,
       imageUrl: it.imageUrl ?? null, // foto produk (dari products.image_url) — non-sensitif
     })),
+    review: summarizeOrderReview(o, reviewedByOrder.get(o.orderId) ?? []),
   }))
 
-  return NextResponse.json({ orders: publicOrders })
+  return NextResponse.json({ orders: sortBuyerOrders(publicOrders) })
 }

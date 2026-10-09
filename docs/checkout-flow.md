@@ -21,7 +21,7 @@
 ### Siapa boleh membatalkan, dan kapan — `src/lib/order-cancellation.ts`
 
 Aturannya **satu fungsi murni**, `evaluateBuyerCancel`, dipakai EMPAT tempat: `orders/cancel`,
-`orders/cancel-by-phone`, `orders/verify-cancel`, dan tampilannya (`/cancel-order` +
+`orders/cancel-by-phone`, `orders/verify-cancel`, dan tampilannya (`OrderCard` di `/pesanan-saya` +
 `OrderCancellationView`). Jangan menuliskan daftar status sendiri di tempat baru — sebelum ini tiga
 berkas memegang salinan masing-masing, dan salinan berarti kesempatan untuk menyimpang.
 
@@ -48,7 +48,7 @@ balik seolah barang masih ada, dan uang pembeli wajib dikembalikan (refund masih
 Antrean permintaan + tombol Setujui/Tolak di OMS **sengaja belum dibuat**. Untuk volume sekarang,
 alurnya diputuskan berjalan manual:
 
-1. Pembeli menekan **"Ajukan Pembatalan lewat WhatsApp"** di `/cancel-order` atau
+1. Pembeli menekan **"Ajukan Pembatalan lewat WhatsApp"** di kartu pesanan `/pesanan-saya` atau
    `/order-cancellation`. Pesannya sudah terisi lengkap dengan nomor invoice.
 2. Admin memeriksa: apakah paketnya benar-benar sudah dijemput kurir?
 3. **Setuju** → admin membuka OMS → Pesanan → ubah status jadi **Dibatalkan**.
@@ -138,12 +138,16 @@ Keluarga fitur guest yang menemukan pesanan **tanpa login**. Entry lewat **hub `
 > **PENCARIAN kini seragam: email** (sejak 2026-09-01). Yang TIDAK seragam adalah verifikasi —
 > baca tabel ini sebelum menyentuh salah satunya.
 
-| Layanan | Halaman | Kunci PENCARIAN | Endpoint | Query | Cookie |
+> **Sejak 2026-10-09 ketiga layanan ada di SATU halaman `/pesanan-saya`** (`components/pesanan-saya/*`):
+> satu pencarian email → tab Aktif/Selesai → aksi di kartu. `/track-order`, `/cancel-order`, `/review`
+> tinggal redirect (`next.config.ts`).
+
+| Layanan | Tempat | Kunci PENCARIAN | Endpoint | Query | Cookie |
 |---|---|---|---|---|---|
-| **Lacak** | `/track-order` | **email** | `track-by-email` | `getOrdersByEmail` → `.eq('email')` | `infarm_email` |
-| **Batalkan** | `/cancel-order` | **email**, lalu **no_telepon** sebagai konfirmasi | `track-by-email` → `verify-cancel` → `cancel-by-phone` | `getOrdersByEmail`, lalu cocokkan `no_telepon` pesanan | `infarm_email` |
-| **Review** | `/review` | **email** | `reviewable-by-email` → `create-by-email` | `getOrdersByEmail` → `.eq('email')` | `infarm_email` |
-| **Badge pesanan aktif** | header | no_telepon | `track-by-phone` | `getOrdersByPhone` → `.eq('no_telepon')` | `infarm_phone` |
+| **Daftar + ulasan** | `/pesanan-saya` (`OrdersView`) | **email** | `track-by-email` (membawa keadaan ulasan tiap pesanan, terurut) | `getOrdersByEmail` + `getReviewedProductIdsByOrders` | `infarm_email` |
+| **Batalkan** | sheet di kartu (`CancelOrderSheet`) | email, lalu **no_telepon** sebagai konfirmasi | `verify-cancel` → `cancel-by-phone` | cocokkan `no_telepon` & `email` pesanan | — (telepon tak pernah di-prefill) |
+| **Beri ulasan** | sheet di kartu (`ReviewSheet`) | email | `create-by-email` | verifikasi email↔pesanan, produk∈pesanan, dedup, jendela | `infarm_email` |
+| **Badge pesanan aktif** | header | dihitung `OrdersView` dari daftar email | — | — | `infarm_active_orders` |
 
 **Kenapa Batalkan memakai DUA identitas**: pencariannya email seperti yang lain, tapi pembatalan
 baru dieksekusi setelah pembeli memasukkan **no_telepon** pesanan itu. Kalau langkah konfirmasi
@@ -168,7 +172,7 @@ jalur telepon memakai `PHONE_LOOKUP_*`, jalur email memakai `EMAIL_LOOKUP_*`/`EM
 (ambang sama, konstanta terpisah). Lihat "Rate Limiting" di [CLAUDE.md](../CLAUDE.md) (section itu
 tetap di root, tidak ikut dipecah ke sini).
 
-### Lacak — `/track-order` (berdampingan dengan `/track` by invoice)
+### Lacak — `/pesanan-saya` (berdampingan dengan `/track` by invoice)
 - **Kunci = email**, bukan no_telepon. `POST /api/orders/track-by-email`: kembalikan info
   non-sensitif (invoice, status, resi, kurir, tanggal, item nama+qty+foto), nama **di-mask**
   (`lib/mask.ts`). Detail timeline lengkap tetap via `/track?order=INV-…`.

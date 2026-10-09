@@ -228,6 +228,31 @@ export async function getReviewedProductIds(orderInvoice: string): Promise<strin
   return (data as { product_id: string }[]).map((r) => r.product_id)
 }
 
+// Versi BATCH getReviewedProductIds: product_id yang sudah diulas, dikelompokkan per nomor invoice.
+// Dipakai halaman Pesanan Saya yang menampilkan semua pesanan sebuah email sekaligus — satu query
+// untuk seluruh daftar, bukan satu per pesanan. Invoice tanpa ulasan tak punya entri di Map.
+export async function getReviewedProductIdsByOrders(
+  orderInvoices: string[],
+): Promise<Map<string, Set<string>>> {
+  const result = new Map<string, Set<string>>()
+  if (orderInvoices.length === 0) return result
+
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('reviews')
+    .select('order_invoice, product_id')
+    .in('order_invoice', orderInvoices)
+
+  if (error || !data) return result
+  for (const row of data as { order_invoice: string | null; product_id: string }[]) {
+    if (!row.order_invoice) continue
+    const set = result.get(row.order_invoice) ?? new Set<string>()
+    set.add(row.product_id)
+    result.set(row.order_invoice, set)
+  }
+  return result
+}
+
 // === Baca & moderasi (OMS) ===
 
 // Mengambil seluruh ulasan beserta info produk (join) untuk dashboard OMS, terbaru dulu.

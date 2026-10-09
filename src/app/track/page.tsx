@@ -52,8 +52,8 @@ export default async function TrackPage({ searchParams }: TrackPageProps) {
         {/* max-w mengikuti <main> di lg+ supaya logo sejajar dengan tepi kiri kartu, bukan
             mengapung di tengah saat halaman melebar jadi dua kolom. */}
         <div className="mx-auto flex h-14 max-w-3xl items-center gap-3 px-4 lg:max-w-5xl">
-          {/* Back → halaman Lacak Pesanan (satu halaman sebelumnya), bukan beranda */}
-          <Link href="/track-order" aria-label="Kembali ke Lacak Pesanan" className="rounded-md p-1 transition active:scale-95">
+          {/* Back → halaman Pesanan Saya (satu halaman sebelumnya), bukan beranda */}
+          <Link href="/pesanan-saya" aria-label="Kembali ke Pesanan Saya" className="rounded-md p-1 transition active:scale-95">
             <BackIcon />
           </Link>
           <Link href="/" className="flex items-center gap-2">
@@ -240,8 +240,8 @@ async function TrackResult({ order }: { order: Order }) {
       </div>
 
       <div className="pt-1 text-center">
-        <Link href="/track-order" className="text-sm font-medium text-brand-primary transition hover:brightness-90">
-          ← Lacak pesanan lain
+        <Link href="/pesanan-saya" className="text-sm font-medium text-brand-primary transition hover:brightness-90">
+          ← Kembali ke Pesanan Saya
         </Link>
       </div>
     </div>

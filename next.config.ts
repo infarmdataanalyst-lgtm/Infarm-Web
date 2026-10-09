@@ -65,6 +65,20 @@ const nextConfig: NextConfig = {
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders }]
   },
+
+  // === Halaman layanan pesanan yang dilebur ke /pesanan-saya (2026-10-09) ===
+  // /track-order, /cancel-order, dan /review dulu tiga halaman terpisah; kini satu halaman dengan
+  // aksi di dalam kartu pesanan. Tautan lama masih beredar (bookmark, email, chat CS), jadi
+  // diarahkan ke halaman baru — /review ke tab Selesai, tempat tombol ulasan berada.
+  // `permanent: false` (307): tautan lama tak perlu di-cache browser sebagai pindah selamanya.
+  async redirects() {
+    return [
+      { source: '/track-order', destination: '/pesanan-saya', permanent: false },
+      { source: '/cancel-order', destination: '/pesanan-saya', permanent: false },
+      { source: '/review', destination: '/pesanan-saya?tab=selesai', permanent: false },
+      { source: '/review/submitted', destination: '/pesanan-saya?tab=selesai', permanent: false },
+    ]
+  },
 };
 
 export default nextConfig;
