@@ -658,6 +658,20 @@ Section Alamat Pengiriman divalidasi di client sebelum request order dikirim. Lo
   lalu disamakan ke bentuk ternormalisasi saat `onBlur`.
   `getEmailError` mengembalikan pesan spesifik per jenis kesalahan ("Email harus mengandung tanda @",
   "Domain email harus mengandung titik…"), bukan satu pesan generik.
+- **Domain email dicek lewat DNS** (`lib/email-domain.ts`, sejak 2026-10-09). Format lolos ≠ email
+  bisa menerima surat: `budi@glaim.com` atau `@tidakada.xyz` dulu lolos, pesanan terbuat, tagihan
+  Xendit terkirim ke kotak surat yang tak ada, dan pembeli tak bisa melacak pesanannya sendiri.
+  - Dua titik pemeriksaan, fungsi yang sama: **(1)** saat field email blur, form memanggil
+    `POST /api/email/check-domain` dan menampilkan **pesan kecil merah di bawah field**
+    (`EMAIL_DOMAIN_NOT_FOUND_MESSAGE`) — tanpa popup; **(2)** `/api/orders/create` memeriksa ulang
+    dan menolak `422 { code: 'EMAIL_DOMAIN_NOT_FOUND' }` sebelum stok dipotong; checkout lalu
+    menampilkan toast + fokus ke field email.
+  - **Ragu = loloskan.** Hanya NXDOMAIN, null MX (RFC 7505), atau tanpa MX + tanpa A/AAAA yang
+    dianggap `no-mail`. Timeout (1,5 dtk), SERVFAIL, galat jaringan, rate limit → diloloskan.
+  - Domain populer (gmail, yahoo, outlook, icloud, dst.) dijawab tanpa DNS; jawaban pasti
+    di-cache per instance (ok 6 jam, no-mail 30 menit). Rate limit `EMAIL_DOMAIN_CHECK_IP` 20/menit.
+  - **Batas**: salah ketik ke domain yang TERDAFTAR dan punya server email (mis. `gmial.com` bila
+    domain itu punya MX) tetap lolos — hanya email verifikasi yang bisa menutupnya.
 - **Alamat**: wajib dipilih dari search Mengantar (`destination_id` tidak boleh kosong).
 - **Kurir**: wajib dipilih (`selected_courier`).
 - Tombol "Bayar Sekarang": disabled-visual + **guard di handler** (bukan hanya atribut `disabled`).

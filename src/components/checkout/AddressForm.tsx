@@ -14,7 +14,13 @@ import { MapPin, CheckCircle2 } from 'lucide-react'
 import AddressSearchCombobox from '@/components/checkout/AddressSearchCombobox'
 import { toTitleCase, type MengantarAddress } from '@/lib/mengantar'
 import { normalizePhone, isValidPhone, getPhoneError, sanitizePhoneInput } from '@/lib/phone'
-import { isValidEmail, getEmailError, normalizeEmail, EMAIL_MAX_LENGTH } from '@/lib/email'
+import {
+  isValidEmail,
+  getEmailError,
+  normalizeEmail,
+  EMAIL_MAX_LENGTH,
+  EMAIL_DOMAIN_NOT_FOUND_MESSAGE,
+} from '@/lib/email'
 import {
   validateAddress,
   type AddressFieldKey,
@@ -207,6 +213,9 @@ const AddressForm = forwardRef<AddressFormHandle, {
     updateForm({ email: normalizeEmail(trimmed) })
     // Hapus pesan error begitu isinya menjadi sah — pola sama dengan nama & alamat lengkap.
     if (errors.email && isValidEmail(trimmed)) setFieldError('email', '')
+    // Email berubah → hasil cek domain sebelumnya (atau yang masih dalam perjalanan) tak berlaku.
+    domainCheckSeq.current += 1
+    setDomainError('')
   }
 
   function handleEmailBlur() {
@@ -215,10 +224,39 @@ const AddressForm = forwardRef<AddressFormHandle, {
     const normalized = normalizeEmail(emailInput)
     setEmailInput(normalized)
     updateForm({ email: normalized })
-    setFieldError('email', getEmailError(normalized))
+    const formatError = getEmailError(normalized)
+    setFieldError('email', formatError)
+    if (!formatError) void checkDomain(normalized)
   }
 
-  const emailValid = isValidEmail(form.email)
+  // === Cek domain email (lib/email-domain.ts lewat /api/email/check-domain) ===
+  // Pesan kecil di bawah field bila domain-nya PASTI tak bisa menerima email (mis. salah ketik
+  // "glaim.com" yang tak terdaftar). Dipisah dari `errors` karena validateAddress (format) tak
+  // mengenalnya dan akan menghapusnya setiap revealErrors. Galat jaringan/rate limit = diam:
+  // penegakan sebenarnya ada di /api/orders/create.
+  const [domainError, setDomainError] = useState('')
+  const domainCheckSeq = useRef(0)
+
+  async function checkDomain(email: string) {
+    const seq = ++domainCheckSeq.current
+    try {
+      const res = await fetch('/api/email/check-domain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      })
+      if (!res.ok) return
+      const data = (await res.json()) as { ok?: boolean; message?: string }
+      // Jawaban untuk email lama (pembeli sudah mengetik ulang) dibuang.
+      if (seq !== domainCheckSeq.current) return
+      setDomainError(data.ok === false ? data.message ?? EMAIL_DOMAIN_NOT_FOUND_MESSAGE : '')
+    } catch {
+      // Jaringan gagal → tak menampilkan apa pun.
+    }
+  }
+
+  const emailError = errors.email || domainError
+  const emailValid = isValidEmail(form.email) && !domainError
 
   // === Alamat (combobox Mengantar) ===
   const hasSelectedAddress = form.destination_id !== ''
@@ -265,6 +303,12 @@ const AddressForm = forwardRef<AddressFormHandle, {
         if (result.firstInvalid) {
           fieldRefs[result.firstInvalid].current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
         }
+        // Format lolos semua, tapi domain email sudah terbukti tak menerima surat → tahan di sini
+        // juga, supaya pembeli tak perlu menunggu penolakan server untuk melihat field-nya.
+        if (result.valid && domainError) {
+          emailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          return false
+        }
         return result.valid
       },
       focusPhone() {
@@ -278,9 +322,9 @@ const AddressForm = forwardRef<AddressFormHandle, {
         emailInputRef.current?.focus()
       },
     }),
-    // fieldRefs stabil (ref); cukup bergantung pada form
+    // fieldRefs stabil (ref); cukup bergantung pada form & hasil cek domain
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [form],
+    [form, domainError],
   )
 
   return (
@@ -343,8 +387,8 @@ const AddressForm = forwardRef<AddressFormHandle, {
                 onChange={(e) => handleEmailChange(e.target.value)}
                 onBlur={handleEmailBlur}
                 placeholder="Contoh: nama@gmail.com"
-                aria-invalid={Boolean(errors.email)}
-                className={`${inputClass(Boolean(errors.email))} ${emailValid ? 'pr-10' : ''}`}
+                aria-invalid={Boolean(emailError)}
+                className={`${inputClass(Boolean(emailError))} ${emailValid ? 'pr-10' : ''}`}
               />
               {/* Indikator hijau saat email valid — pola sama dengan nomor telepon */}
               {emailValid && (
@@ -352,7 +396,7 @@ const AddressForm = forwardRef<AddressFormHandle, {
               )}
             </div>
           </Field>
-          <FieldError message={errors.email} />
+          <FieldError message={emailError} />
           <p className="mt-1 text-xs text-zinc-500">
             Dipakai untuk melacak pesananmu nanti. Pastikan alamatnya benar.
           </p>
