@@ -9,9 +9,8 @@
 import { useEffect, useState } from 'react'
 import { getGuestPhone, setActiveOrderCount } from '@/lib/guest-phone'
 import { isValidPhone } from '@/lib/phone'
-
-// Status yang dianggap SUDAH selesai/tak aktif (label Indonesia dari data layer)
-const INACTIVE_STATUSES = new Set(['Selesai', 'Dibatalkan'])
+// Aturan "aktif" dipakai bersama halaman Lacak Pesanan — lihat lib/order-status-machine.ts.
+import { isActiveOrderStatus } from '@/lib/order-status-machine'
 
 export default function ActiveOrdersSummary() {
   const [count, setCount] = useState<number | null>(null) // null = belum tahu (loading / tak ada phone)
@@ -29,7 +28,7 @@ export default function ActiveOrdersSummary() {
     })
       .then((res) => (res.ok ? res.json() : { orders: [] }))
       .then((data: { orders?: { status: string }[] }) => {
-        const active = (data.orders ?? []).filter((o) => !INACTIVE_STATUSES.has(o.status)).length
+        const active = (data.orders ?? []).filter((o) => isActiveOrderStatus(o.status)).length
         setCount(active)
         setActiveOrderCount(active) // refresh cookie → badge header jadi akurat
       })

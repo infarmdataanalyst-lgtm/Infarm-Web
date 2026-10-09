@@ -28,3 +28,13 @@ export function canTransition(from: OrderFulfillmentStatus, to: OrderFulfillment
 export function isFinalStatus(status: OrderFulfillmentStatus): boolean {
   return (ALLOWED_TRANSITIONS[status]?.length ?? 0) === 0
 }
+
+// Apakah pesanan masih "aktif" dari sudut pandang PEMBELI: belum Selesai dan belum Dibatalkan.
+// Dipakai halaman Lacak Pesanan (tab Aktif/Selesai) dan badge pesanan aktif di header, supaya
+// keduanya tak pernah berbeda pendapat soal pesanan mana yang masih berjalan.
+//
+// Menerima string mentah dari respons API (bukan hanya OrderFulfillmentStatus): status yang tak
+// dikenal dianggap AKTIF — lebih baik pesanan tampil di tab yang dilihat pertama daripada hilang.
+export function isActiveOrderStatus(status: string): boolean {
+  return !(status in ALLOWED_TRANSITIONS) || !isFinalStatus(status as OrderFulfillmentStatus)
+}

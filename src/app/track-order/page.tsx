@@ -17,12 +17,18 @@
 // Kolom orders.email baru diisi sejak field email dikembalikan ke form checkout. Pesanan yang
 // dibuat saat field itu absen ber-email NULL dan TIDAK bisa dilacak dari sini sama sekali.
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { Package, Search } from 'lucide-react'
 import { getGuestEmail } from '@/lib/guest-email'
 import { isValidEmail, normalizeEmail } from '@/lib/email'
+import { isActiveOrderStatus } from '@/lib/order-status-machine'
+
+// Tab daftar pesanan. 'aktif' = masih berjalan (Menunggu Pembayaran / Diproses / Dikirim),
+// 'selesai' = sudah final (Selesai maupun Dibatalkan). Pembatalan ikut ke tab Selesai karena bagi
+// pembeli keduanya sama-sama "sudah tak ada yang ditunggu"; badge di kartu tetap membedakannya.
+type OrderTab = 'aktif' | 'selesai'
 
 // Bentuk pesanan aman-publik dari API (tanpa alamat/nama penuh)
 type PublicTrackOrder = {
@@ -45,6 +51,24 @@ export default function TrackOrderPage() {
   // true = email dikenali dari cookie → sembunyikan form & email, langsung tampilkan hasil.
   // User tetap bisa membuka form manual lewat link "Cari email lain" (lihat handleUseOtherEmail).
   const [recognized, setRecognized] = useState(false)
+  // null = pembeli belum memilih tab → tab awal mengikuti data (lihat `tab` di bawah). Dibedakan
+  // dari pilihan eksplisit supaya hasil pencarian baru tidak menimpa tab yang sedang dibuka.
+  const [tabChoice, setTabChoice] = useState<OrderTab | null>(null)
+
+  // Daftar pesanan dipecah per tab. Semua pesanan tetap diambil dari server (API tak berubah);
+  // pemisahannya di sini supaya berpindah tab tak perlu memanggil server lagi.
+  const { activeOrders, finishedOrders } = useMemo(() => {
+    const all = orders ?? []
+    return {
+      activeOrders: all.filter((o) => isActiveOrderStatus(o.status)),
+      finishedOrders: all.filter((o) => !isActiveOrderStatus(o.status)),
+    }
+  }, [orders])
+
+  // Tab awal: Aktif bila ada pesanan yang masih berjalan; kalau semuanya sudah selesai, langsung
+  // buka Selesai — tab Aktif yang kosong hanya membuat pembeli mengira pesanannya hilang.
+  const tab: OrderTab = tabChoice ?? (activeOrders.length > 0 || finishedOrders.length === 0 ? 'aktif' : 'selesai')
+  const shownOrders = tab === 'aktif' ? activeOrders : finishedOrders
 
   // Jalankan pencarian ke server untuk sebuah email. `hp` = nilai honeypot (kosong saat auto).
   const runSearch = useCallback(async (searchEmail: string, hp: string) => {
@@ -88,6 +112,7 @@ export default function TrackOrderPage() {
     setEmail('')
     setOrders(null)
     setError('')
+    setTabChoice(null) // email baru = daftar baru → tab awal dihitung ulang dari datanya
   }
 
   function handleEmailChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -218,15 +243,79 @@ export default function TrackOrderPage() {
                 <p className="px-1 text-sm text-gray-500">
                   {orders.length} pesanan ditemukan untuk email ini
                 </p>
-                {orders.map((o) => (
-                  <TrackOrderCard key={o.orderId} order={o} />
-                ))}
+
+                {/* Tab Aktif / Selesai. Hitungan di tiap tab supaya pembeli tahu ada isinya
+                    tanpa harus berpindah dulu. */}
+                <div role="tablist" aria-label="Filter pesanan" className="flex gap-2">
+                  <TabButton
+                    active={tab === 'aktif'}
+                    count={activeOrders.length}
+                    onClick={() => setTabChoice('aktif')}
+                  >
+                    Aktif
+                  </TabButton>
+                  <TabButton
+                    active={tab === 'selesai'}
+                    count={finishedOrders.length}
+                    onClick={() => setTabChoice('selesai')}
+                  >
+                    Selesai
+                  </TabButton>
+                </div>
+
+                {shownOrders.length === 0 ? (
+                  <div className="rounded-2xl border border-gray-100 bg-white px-4 py-8 text-center shadow-sm">
+                    <p className="text-sm text-gray-400">
+                      {tab === 'aktif'
+                        ? 'Tidak ada pesanan yang sedang berjalan.'
+                        : 'Belum ada pesanan yang selesai.'}
+                    </p>
+                  </div>
+                ) : (
+                  shownOrders.map((o) => <TrackOrderCard key={o.orderId} order={o} />)
+                )}
               </>
             )}
           </div>
         )}
       </main>
     </div>
+  )
+}
+
+// Satu tombol tab berisi label + jumlah pesanan di dalamnya.
+function TabButton({
+  active,
+  count,
+  onClick,
+  children,
+}: {
+  active: boolean
+  count: number
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={`flex flex-1 items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-semibold transition ${
+        active
+          ? 'border-brand-primary bg-brand-primary text-white'
+          : 'border-gray-200 bg-white text-gray-600 hover:border-brand-light'
+      }`}
+    >
+      {children}
+      <span
+        className={`rounded-full px-2 py-0.5 text-xs font-bold ${
+          active ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-500'
+        }`}
+      >
+        {count}
+      </span>
+    </button>
   )
 }
 
