@@ -577,8 +577,16 @@ function MinimumBelanjaSection({
 // luar itu: Idul Fitri, cuti bersama, tutup dadakan. Aturannya di lib/pickup-schedule.ts; yang
 // membaca daftar ini cron slot pickup (06.00 WIB) dan booking kurir setelah pembayaran masuk.
 //
-// Disimpan SELURUH daftar sekali tekan Simpan (bukan per baris) supaya yang tersimpan selalu
-// persis yang terlihat di layar. Tanggal lampau dibuang server dan dilaporkan di `dropped`.
+// ── Simpan otomatis per baris (sejak 2026-10-12) ──
+// Dulu Tambah/Hapus hanya mengubah layar dan baru tersimpan setelah tombol "Simpan Perubahan".
+// Itu menipu: pada uji 12 Okt admin menghapus dua libur uji, daftar di layar kosong, tapi database
+// masih menyimpan keduanya — pesanan berikutnya tetap dijadwalkan melompati tanggal itu. Kini
+// setiap Tambah/Hapus langsung mengirim daftar baru ke server, dan layar baru berubah SETELAH
+// server menyimpannya. Jadi yang terlihat selalu sama dengan yang berlaku.
+//
+// Yang dikirim tetap SELURUH daftar (kontrak PATCH tidak berubah), dihitung dari salinan terakhir
+// yang tersimpan, bukan dari layar. Kontrol dikunci selama satu penyimpanan berjalan, sehingga dua
+// klik cepat tak bisa saling menimpa. Tanggal lampau dibuang server dan dilaporkan di `dropped`.
 function HariLiburSection({
   canEdit,
   onSaved,
@@ -586,8 +594,8 @@ function HariLiburSection({
   canEdit: boolean
   onSaved: (msg: string) => void
 }) {
+  // Daftar yang SUDAH tersimpan di server — satu-satunya sumber yang ditampilkan.
   const [holidays, setHolidays] = useState<PickupHoliday[]>([])
-  const [saved, setSaved] = useState<PickupHoliday[]>([]) // salinan terakhir dari server
   const [date, setDate] = useState('')
   const [label, setLabel] = useState('')
   const [loading, setLoading] = useState(true)
@@ -603,10 +611,7 @@ function HariLiburSection({
       .then((res) => res.json())
       .then((data: { holidays?: PickupHoliday[]; today?: string }) => {
         if (!active) return
-        if (Array.isArray(data.holidays)) {
-          setHolidays(data.holidays)
-          setSaved(data.holidays)
-        }
+        if (Array.isArray(data.holidays)) setHolidays(data.holidays)
         if (typeof data.today === 'string') setToday(data.today)
       })
       .catch(() => {
@@ -620,9 +625,48 @@ function HariLiburSection({
     }
   }, [])
 
-  const dirty = JSON.stringify(holidays) !== JSON.stringify(saved)
+  const tanggalPanjang = (d: string) =>
+    new Intl.DateTimeFormat('id-ID', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      timeZone: 'Asia/Jakarta',
+    }).format(new Date(`${d}T00:00:00+07:00`))
 
-  function tambah() {
+  // Mengirim daftar baru ke server. true bila tersimpan; layar hanya berubah bila berhasil, jadi
+  // kegagalan tak pernah meninggalkan tampilan yang berbeda dari yang berlaku.
+  async function simpan(next: PickupHoliday[], pesanSukses: string): Promise<boolean> {
+    setSaving(true)
+    setError('')
+    try {
+      const res = await fetch('/api/settings/pickup-holidays', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ holidays: next }),
+      })
+      const data = (await res.json().catch(() => ({}))) as {
+        holidays?: PickupHoliday[]
+        dropped?: string[]
+        error?: string
+      }
+      if (!res.ok) {
+        setError(data.error ?? 'Gagal menyimpan daftar libur. Daftar tidak berubah.')
+        return false
+      }
+      setHolidays(Array.isArray(data.holidays) ? data.holidays : next)
+      const dibuang = data.dropped?.length ?? 0
+      onSaved(dibuang > 0 ? `${pesanSukses} ${dibuang} tanggal yang sudah lewat dibuang.` : pesanSukses)
+      return true
+    } catch {
+      setError('Gagal menyimpan — periksa koneksi lalu coba lagi. Daftar tidak berubah.')
+      return false
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function tambah() {
     setError('')
     if (!date) {
       setError('Pilih tanggalnya dulu.')
@@ -641,63 +685,22 @@ function HariLiburSection({
       return
     }
     const clean = label.trim().slice(0, PICKUP_HOLIDAY_LABEL_MAX)
-    setHolidays(
-      [...holidays, clean ? { date, label: clean } : { date }].sort((a, b) =>
-        a.date.localeCompare(b.date),
-      ),
+    const next = [...holidays, clean ? { date, label: clean } : { date }].sort((a, b) =>
+      a.date.localeCompare(b.date),
     )
-    setDate('')
-    setLabel('')
-  }
-
-  function hapus(target: string) {
-    setHolidays(holidays.filter((h) => h.date !== target))
-    setError('')
-  }
-
-  async function handleSave() {
-    setSaving(true)
-    setError('')
-    try {
-      const res = await fetch('/api/settings/pickup-holidays', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ holidays }),
-      })
-      const data = (await res.json().catch(() => ({}))) as {
-        holidays?: PickupHoliday[]
-        dropped?: string[]
-        error?: string
-      }
-      if (!res.ok) {
-        setError(data.error ?? 'Gagal menyimpan daftar libur.')
-        return
-      }
-      if (Array.isArray(data.holidays)) {
-        setHolidays(data.holidays)
-        setSaved(data.holidays)
-      }
-      const dibuang = data.dropped?.length ?? 0
-      onSaved(
-        dibuang > 0
-          ? `Daftar libur tersimpan; ${dibuang} tanggal yang sudah lewat dibuang.`
-          : 'Daftar libur tersimpan.',
-      )
-    } catch {
-      setError('Gagal menyimpan daftar libur. Periksa koneksi lalu coba lagi.')
-    } finally {
-      setSaving(false)
+    // Form baru dikosongkan setelah tersimpan — bila gagal, admin tak perlu mengetik ulang.
+    if (await simpan(next, `Libur ${tanggalPanjang(date)} tersimpan.`)) {
+      setDate('')
+      setLabel('')
     }
   }
 
-  const tanggalPanjang = (d: string) =>
-    new Intl.DateTimeFormat('id-ID', {
-      weekday: 'long',
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric',
-      timeZone: 'Asia/Jakarta',
-    }).format(new Date(`${d}T00:00:00+07:00`))
+  function hapus(target: string) {
+    void simpan(
+      holidays.filter((h) => h.date !== target),
+      `Libur ${tanggalPanjang(target)} dihapus.`,
+    )
+  }
 
   return (
     <SettingCard
@@ -760,9 +763,9 @@ function HariLiburSection({
             disabled={loading || saving}
             onChange={(e) => setLabel(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') {
+              if (e.key === 'Enter' && !saving) {
                 e.preventDefault()
-                tambah()
+                void tambah()
               }
             }}
             placeholder="Keterangan (opsional), mis. Idul Fitri"
@@ -770,11 +773,11 @@ function HariLiburSection({
           />
           <button
             type="button"
-            onClick={tambah}
+            onClick={() => void tambah()}
             disabled={loading || saving}
             className="rounded-xl border border-brand-primary px-4 py-2.5 text-sm font-semibold text-brand-primary transition hover:bg-brand-primary/5 disabled:opacity-50"
           >
-            Tambah
+            {saving ? 'Menyimpan…' : 'Tambah'}
           </button>
         </div>
       )}
@@ -789,20 +792,12 @@ function HariLiburSection({
             libur yang masuk sebelum {PICKUP_CUTOFF_HOUR_WIB}.00 WIB tetap dijemput hari itu.
           </p>
           <p>
-            Berlaku pada pesanan berikutnya begitu disimpan. Booking yang <em>sudah terkirim</em> ke
-            Mengantar sebelum libur didaftarkan tidak ditarik kembali — periksa kartu jadwal di
-            halaman Pesanan.
+            Setiap Tambah dan Hapus <strong>langsung tersimpan</strong> dan berlaku pada pesanan
+            berikutnya. Booking yang <em>sudah terkirim</em> ke Mengantar sebelum libur didaftarkan
+            tidak ditarik kembali — periksa kartu jadwal di halaman Pesanan.
           </p>
         </div>
       </div>
-
-      {canEdit && (
-        <SaveButton
-          saving={saving}
-          disabled={loading || saving || !dirty}
-          onClick={() => void handleSave()}
-        />
-      )}
     </SettingCard>
   )
 }
