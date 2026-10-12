@@ -109,8 +109,13 @@ tak ada migration): **Profil Toko** (`store_name`, `store_description`) · **Thr
 
 - **Hari Libur** = tanggal gudang tutup di luar Minggu (Idul Fitri, cuti bersama, tutup dadakan);
   pada tanggal itu kurir tidak dijadwalkan dan pesanan ikut penjemputan hari kerja berikutnya.
-  Form menyimpan SELURUH daftar sekali tekan Simpan (`PATCH /api/settings/pickup-holidays`, body
-  `{ holidays: [{date, label?}] }`); tanggal lampau dibuang server dan dilaporkan di toast. Batas
+  **Simpan otomatis per baris** (sejak 2026-10-12): setiap Tambah/Hapus langsung mengirim SELURUH
+  daftar baru (`PATCH /api/settings/pickup-holidays`, body `{ holidays: [{date, label?}] }`), dan
+  layar baru berubah setelah server menyimpannya — tak ada lagi tombol Simpan Perubahan untuk
+  bagian ini (dulu daftar bisa tampak kosong padahal libur masih berlaku di database). Gagal
+  simpan → daftar tetap seperti terakhir tersimpan + pesan galat; form tambah tidak dikosongkan.
+  Kontrol dikunci selama satu penyimpanan berjalan. Tanggal lampau dibuang server dan dilaporkan
+  di toast. Batas
   bawah input tanggal = `today` dari respons GET (tanggal WIB server), bukan `Date.now()` di klien.
   Aturan & pemakainya: [docs/checkout-flow.md](checkout-flow.md) → "Jadwal Pickup Harian".
   Efeknya terlihat di kartu **Penjemputan kurir** di atas daftar Pesanan (`PickupScheduleCard`,
