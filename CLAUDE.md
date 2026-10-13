@@ -331,7 +331,7 @@ src/
 │   ├── mengantar-estimate.ts     # Pemetaan respons estimasi Mengantar (dipakai client & server)
 │   ├── mengantar-host.ts         # SATU pintu host Mengantar (MENGANTAR_BASE_URL) — ongkir+time+order
 │   ├── shipping-weight.ts        # SATU pintu berat kirim: gram (DB) -> kilogram (Mengantar), murni
-│   ├── pickup-schedule.ts        # Aturan jadwal pickup: hari kerja, cutoff 15:00 WIB, tanggal efektif (murni)
+│   ├── pickup-schedule.ts        # Aturan jadwal pickup: hari kerja, libur, jam jemput & cutoff (bawaan 17/15, diatur di OMS), tanggal efektif (murni)
 │   ├── mengantar-pickup.ts       # SATU pintu time_id pickup: POST /time + tabel harian (server-only)
 │   ├── mengantar-shipment.ts     # SATU pintu booking kurir J&T: POST /order (server-only)
 │   ├── shipment-booking.ts       # Orkestrasi booking setelah bayar sukses + catat hasil/kegagalan

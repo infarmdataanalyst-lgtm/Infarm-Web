@@ -100,6 +100,11 @@ export default function PickupScheduleCard() {
               <>
                 <p className="font-semibold text-gray-900">
                   Penjemputan hari ini · {hariTanggal(data.today)} · ±{jam(data.pickupTime)} WIB
+                  {data.todaySpecial && (
+                    <span className="ml-1.5 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                      Jam khusus{data.todaySpecialLabel ? `: ${data.todaySpecialLabel}` : ''}
+                    </span>
+                  )}
                 </p>
                 <p className="mt-0.5 text-gray-700">
                   {data.todayCount === 0 ? (
@@ -115,7 +120,8 @@ export default function PickupScheduleCard() {
                   {data.status === 'lewat-cutoff'
                     ? `Sudah lewat ${data.cutoffHour}.00: pesanan baru ikut penjemputan berikutnya`
                     : `Pesanan masuk setelah ${data.cutoffHour}.00 ikut penjemputan berikutnya`}
-                  {data.nextDate && ` (${hariTanggal(data.nextDate)}${data.nextCount ? `, ${data.nextCount} paket sudah menunggu` : ''})`}
+                  {data.nextDate &&
+                    ` (${hariTanggal(data.nextDate)}${data.nextPickupTime ? ` ±${jam(data.nextPickupTime)}` : ''}${data.nextCount ? `, ${data.nextCount} paket sudah menunggu` : ''})`}
                   .
                 </p>
               </>
@@ -132,7 +138,7 @@ export default function PickupScheduleCard() {
                   {data.nextDate ? (
                     <>
                       Berikutnya <span className="font-semibold">{hariTanggal(data.nextDate)}</span> ±
-                      {jam(data.pickupTime)} WIB
+                      {jam(data.nextPickupTime ?? data.pickupTime)} WIB
                       {data.nextCount > 0 ? (
                         <>
                           {' '}
@@ -167,7 +173,7 @@ export default function PickupScheduleCard() {
             </span>
           )}
           <Link href="/oms/dashboard/pengaturan" className="text-gray-400 underline-offset-2 hover:underline">
-            Atur hari libur
+            Atur hari libur &amp; jam jemput
           </Link>
         </div>
       </div>

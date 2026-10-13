@@ -5,7 +5,12 @@
 
 import { createAdminClient } from '@/lib/supabase/server'
 import { DEFAULT_LOW_STOCK_THRESHOLD } from '@/lib/product-validation'
-import { parsePickupHolidays, type PickupHoliday } from '@/lib/pickup-schedule'
+import {
+  parsePickupHolidays,
+  parsePickupSchedule,
+  type PickupHoliday,
+  type PickupSchedule,
+} from '@/lib/pickup-schedule'
 
 // Kunci setting yang dikenal aplikasi
 export const MIN_ORDER_AMOUNT_KEY = 'min_order_amount'
@@ -198,6 +203,26 @@ export async function getPickupHolidays(): Promise<PickupHoliday[]> {
 export async function setPickupHolidays(list: PickupHoliday[]): Promise<PickupHoliday[]> {
   await setSetting(PICKUP_HOLIDAYS_KEY, JSON.stringify(list))
   return list
+}
+
+// === Jam penjemputan & cutoff ===
+//
+// Jam jemput rutin + jam khusus per tanggal, diatur admin dari tab "Jam Penjemputan" halaman
+// Pengaturan. Dibaca cron slot pickup, booking kurir, dan kartu jadwal di halaman Pesanan —
+// aturannya di lib/pickup-schedule.ts (pickupHoursFor, normalizePickupSchedule).
+//
+// GAGAL-TERBUKA seperti daftar libur: belum pernah diatur, simpanan rusak, atau gangguan baca →
+// jadwal bawaan (jemput 17.00, cutoff 15.00), yang sama persis dengan perilaku sebelum fitur ini.
+export const PICKUP_SCHEDULE_KEY = 'pickup_schedule'
+
+export async function getPickupSchedule(): Promise<PickupSchedule> {
+  return parsePickupSchedule(await getSetting(PICKUP_SCHEDULE_KEY))
+}
+
+// Pemanggil WAJIB memvalidasi lewat normalizePickupSchedule dulu.
+export async function setPickupSchedule(schedule: PickupSchedule): Promise<PickupSchedule> {
+  await setSetting(PICKUP_SCHEDULE_KEY, JSON.stringify(schedule))
+  return schedule
 }
 
 // === Penanda "notifikasi sudah dibaca" per admin ===

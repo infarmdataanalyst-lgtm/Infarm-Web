@@ -102,10 +102,22 @@ SATU timestamp per admin: `store_settings` baris `notif_last_seen:<adminId>`. Ku
 
 ### Halaman Pengaturan (`/oms/dashboard/pengaturan`) — empat tab
 
-Empat section lewat tab horizontal, semuanya baris di **`store_settings`** (tak ada tabel baru,
+Lima section lewat tab horizontal, semuanya baris di **`store_settings`** (tak ada tabel baru,
 tak ada migration): **Profil Toko** (`store_name`, `store_description`) · **Threshold Stok**
 (`low_stock_threshold`) · **Minimum Belanja** (`min_order_amount`, yang sudah ada sebelumnya) ·
-**Hari Libur** (`pickup_holidays`, sejak 2026-10-09).
+**Hari Libur** (`pickup_holidays`, sejak 2026-10-09) · **Jam Penjemputan** (`pickup_schedule`,
+sejak 2026-10-13).
+
+- **Jam Penjemputan** = jam kurir datang + batas pesanan (cutoff) yang masih ikut hari itu. Dua
+  kartu: **Jam Rutin** (dua `<select>` + tombol Simpan; bawaan jemput 17.00, cutoff 15.00) dan
+  **Jam Khusus per Tanggal** (Tambah/Hapus langsung tersimpan, pola tab Hari Libur). Pilihan jemput
+  hanya 09–18 (yang diterima Mengantar), pilihan cutoff otomatis dibatasi ≤ jemput − 2 jam.
+  `GET/PATCH /api/settings/pickup-schedule` (PATCH = seluruh jadwal, peran admin). Bila jam jemput
+  tanggal yang slotnya sudah dibuat berubah, slot lama dibuang dan form menampilkan peringatan
+  berapa paket sudah terbooking di jam lama (harus diatur manual di Mengantar). Tanggal berjam
+  khusus yang kemudian dijadikan libur ditandai "Tidak berlaku". Kartu **Penjemputan kurir** di
+  halaman Pesanan memakai jam yang berlaku hari ini (badge "Jam khusus") dan jam hari berikutnya.
+  Aturan lengkap: [docs/checkout-flow.md](checkout-flow.md) → "Jadwal Pickup Harian".
 
 - **Hari Libur** = tanggal gudang tutup di luar Minggu (Idul Fitri, cuti bersama, tutup dadakan);
   pada tanggal itu kurir tidak dijadwalkan dan pesanan ikut penjemputan hari kerja berikutnya.

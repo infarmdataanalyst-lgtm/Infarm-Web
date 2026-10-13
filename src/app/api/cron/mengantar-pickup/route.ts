@@ -18,7 +18,7 @@
 
 import { NextResponse } from 'next/server'
 import { ensurePickupForDate } from '@/lib/mengantar-pickup'
-import { getPickupHolidays } from '@/lib/mock-db/settings'
+import { getPickupHolidays, getPickupSchedule } from '@/lib/mock-db/settings'
 import { resolvePickupDate, toHolidaySet, wibDateString, wibHour } from '@/lib/pickup-schedule'
 import { listPickupAddressIds } from '@/lib/warehouse'
 import { timingSafeEqual } from 'node:crypto'
@@ -67,8 +67,13 @@ export async function GET(request: Request) {
   const today = wibDateString(nowMs)
   // Daftar libur admin dibaca SEKALI di sini lalu diteruskan ke tiap alamat — bukan dibaca ulang
   // di dalam ensurePickupForDate untuk setiap gudang.
-  const holidays = toHolidaySet(await getPickupHolidays())
-  const resolved = resolvePickupDate(nowMs, holidays)
+  // Jam jemput (rutin / khusus tanggal) dari OMS juga dibaca sekali: slot hari ini dibuat dengan jam
+  // yang berlaku hari ini.
+  const [holidays, schedule] = await Promise.all([
+    getPickupHolidays().then(toHolidaySet),
+    getPickupSchedule(),
+  ])
+  const resolved = resolvePickupDate(nowMs, holidays, schedule)
 
   // Satu slot per ALAMAT penjemputan. Sebelum tiap gudang punya alamat sendiri, satu panggilan
   // sudah cukup; sekarang alamat yang tak kebagian slot akan menjatuhkan booking-nya ke jalur
@@ -90,7 +95,7 @@ export async function GET(request: Request) {
   const results = await Promise.all(
     addressIds.map(async (addressId) => ({
       addressId,
-      outcome: await ensurePickupForDate(today, addressId, holidays),
+      outcome: await ensurePickupForDate(today, addressId, holidays, schedule),
     })),
   )
 

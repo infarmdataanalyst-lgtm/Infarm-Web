@@ -6,14 +6,25 @@
 
 import { describe, expect, it } from 'vitest'
 import {
+  DEFAULT_PICKUP_SCHEDULE,
   MAX_PICKUP_HOLIDAYS,
+  NO_HOLIDAYS,
   PICKUP_HOLIDAY_LABEL_MAX,
+  cutoffOptionsFor,
+  formatPickupHour,
   isPickupDay,
   nextPickupDate,
   normalizePickupHolidays,
+  normalizePickupSchedule,
   parsePickupHolidays,
+  parsePickupSchedule,
+  pickupHoursFor,
   resolvePickupDate,
+  slotDatesToReset,
   toHolidaySet,
+  toMengantarTime,
+  validatePickupHours,
+  type PickupSchedule,
 } from '@/lib/pickup-schedule'
 
 // Kalender Oktober 2026: Sabtu 10, Minggu 11, Senin 12, …, Sabtu 17, Minggu 18, Senin 19.
@@ -197,5 +208,179 @@ describe('normalizePickupHolidays (masukan admin, ketat)', () => {
     expect(next).not.toBeNull()
     expect(isPickupDay(next!, toHolidaySet(list))).toBe(true)
     expect(next! > list[list.length - 1].date).toBe(true)
+  })
+})
+
+// === Jam penjemputan & cutoff dari OMS ===
+
+const SELASA_13 = '2026-10-13'
+const RABU_14 = '2026-10-14'
+
+// Jam rutin 17/15, dan Selasa 13 kurir datang lebih awal: jemput 12.00, batas pesanan 10.00.
+const JADWAL: PickupSchedule = {
+  default: { pickupHour: 17, cutoffHour: 15 },
+  overrides: [{ date: SELASA_13, pickupHour: 12, cutoffHour: 10, label: 'Stok opname' }],
+}
+
+describe('resolvePickupDate dengan jam dari OMS', () => {
+  it('tanpa jadwal → perilaku lama persis (cutoff 15.00)', () => {
+    expect(resolvePickupDate(wib(2026, 10, 13, 14, 59)).date).toBe(SELASA_13)
+    expect(resolvePickupDate(wib(2026, 10, 13, 15, 0)).date).toBe(RABU_14)
+  })
+
+  it('hari berjam khusus memakai cutoff khususnya: 10.30 sudah ikut besok', () => {
+    const r = resolvePickupDate(wib(2026, 10, 13, 10, 30), NO_HOLIDAYS, JADWAL)
+    expect(r).toMatchObject({ date: RABU_14, reason: 'lewat-cutoff' })
+  })
+
+  it('hari berjam khusus, sebelum cutoff khusus → hari itu', () => {
+    expect(resolvePickupDate(wib(2026, 10, 13, 9, 59), NO_HOLIDAYS, JADWAL).date).toBe(SELASA_13)
+  })
+
+  it('hari lain tetap memakai jam rutin', () => {
+    expect(resolvePickupDate(wib(2026, 10, 14, 14, 0), NO_HOLIDAYS, JADWAL).date).toBe(RABU_14)
+  })
+
+  it('jam rutin yang diubah (cutoff 12.00) berlaku untuk semua hari tanpa jam khusus', () => {
+    const awal: PickupSchedule = { default: { pickupHour: 14, cutoffHour: 12 }, overrides: [] }
+    expect(resolvePickupDate(wib(2026, 10, 14, 12, 0), NO_HOLIDAYS, awal).reason).toBe('lewat-cutoff')
+  })
+})
+
+describe('pickupHoursFor & format', () => {
+  it('jam khusus menang atas jam rutin, beserta labelnya', () => {
+    expect(pickupHoursFor(SELASA_13, JADWAL)).toEqual({
+      pickupHour: 12,
+      cutoffHour: 10,
+      special: true,
+      label: 'Stok opname',
+    })
+    expect(pickupHoursFor(RABU_14, JADWAL)).toEqual({ pickupHour: 17, cutoffHour: 15, special: false })
+  })
+
+  it('format Mengantar tanpa nol di depan, format tampilan dengan nol', () => {
+    expect(toMengantarTime(9)).toBe('9:00')
+    expect(toMengantarTime(17)).toBe('17:00')
+    expect(formatPickupHour(9)).toBe('09.00')
+  })
+
+  it('pilihan cutoff berhenti 2 jam sebelum jemput', () => {
+    expect(cutoffOptionsFor(17).at(-1)).toBe(15)
+    expect(cutoffOptionsFor(9)).toEqual([6, 7])
+  })
+})
+
+describe('validatePickupHours', () => {
+  it('menerima pasangan sah', () => {
+    expect(validatePickupHours(17, 15)).toBeNull()
+    expect(validatePickupHours(9, 7)).toBeNull()
+  })
+
+  it('jam jemput di luar 09–18 ditolak (Mengantar tak menerimanya)', () => {
+    expect(validatePickupHours(8, 6)).not.toBeNull()
+    expect(validatePickupHours(19, 15)).not.toBeNull()
+    expect(validatePickupHours(16.5, 14)).not.toBeNull()
+  })
+
+  it('cutoff kurang dari 2 jam sebelum jemput ditolak (aturan 90 menit Mengantar)', () => {
+    expect(validatePickupHours(17, 16)).toMatch(/2 jam/)
+    expect(validatePickupHours(17, 17)).not.toBeNull()
+  })
+
+  it('cutoff terlalu pagi atau bukan angka ditolak', () => {
+    expect(validatePickupHours(12, 5)).not.toBeNull()
+    expect(validatePickupHours(12, '10')).not.toBeNull()
+  })
+})
+
+describe('parsePickupSchedule (baca simpanan, toleran)', () => {
+  it('kosong / rusak → jadwal bawaan 17.00 / 15.00', () => {
+    expect(parsePickupSchedule(null)).toEqual(DEFAULT_PICKUP_SCHEDULE)
+    expect(parsePickupSchedule('bukan json')).toEqual(DEFAULT_PICKUP_SCHEDULE)
+    expect(DEFAULT_PICKUP_SCHEDULE.default).toEqual({ pickupHour: 17, cutoffHour: 15 })
+  })
+
+  it('jam rutin tak sah → bawaan; jam khusus rusak dilewati, yang sah tetap', () => {
+    const raw = JSON.stringify({
+      default: { pickupHour: 20, cutoffHour: 15 },
+      overrides: [
+        { date: SELASA_13, pickupHour: 12, cutoffHour: 10 },
+        { date: RABU_14, pickupHour: 12, cutoffHour: 11 }, // jarak 1 jam → dilewati
+        { date: 'bukan-tanggal', pickupHour: 12, cutoffHour: 10 },
+      ],
+    })
+    expect(parsePickupSchedule(raw)).toEqual({
+      default: DEFAULT_PICKUP_SCHEDULE.default,
+      overrides: [{ date: SELASA_13, pickupHour: 12, cutoffHour: 10 }],
+    })
+  })
+})
+
+describe('normalizePickupSchedule (masukan admin, ketat)', () => {
+  const sah = { default: { pickupHour: 17, cutoffHour: 15 }, overrides: [] }
+
+  it('jadwal sah diterima, jam khusus diurutkan dan labelnya dipotong', () => {
+    const r = normalizePickupSchedule(
+      {
+        ...sah,
+        overrides: [
+          { date: RABU_14, pickupHour: 13, cutoffHour: 11 },
+          { date: SELASA_13, pickupHour: 12, cutoffHour: 10, label: 'x'.repeat(100) },
+        ],
+      },
+      '2026-10-13',
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.schedule.overrides.map((o) => o.date)).toEqual([SELASA_13, RABU_14])
+    expect(r.schedule.overrides[0].label).toHaveLength(PICKUP_HOLIDAY_LABEL_MAX)
+  })
+
+  it('jam khusus yang sudah lewat dibuang & dilaporkan', () => {
+    const r = normalizePickupSchedule(
+      { ...sah, overrides: [{ date: SENIN_12, pickupHour: 12, cutoffHour: 10 }] },
+      '2026-10-13',
+    )
+    expect(r).toEqual({ ok: true, schedule: sah, dropped: [SENIN_12] })
+  })
+
+  it('jam khusus pada hari Minggu ditolak', () => {
+    const r = normalizePickupSchedule(
+      { ...sah, overrides: [{ date: '2026-10-18', pickupHour: 12, cutoffHour: 10 }] },
+      '2026-10-13',
+    )
+    expect(r.ok).toBe(false)
+  })
+
+  it('jam rutin tak sah ditolak dengan pesan', () => {
+    const r = normalizePickupSchedule({ default: { pickupHour: 17, cutoffHour: 16 } }, '2026-10-13')
+    expect(r).toMatchObject({ ok: false })
+  })
+})
+
+describe('slotDatesToReset', () => {
+  const SLOT = [SELASA_13, RABU_14]
+
+  it('ubah jam jemput rutin → semua slot tanpa jam khusus dibuat ulang', () => {
+    const sesudah: PickupSchedule = { ...JADWAL, default: { pickupHour: 16, cutoffHour: 14 } }
+    expect(slotDatesToReset(JADWAL, sesudah, SLOT)).toEqual([RABU_14])
+  })
+
+  it('tambah jam khusus untuk tanggal yang slotnya sudah ada → slot itu dibuat ulang', () => {
+    const sesudah: PickupSchedule = {
+      ...JADWAL,
+      overrides: [...JADWAL.overrides, { date: RABU_14, pickupHour: 12, cutoffHour: 10 }],
+    }
+    expect(slotDatesToReset(JADWAL, sesudah, SLOT)).toEqual([RABU_14])
+  })
+
+  it('hanya cutoff yang berubah → tak ada slot dibuat ulang (cutoff tak dikirim ke Mengantar)', () => {
+    const sesudah: PickupSchedule = { ...JADWAL, default: { pickupHour: 17, cutoffHour: 12 } }
+    expect(slotDatesToReset(JADWAL, sesudah, SLOT)).toEqual([])
+  })
+
+  it('hapus jam khusus yang jamnya beda dari rutin → slot tanggal itu dibuat ulang', () => {
+    const sesudah: PickupSchedule = { ...JADWAL, overrides: [] }
+    expect(slotDatesToReset(JADWAL, sesudah, SLOT)).toEqual([SELASA_13])
   })
 })
