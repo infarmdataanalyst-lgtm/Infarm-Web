@@ -9,7 +9,8 @@
 // memanggil requireAdmin() sendiri.
 
 import { NextResponse } from 'next/server'
-import { getAdminId, requireAdmin } from '@/lib/oms-guard'
+import { getAdminIdentity, requireAdmin } from '@/lib/oms-guard'
+import { shouldMaskBuyerPii } from '@/lib/oms-pii'
 import { getOmsNotifications } from '@/lib/mock-db/notifications'
 import { getNotifLastSeen } from '@/lib/mock-db/settings'
 import { parseNotificationGroup } from '@/lib/notification-groups'
@@ -24,9 +25,11 @@ export async function GET(request: Request) {
   const unauthorized = await requireAdmin()
   if (unauthorized) return unauthorized
 
-  // requireAdmin() sudah lolos, jadi id-nya pasti ada; guard ini hanya untuk penyempitan tipe.
-  const adminId = await getAdminId()
-  if (!adminId) return NextResponse.json({ error: 'Sesi tidak valid.' }, { status: 401 })
+  // requireAdmin() sudah lolos, jadi identitasnya pasti ada; guard ini hanya untuk penyempitan tipe.
+  // Peran ikut dibaca: nama pembeli di notifikasi tersensor untuk 'staff' (lib/oms-pii.ts).
+  const identity = await getAdminIdentity()
+  if (!identity) return NextResponse.json({ error: 'Sesi tidak valid.' }, { status: 401 })
+  const adminId = identity.id
 
   const { searchParams } = new URL(request.url)
   // Nilai tak masuk akal DIABAIKAN (jatuh ke default), bukan dijadikan error — pola sama dengan
@@ -40,7 +43,13 @@ export async function GET(request: Request) {
   const group = parseNotificationGroup(searchParams.get('jenis'))
 
   const lastSeen = await getNotifLastSeen(adminId)
-  const page = await getOmsNotifications({ lastSeen, limit, offset, group })
+  const page = await getOmsNotifications({
+    lastSeen,
+    limit,
+    offset,
+    group,
+    maskBuyerNames: shouldMaskBuyerPii(identity.role),
+  })
 
   return NextResponse.json({ ...page, lastSeen })
 }

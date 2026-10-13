@@ -23,6 +23,7 @@
 // SERVER-ONLY: memakai createAdminClient() (service_role). Jangan diimpor dari komponen 'use client'.
 
 import { createAdminClient } from '@/lib/supabase/server'
+import { maskName } from '@/lib/mask'
 import { readProducts } from '@/lib/mock-db/products'
 import { readOrderIssues } from '@/lib/mock-db/order-issues'
 import { ORDER_ISSUE_META } from '@/lib/order-issues'
@@ -192,15 +193,18 @@ async function buildReviewNotifications(): Promise<OmsNotification[]> {
 // hidup, refund yang tertunda. Semuanya menyangkut uang atau kurir, dan semuanya sunyi.
 //
 // Ikut aturan berkas ini: KEADAAN, bukan peristiwa — lenyap sendiri begitu kolomnya berubah.
-async function buildIssueNotifications(): Promise<OmsNotification[]> {
+//
+// `maskBuyerNames` = penonton berperan 'staff' → nama pembeli tersensor (lib/oms-pii.ts).
+async function buildIssueNotifications(maskBuyerNames: boolean): Promise<OmsNotification[]> {
   const issues = await readOrderIssues()
   return issues.map((it) => {
     const meta = ORDER_ISSUE_META[it.kind]
+    const customer = maskBuyerNames ? maskName(it.customer) : it.customer
     return {
       id: `issue:${it.kind}:${it.invoice}`,
       type: 'pesanan_bermasalah' as const,
       title: `${meta.label}: ${it.invoice}`,
-      message: `${it.customer} — ${rupiah(it.total)}`,
+      message: `${customer} — ${rupiah(it.total)}`,
       href: meta.href,
       createdAt: it.since,
       unread: false, // diisi pemanggil setelah lastSeen diketahui
@@ -320,13 +324,14 @@ export async function getOmsNotifications(options: {
   limit?: number
   offset?: number
   group?: NotificationGroup
+  maskBuyerNames?: boolean
 }): Promise<NotificationPage> {
-  const { lastSeen, limit = 10, offset = 0, group = 'semua' } = options
+  const { lastSeen, limit = 10, offset = 0, group = 'semua', maskBuyerNames = false } = options
 
   const [stock, reviews, issues, giftStock] = await Promise.all([
     buildStockNotifications(),
     buildReviewNotifications(),
-    buildIssueNotifications(),
+    buildIssueNotifications(maskBuyerNames),
     buildGiftStockNotifications(),
   ])
 

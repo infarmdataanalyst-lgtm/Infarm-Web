@@ -7,7 +7,8 @@
 // tetap efisien saat jumlah pesanan membesar.
 
 import { NextResponse, type NextRequest } from 'next/server'
-import { requireAdmin } from '@/lib/oms-guard'
+import { getAdminIdentity, requireAdmin } from '@/lib/oms-guard'
+import { maskOrdersForRole, shouldMaskBuyerPii } from '@/lib/oms-pii'
 import {
   readOrders,
   readOrdersFiltered,
@@ -116,8 +117,14 @@ export async function GET(request: NextRequest) {
   // namanya tetap tampil di kolom Gudang untuk pesanan lama — lihat resolveWarehouseNames.
   const [couriers, warehouses] = await Promise.all([getDistinctCouriers(), readWarehouses(true)])
 
+  // Peran 'staff' menerima data pembeli tersensor (lib/oms-pii.ts). Identitas tak terbaca →
+  // anggap staff: lebih baik admin sesekali melihat data tersamar daripada staff melihat utuh.
+  const role = (await getAdminIdentity())?.role ?? 'staff'
+
   return NextResponse.json({
-    orders,
+    orders: maskOrdersForRole(orders, role),
+    // Dibaca halaman Pesanan untuk membuang kolom nama & telepon dari ekspor CSV.
+    buyerPiiMasked: shouldMaskBuyerPii(role),
     count: orders.length,
     couriers,
     warehouses: warehouses.map((w) => ({ id: w.id, nama: w.nama })),

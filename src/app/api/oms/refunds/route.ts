@@ -18,6 +18,7 @@ import { requireAdmin, requireAdminRole, getAdminIdentity } from '@/lib/oms-guar
 import { readOrdersNeedingRefund, resolveRefund, getOrderByOrderId } from '@/lib/mock-db/orders'
 import { normalizeInvoiceId } from '@/lib/invoice-id'
 import { reportRefundToGa } from '@/lib/ga-refund'
+import { maskRefundItemsForRole } from '@/lib/oms-pii'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -32,8 +33,11 @@ export async function GET() {
   // longgar di atas, muatannya yang harus sempit: `Order` membawa alamat lengkap, `invoiceUrl`
   // yang bisa jadi masih bisa dibayar, dan `mengantarObjectId` yang cukup untuk menghapus
   // penjemputan — tak satu pun dipakai halaman ini.
+  // Kontak pembeli tetap tersensor untuk peran 'staff' (lib/oms-pii.ts): staf bisa menjawab
+  // "pesanan ini masih menunggu refund", tapi menghubungi pembeli adalah tugas admin.
   const orders = await readOrdersNeedingRefund()
-  return NextResponse.json({ orders })
+  const role = (await getAdminIdentity())?.role ?? 'staff'
+  return NextResponse.json({ orders: maskRefundItemsForRole(orders, role) })
 }
 
 export async function PATCH(request: Request) {
