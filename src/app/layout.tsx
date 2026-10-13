@@ -5,6 +5,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono, Montserrat } from "next/font/google";
 import GoogleAnalyticsGate from "@/components/analytics/GoogleAnalyticsGate";
 import SpeedInsightsGate from "@/components/analytics/SpeedInsightsGate";
+import { buildReferrerOverrideScript } from "@/lib/ga-referrer-override";
 import "./globals.css";
 
 // Font identitas merek: dipakai untuk judul & tombol utama (class `font-heading`), BUKAN teks isi —
@@ -53,6 +54,17 @@ export default function RootLayout({
       lang="id"
       className={`${geistSans.variable} ${geistMono.variable} ${montserrat.variable} h-full antialiased`}
     >
+      {gaId && (
+        <head>
+          {/* Harus berjalan SEBELUM skrip GA (afterInteractive): pembeli yang dipulangkan Xendit
+              diberi perujuk halaman checkout toko sendiri, supaya laporan GA4 tidak mencatat
+              xendit.co sebagai sumber sesi. Lihat lib/ga-referrer-override.ts. */}
+          <script
+            id="ga-referrer-override"
+            dangerouslySetInnerHTML={{ __html: buildReferrerOverrideScript() }}
+          />
+        </head>
+      )}
       <body className="min-h-full flex flex-col">
         {children}
         {gaId && <GoogleAnalyticsGate gaId={gaId} />}

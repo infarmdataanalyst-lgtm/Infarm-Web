@@ -184,6 +184,10 @@ punya pemilik yang bisa dibuktikan lewat jalur email, jadi tak akan pernah muncu
   pesanan dijaga kolom `orders.ga_refund_sent_at`) — detail: docs/checkout-flow.md → "Laporan
   refund ke GA4". Strategi load = `afterInteractive`
   (default @next/third-parties) — disengaja demi akurasi analytics (tak di-defer ke `lazyOnload`).
+  Pembeli yang dipulangkan Xendit diberi perujuk `/checkout` toko sendiri oleh skrip inline di
+  `<head>` root layout (`src/lib/ga-referrer-override.ts`) SEBELUM GA dimuat — aturan "rujukan yang
+  tidak diinginkan" di GA4 (xendit.co, xen.to) sudah terpasang dan hit sudah membawa `ir=1`, tapi
+  data final GA4 tetap mencatat `checkout-staging.xendit.co / referral` (terukur 12 Okt 2026).
 
 ### Roadmap integrasi (belum terpasang)
 
