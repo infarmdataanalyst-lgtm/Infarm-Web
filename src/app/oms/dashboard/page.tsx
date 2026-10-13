@@ -53,6 +53,8 @@ import {
 } from '@/lib/dashboard-revenue'
 import { getLowStockThreshold } from '@/lib/mock-db/settings'
 import { formatRupiah } from '@/lib/format'
+import { getAdminIdentity } from '@/lib/oms-guard'
+import { maskOrdersForRole } from '@/lib/oms-pii'
 import type { OrderPaymentStatus, BestSellingProduct } from '@/types/order'
 import type { StoredProduct } from '@/types/product'
 
@@ -110,7 +112,7 @@ export default async function DashboardPage({
 
   // Satu putaran fetch paralel. readOrdersForRevenue dipanggil dua kali (periode aktif &
   // pembanding) karena delta pertumbuhan harus dihitung dari rentang yang sama panjangnya.
-  const [currentRows, previousRows, bestSellers, recentOrders, products, lowStockThreshold] =
+  const [currentRows, previousRows, bestSellers, recentOrdersFull, products, lowStockThreshold, identity] =
     await Promise.all([
     readOrdersForRevenue(period.fromIso, period.toIso),
     readOrdersForRevenue(comparison.fromIso, comparison.toIso),
@@ -125,7 +127,12 @@ export default async function DashboardPage({
     readProducts(),
     // Ambang "stok menipis" kini diatur admin di /oms/dashboard/pengaturan, bukan konstanta kode.
     getLowStockThreshold(),
+    getAdminIdentity(),
   ])
+
+  // Nama pembeli di tabel pesanan terbaru tersensor untuk peran 'staff' (lib/oms-pii.ts).
+  // Identitas tak terbaca → anggap staff.
+  const recentOrders = maskOrdersForRole(recentOrdersFull, identity?.role ?? 'staff')
 
   const totals = summarizeRevenue(currentRows)
   const previousTotals = summarizeRevenue(previousRows)

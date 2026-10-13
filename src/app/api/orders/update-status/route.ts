@@ -6,7 +6,8 @@
 // Validasi transisi & field dilakukan ULANG di server (jangan percaya UI).
 
 import { NextResponse } from 'next/server'
-import { requireAdmin } from '@/lib/oms-guard'
+import { getAdminIdentity, requireAdmin } from '@/lib/oms-guard'
+import { maskOrderForRole } from '@/lib/oms-pii'
 import {
   getOrderByOrderId,
   getOrderUuidByInvoice,
@@ -176,7 +177,11 @@ export async function PATCH(request: Request) {
     logistics = { courier, service, trackingNumber }
   }
 
-  const updated = await updateOrderStatus(orderId, newStatus, logistics)
+  const updatedFull = await updateOrderStatus(orderId, newStatus, logistics)
+  // Pesanan yang dikembalikan ke modal ikut tersensor untuk peran 'staff' (lib/oms-pii.ts) — ia
+  // menggantikan baris di tabel Pesanan, jadi harus sama bentuknya dengan /api/orders/list.
+  const role = (await getAdminIdentity())?.role ?? 'staff'
+  const updated = updatedFull ? maskOrderForRole(updatedFull, role) : updatedFull
   if (!updated) {
     return NextResponse.json({ error: 'Gagal memperbarui status pesanan.' }, { status: 500 })
   }

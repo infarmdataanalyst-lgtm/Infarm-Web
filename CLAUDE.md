@@ -612,6 +612,15 @@ sesi disimpan sebagai **cookie httpOnly bertanda tangan HMAC** (bukan lagi penan
 - **Roadmap**: pertimbangkan Supabase Auth penuh bila butuh peran lebih banyak/reset password.
   Belum ada UI kelola akun admin — membuat akun `staff` masih lewat SQL (`insert into admin_users`
   dengan `role = 'staff'` + `password_hash` dari `hashPassword()`).
+- **Sensor data pembeli untuk `staff`** (keputusan pemilik 2026-10-13, `src/lib/oms-pii.ts`): di
+  SERVER, sebelum JSON dikirim — nama & kata jalan disamarkan per kata, HP `0812****7890`, email
+  `b***@domain`, `refundNote` dibuang; wilayah alamat tetap utuh. Dipasang di `/api/orders/list`,
+  `/api/oms/orders/detail`, `/api/orders/update-status`, `/api/oms/refunds` GET, `/api/oms/search`,
+  `/api/notifications` (nama di pesan "pesanan bermasalah"), dan tabel pesanan terbaru dashboard.
+  Ekspor CSV staff tanpa kolom Customer & Telepon (flag `buyerPiiMasked` dari `/api/orders/list`).
+  Peran selain `'admin'` SELALU tersensor; identitas tak terbaca → diperlakukan sebagai staff.
+  Nama pengulas di halaman Ulasan TIDAK disensor (sudah tampil publik di toko). Aksi tulis staff
+  belum dikunci selain yang memakai `requireAdminRole` — menunggu keputusan pemilik.
 
 ## Rate Limiting (anti bot / brute-force / scraping) — sudah terpasang
 

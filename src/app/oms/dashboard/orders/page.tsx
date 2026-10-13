@@ -64,6 +64,9 @@ function OrdersContent() {
 
   // === State ===
   const [orders, setOrders] = useState<Order[]>([])
+  // true = akun 'staff': data pembeli tersensor dari server & ekspor CSV tanpa kolom pembeli.
+  // Awalnya true (tertutup) sampai server menjawab.
+  const [buyerPiiMasked, setBuyerPiiMasked] = useState(true)
   const [couriers, setCouriers] = useState<string[]>([])
   // Gudang aktif untuk dropdown filter (dari endpoint list, bukan /api/warehouses/list — supaya
   // halaman ini tetap satu request).
@@ -220,9 +223,10 @@ function OrdersContent() {
 
     fetch(url)
       .then((res) => res.json())
-      .then((data: { orders?: Order[]; couriers?: string[]; warehouses?: { id: string; nama: string }[] }) => {
+      .then((data: { orders?: Order[]; buyerPiiMasked?: boolean; couriers?: string[]; warehouses?: { id: string; nama: string }[] }) => {
         if (active) {
           setOrders(data.orders ?? [])
+          setBuyerPiiMasked(data.buyerPiiMasked === true)
           if (data.couriers) setCouriers(data.couriers)
           if (data.warehouses) setWarehouses(data.warehouses)
         }
@@ -370,10 +374,13 @@ function OrdersContent() {
       return `"${s.replace(/"/g, '""')}"`
     }
 
+    // Peran 'staff' (buyerPiiMasked) mengekspor TANPA kolom Customer & Telepon — keputusan pemilik
+    // 2026-10-13: file ekspor mudah berpindah tangan, jadi tak memuat data pembeli sama sekali,
+    // bahkan dalam bentuk tersensor. Datanya sendiri sudah tersensor dari server (lib/oms-pii.ts).
+    const buyerColumns = buyerPiiMasked ? [] : ['Customer', 'Telepon']
     const headers = [
       'No. Invoice',
-      'Customer',
-      'Telepon',
+      ...buyerColumns,
       'Total',
       'Kurir',
       'Layanan',
@@ -391,8 +398,7 @@ function OrdersContent() {
     const rows = orders.map((o) =>
       [
         formatInvoice(o.orderId),
-        o.customerName,
-        o.customerPhone ?? '',
+        ...(buyerPiiMasked ? [] : [o.customerName, o.customerPhone ?? '']),
         o.totalAmount,
         o.logistics?.courier ?? '',
         o.logistics?.service ?? '',

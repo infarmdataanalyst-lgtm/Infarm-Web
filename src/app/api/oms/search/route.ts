@@ -7,15 +7,16 @@
 //   - nomor invoice / resi (boleh sampai 20 sekaligus) → sesi OMS apa pun (admin & staff)
 //   - nomor HP pembeli / nama pembeli                  → HANYA peran 'admin' (403 untuk staff)
 //
-// ── Kenapa nama & HP dibatasi, padahal staff sudah bisa melihat nama di daftar pesanan ──
-// Melihat nama di baris pesanan yang sedang dikerjakan berbeda dari MENCARI orang lewat namanya:
-// yang kedua bisa dipakai menelusuri riwayat belanja seseorang. Keputusan pemilik proyek 2026-09-17.
+// ── Kenapa nama & HP dibatasi ──
+// MENCARI orang lewat namanya bisa dipakai menelusuri riwayat belanja seseorang. Keputusan pemilik
+// proyek 2026-09-17. Sejak 2026-10-13 staff juga hanya melihat nama tersensor (lib/oms-pii.ts).
 //
 // ── Yang sengaja TIDAK dilakukan ──
 // Teks pencarian tidak pernah ditulis ke log: isinya bisa nama atau nomor HP pembeli.
 
 import { NextResponse, type NextRequest } from 'next/server'
 import { getAdminIdentity, requireAdmin } from '@/lib/oms-guard'
+import { maskNameForRole } from '@/lib/oms-pii'
 import { parseOmsSearchQuery } from '@/lib/oms-search-query'
 import {
   OMS_SEARCH_RESULT_LIMIT,
@@ -67,10 +68,12 @@ export async function GET(request: NextRequest) {
   // === Nomor invoice / resi ===
   if (query.kind === 'orders') {
     const { byInvoice, byTracking } = await searchOrdersByInvoiceOrTracking(query.tokens)
+    // Nama pembeli di hasil tersensor untuk peran 'staff' (lib/oms-pii.ts). Cabang nama/HP di
+    // bawah tak perlu: ia sudah tertutup untuk staff.
     const results: OmsSearchResult[] = [
       ...byInvoice.map((r) => ({ ...r, matchedBy: 'invoice' as const })),
       ...byTracking.map((r) => ({ ...r, matchedBy: 'resi' as const })),
-    ]
+    ].map((r) => ({ ...r, customerName: maskNameForRole(r.customerName, identity.role) }))
 
     // Urutan hasil mengikuti urutan nomor yang ditempel admin, bukan urutan database — daftar
     // serah terima dibaca dari atas ke bawah, dan hasil yang melompat-lompat membuatnya dicocokkan ulang.

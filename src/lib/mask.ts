@@ -30,6 +30,15 @@ export function maskName(name: string): string {
     .join(' ')
 }
 
+// Samarkan email: sisakan huruf pertama nama akun, domain dibiarkan (berguna untuk mengenali
+// salah ketik domain, dan bukan data pribadi). Contoh: "budi.santoso@gmail.com" → "b***@gmail.com"
+export function maskEmail(email: string): string {
+  const s = email.trim()
+  const at = s.lastIndexOf('@')
+  if (at <= 0) return maskMiddle(s, 1, 0, 3)
+  return `${s[0]}***${s.slice(at)}`
+}
+
 // Samarkan detail jalan/nomor rumah (teks bebas paling sensitif), pertahankan sedikit awalan+akhiran.
 // Region (kelurahan/kecamatan/kota/provinsi) TIDAK disamarkan agar user tetap bisa mengenali pesanannya.
 // Contoh: "Jl. Merpati No. 12 RT 03" → "Jl. M••••••••••03"
