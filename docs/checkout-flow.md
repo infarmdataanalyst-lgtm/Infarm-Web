@@ -300,10 +300,23 @@ perantara yang diisi cron, dan checkout hanya **membaca**.
 - **⚠️ Cron Vercel memakai UTC, bukan WIB.** 06:00 WIB = **23:00 UTC hari SEBELUMNYA**, jadi
   "Senin–Sabtu WIB" ditulis sebagai **Minggu–Jumat UTC** → `0 23 * * 0-5`. Menulis `0 6 * * 1-6`
   akan jalan 13:00 WIB dan salah hari untuk Sabtu/Senin. Jangan "diperbaiki" tanpa menghitung ulang.
-- **Cutoff 15:00 WIB** (`PICKUP_CUTOFF_HOUR_WIB`): lewat jam itu, pesanan memakai `time_id` **hari
-  kerja berikutnya**. Sabtu sore → Senin. **Hari Minggu, jam berapa pun, juga → Senin** — cabang
-  `bukan-hari-pickup` di `resolvePickupDate`; tanpa itu pesanan Minggu pagi meminta slot untuk hari
-  yang kurirnya tidak datang.
+- **Cutoff bawaan 15:00 WIB, jemput bawaan 17:00 WIB** — keduanya kini diatur admin di tab **Jam
+  Penjemputan** (`/oms/dashboard/pengaturan`, sejak 2026-10-13; `store_settings.pickup_schedule` =
+  `{ default: {pickupHour, cutoffHour}, overrides: [{date, pickupHour, cutoffHour, label?}] }`).
+  Jam rutin + jam **khusus per tanggal**; nilai sebuah tanggal dibaca lewat `pickupHoursFor()`.
+  `resolvePickupDate` menguji **cutoff hari ini** (khusus bila ada), `ensurePickupForDate` meminta
+  slot dengan **jam jemput tanggal tujuan** (`toMengantarTime` → `"9:00"`…`"18:00"`). Aturan: jam
+  jemput hanya 09–18 bulat (daftar POST /time Mengantar), cutoff ≥ 06.00 dan **≤ jemput − 2 jam**
+  (Mengantar menolak slot < 90 menit dari booking); jam khusus pada Minggu ditolak, pada hari libur
+  diterima tapi tak berlaku (libur menang). Jam jemput < 14.00 memunculkan peringatan SPX (pusat
+  bantuan: SPX hanya 14.00–22.00, UNVERIFIED). **Slot yang sudah dibuat** untuk tanggal yang jam
+  jemputnya berubah dibuang oleh `PATCH /api/settings/pickup-schedule` (`slotDatesToReset`) agar
+  booking berikutnya membuat slot baru; paket yang sudah terbooking tetap pada slot lama (tak ada
+  reschedule di API) dan jumlahnya dilaporkan ke admin. Simpanan rusak/kosong → bawaan 17/15
+  (gagal-terbuka). Lewat cutoff, pesanan memakai `time_id` **hari kerja berikutnya**. Sabtu sore →
+  Senin. **Hari Minggu, jam berapa pun, juga → Senin** — cabang `bukan-hari-pickup` di
+  `resolvePickupDate`; tanpa itu pesanan Minggu pagi meminta slot untuk hari yang kurirnya tidak
+  datang.
 - **`getTodayPickupTimeId()` tiga lapis**: (1) baca tabel — jalur normal, nol panggilan keluar;
   (2) fallback `POST /time` **yang hasilnya DISIMPAN**; (3) `MENGANTAR_PICKUP_TIME_ID` statis.
 - **Fallback lapis 2 adalah jalur NORMAL setiap sore**, bukan pengecualian: cron hanya membuat slot

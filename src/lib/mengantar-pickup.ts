@@ -30,17 +30,20 @@ import 'server-only'
 
 import { mengantarWriteHost } from '@/lib/mengantar-host'
 import { getPickupByDate, savePickup, type DailyPickup } from '@/lib/mock-db/pickup'
-import { getPickupHolidays } from '@/lib/mock-db/settings'
+import { getPickupHolidays, getPickupSchedule } from '@/lib/mock-db/settings'
 import {
+  DEFAULT_PICKUP_SCHEDULE,
   NO_HOLIDAYS,
-  PICKUP_TIME_HHMM,
   isPickupDay,
   parsePickupDate,
+  pickupHoursFor,
   resolvePickupDate,
   toHolidaySet,
   toMengantarDate,
+  toMengantarTime,
   type PickupDateReason,
   type PickupHolidays,
+  type PickupSchedule,
 } from '@/lib/pickup-schedule'
 
 const LOG = '[mengantar-pickup]'
@@ -111,9 +114,13 @@ function extractTimeId(body: unknown): string | null {
 // `addressId` datang dari pemanggil (warehouses.mengantar_address_id lewat lib/warehouse.ts),
 // BUKAN dari env: sejak tiap gudang punya alamat sendiri, membaca env di sini berarti seluruh
 // gudang kembali berbagi satu slot — persis keadaan yang hendak ditinggalkan.
+//
+// `pickupHour` = jam jemput yang berlaku pada tanggal itu (pickupHoursFor), diatur admin di OMS.
+// Bawaannya 17 supaya pemanggil lama tetap meminta jam yang sama seperti sebelum fitur ini.
 export async function createPickupTime(
   date: string,
   addressId: string,
+  pickupHour: number = DEFAULT_PICKUP_SCHEDULE.default.pickupHour,
 ): Promise<CreateTimeResult> {
   const key = process.env.MENGANTAR_API_KEY
 
@@ -146,7 +153,7 @@ export async function createPickupTime(
       body: JSON.stringify({
         address_id: addressId,
         date: mengantarDate,
-        time: PICKUP_TIME_HHMM,
+        time: toMengantarTime(pickupHour),
       }),
       signal: AbortSignal.timeout(TIME_REQUEST_TIMEOUT_MS),
     })
@@ -200,10 +207,12 @@ export type EnsurePickupOutcome =
 //
 // `holidays` = daftar libur admin (lib/pickup-schedule.ts). Dibawa pemanggil, bukan dibaca di sini:
 // cron memanggil fungsi ini sekali PER ALAMAT dan tak perlu membuka setting yang sama berulang.
+// `schedule` = jam jemput dari OMS, dibawa pemanggil dengan alasan yang sama.
 export async function ensurePickupForDate(
   date: string,
   addressId: string,
   holidays: PickupHolidays = NO_HOLIDAYS,
+  schedule: PickupSchedule = DEFAULT_PICKUP_SCHEDULE,
 ): Promise<EnsurePickupOutcome> {
   if (parsePickupDate(date) === null) {
     return { status: 'failed', reason: `format tanggal tidak valid: ${date}` }
@@ -224,7 +233,8 @@ export async function ensurePickupForDate(
     return { status: 'existing', pickup: existing }
   }
 
-  const created = await createPickupTime(date, addressId)
+  const { pickupHour } = pickupHoursFor(date, schedule)
+  const created = await createPickupTime(date, addressId, pickupHour)
   if (!created.ok) {
     console.error(
       `${LOG} gagal membuat time_id ${date} alamat ${addressId}: ${created.reason} ${created.detail ?? ''}`,
@@ -241,7 +251,7 @@ export async function ensurePickupForDate(
   }
 
   console.log(
-    `${LOG} ${date} alamat ${addressId} -> time_id ${saved.inserted ? 'dibuat' : 'sudah ditulis pemanggil lain'}`,
+    `${LOG} ${date} ${toMengantarTime(pickupHour)} alamat ${addressId} -> time_id ${saved.inserted ? 'dibuat' : 'sudah ditulis pemanggil lain'}`,
   )
   return saved.inserted
     ? { status: 'created', pickup: saved.pickup }
@@ -286,13 +296,20 @@ export type PickupTimeId = {
 // `holidays` opsional: bila tak diberikan, daftar libur admin dibaca dari store_settings (satu
 // SELECT kecil per pesanan lunas — dibaca di sini, bukan dibiarkan terlewat, karena pesanan yang
 // masuk saat libur Lebaran harus lari ke hari kerja berikutnya, persis seperti pesanan Minggu).
+//
+// `schedule` opsional dengan alasan yang sama: cutoff HARI INI dan jam jemput tanggal tujuan diatur
+// admin di OMS, jadi dibaca di sini bila pemanggil tak membawanya.
 export async function getTodayPickupTimeId(
   addressId: string,
   nowMs: number = Date.now(),
   holidays?: PickupHolidays,
+  schedule?: PickupSchedule,
 ): Promise<PickupTimeId | null> {
-  const libur = holidays ?? toHolidaySet(await getPickupHolidays())
-  const { date, reason, today, hour } = resolvePickupDate(nowMs, libur)
+  const [libur, jadwal] = await Promise.all([
+    holidays ? Promise.resolve(holidays) : getPickupHolidays().then(toHolidaySet),
+    schedule ? Promise.resolve(schedule) : getPickupSchedule(),
+  ])
+  const { date, reason, today, hour } = resolvePickupDate(nowMs, libur, jadwal)
 
   const existing = await getPickupByDate(date, addressId)
   if (existing) return { timeId: existing.timeId, addressId, date, reason, source: 'tabel' }
@@ -300,7 +317,7 @@ export async function getTodayPickupTimeId(
   console.warn(
     `${LOG} tabel kosong untuk ${date} alamat ${addressId} (sekarang ${today} jam ${hour} WIB, alasan ${reason}) — fallback panggil Mengantar`,
   )
-  const outcome = await ensurePickupForDate(date, addressId, libur)
+  const outcome = await ensurePickupForDate(date, addressId, libur, jadwal)
   if (outcome.status === 'created' || outcome.status === 'raced' || outcome.status === 'existing') {
     return { timeId: outcome.pickup.timeId, addressId, date, reason, source: 'fallback-api' }
   }

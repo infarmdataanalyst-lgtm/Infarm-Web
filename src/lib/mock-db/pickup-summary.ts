@@ -15,14 +15,16 @@
 
 import { createAdminClient } from '@/lib/supabase/server'
 import { readWarehouses } from '@/lib/mock-db/warehouses'
-import { getPickupHolidays } from '@/lib/mock-db/settings'
+import { getPickupHolidays, getPickupSchedule } from '@/lib/mock-db/settings'
 import {
-  PICKUP_CUTOFF_HOUR_WIB,
-  PICKUP_TIME_HHMM,
   nextPickupDate,
+  pickupHoursFor,
   resolvePickupDate,
   toHolidaySet,
 } from '@/lib/pickup-schedule'
+
+// "17:00" dari jam bulat — bentuk yang sudah dipakai kartu sejak awal (lihat jam() di kartu).
+const hhmm = (hour: number) => `${String(hour).padStart(2, '0')}:00`
 
 export type PickupDayStatus =
   | 'hari-ini' // hari pickup, sebelum cutoff: pesanan baru masih ikut hari ini
@@ -44,10 +46,17 @@ export type PickupScheduleSummary = {
   hour: number // jam dinding WIB saat dihitung
   status: PickupDayStatus
   holidayLabel?: string // keterangan libur hari ini, bila admin mengisinya
+  // Jam yang berlaku HARI INI (rutin atau khusus, diatur di OMS → Pengaturan → Jam Penjemputan).
   cutoffHour: number
-  pickupTime: string // HH:mm slot penjemputan
-  // Hari pickup berikutnya SETELAH hari ini (selalu ada, kecuali konfigurasi rusak).
+  pickupTime: string // HH:mm slot penjemputan hari ini
+  // true bila hari ini memakai jam khusus, bukan jam rutin — kartu menyebutnya supaya admin tidak
+  // mengira kurir datang pada jam biasa.
+  todaySpecial: boolean
+  todaySpecialLabel?: string
+  // Hari pickup berikutnya SETELAH hari ini (selalu ada, kecuali konfigurasi rusak) dan jamnya —
+  // jam berikutnya bisa berbeda dari hari ini bila salah satunya punya jam khusus.
   nextDate: string | null
+  nextPickupTime: string | null
   // Paket terjadwal hari ini (0 bila hari ini bukan hari pickup) dan pada hari pickup berikutnya.
   todayCount: number
   nextCount: number
@@ -67,10 +76,11 @@ const SOURCE_LIMIT = 2000
 export async function readPickupScheduleSummary(
   nowMs: number = Date.now(),
 ): Promise<PickupScheduleSummary> {
-  const holidayList = await getPickupHolidays()
+  const [holidayList, schedule] = await Promise.all([getPickupHolidays(), getPickupSchedule()])
   const holidays = toHolidaySet(holidayList)
-  const resolved = resolvePickupDate(nowMs, holidays)
+  const resolved = resolvePickupDate(nowMs, holidays, schedule)
   const today = resolved.today
+  const jamHariIni = pickupHoursFor(today, schedule)
 
   const status: PickupDayStatus =
     resolved.reason === 'hari-libur'
@@ -88,9 +98,12 @@ export async function readPickupScheduleSummary(
     hour: resolved.hour,
     status,
     ...(holidayLabel ? { holidayLabel } : {}),
-    cutoffHour: PICKUP_CUTOFF_HOUR_WIB,
-    pickupTime: PICKUP_TIME_HHMM,
+    cutoffHour: jamHariIni.cutoffHour,
+    pickupTime: hhmm(jamHariIni.pickupHour),
+    todaySpecial: jamHariIni.special,
+    ...(jamHariIni.label ? { todaySpecialLabel: jamHariIni.label } : {}),
     nextDate,
+    nextPickupTime: nextDate ? hhmm(pickupHoursFor(nextDate, schedule).pickupHour) : null,
     todayCount: 0,
     nextCount: 0,
     byWarehouse: [],

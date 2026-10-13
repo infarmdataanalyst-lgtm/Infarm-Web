@@ -56,6 +56,54 @@ export async function getPickupByDate(
   return data ? rowToPickup(data as PickupRow) : null
 }
 
+// Tanggal-tanggal (≥ `fromDate`) yang sudah punya slot di tabel, untuk alamat mana pun. Dipakai saat
+// admin mengubah jam jemput: hanya slot yang SUDAH dibuat yang mungkin berjam lama. [] bila gagal
+// membaca — pemanggil memperlakukannya sebagai "tak ada slot untuk dibuang".
+export async function listPickupSlotDatesFrom(fromDate: string): Promise<string[]> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('mengantar_daily_pickup')
+    .select('date')
+    .gte('date', fromDate)
+
+  if (error) {
+    console.error(`Gagal membaca slot pickup sejak ${fromDate}:`, error.message)
+    return []
+  }
+  return [...new Set((data ?? []).map((r) => (r as { date: string }).date))].sort()
+}
+
+// Membuang slot untuk tanggal-tanggal tertentu (semua alamat) supaya booking/cron berikutnya membuat
+// slot BARU dengan jam yang sekarang berlaku. Baris lama dibuang, bukan ditimpa: order yang sudah
+// dibooking menyimpan time_id-nya sendiri di orders.pickup_time_id, jadi tak ada yang kehilangan
+// rujukan. Melempar Error bila gagal — admin harus tahu jam barunya belum akan berlaku.
+export async function deletePickupSlotsForDates(dates: readonly string[]): Promise<void> {
+  if (dates.length === 0) return
+  const supabase = createAdminClient()
+  const { error } = await supabase.from('mengantar_daily_pickup').delete().in('date', [...dates])
+  if (error) throw new Error(`Gagal membuang slot pickup lama: ${error.message}`)
+}
+
+// Jumlah paket yang SUDAH dibooking (resi terbit, masih Diproses) pada tanggal-tanggal tertentu.
+// Paket ini terdaftar pada slot berjam lama di Mengantar dan tak ikut pindah — API Mengantar tak
+// menyediakan penjadwalan ulang — jadi admin perlu diberi tahu angkanya. null bila gagal membaca.
+export async function countBookedOrdersOnDates(dates: readonly string[]): Promise<number | null> {
+  if (dates.length === 0) return 0
+  const supabase = createAdminClient()
+  const { count, error } = await supabase
+    .from('orders')
+    .select('id', { count: 'exact', head: true })
+    .in('pickup_date', [...dates])
+    .eq('order_status', 'PROCESSING')
+    .eq('shipment_status', 'BOOKED')
+
+  if (error) {
+    console.error('Gagal menghitung paket terbooking pada slot lama:', error.message)
+    return null
+  }
+  return count ?? 0
+}
+
 // Hasil penyimpanan: `inserted` false berarti baris untuk tanggal & alamat itu SUDAH ADA dan yang
 // dikembalikan adalah milik penulis pertama, bukan nilai yang baru dikirim.
 export type SavePickupResult = {

@@ -11,11 +11,16 @@
 
 import { WIB_OFFSET_MS } from '@/lib/dashboard-period'
 
-// Jam dinding WIB batas terakhir pesanan masih ikut pickup HARI INI.
-// Lewat jam ini kurir hari itu sudah dijadwalkan/berangkat, jadi pesanan masuk antrean besok.
+// Jam BAWAAN — dipakai bila admin belum pernah mengatur tab "Jam Penjemputan" di Pengaturan OMS
+// (store_settings.pickup_schedule). Sejak 2026-10-13 keduanya bisa diubah dari OMS, termasuk per
+// tanggal; nilai berlaku untuk suatu hari dibaca lewat pickupHoursFor(), bukan konstanta ini.
+//
+// Cutoff = jam dinding WIB batas terakhir pesanan masih ikut pickup HARI ITU. Lewat jam ini kurir
+// hari itu sudah dijadwalkan/berangkat, jadi pesanan masuk antrean hari kerja berikutnya.
 export const PICKUP_CUTOFF_HOUR_WIB = 15
 
-// Jam pickup yang diminta ke Mengantar (format HH:mm). Sore, setelah gudang selesai packing.
+// Jam pickup bawaan yang diminta ke Mengantar. Sore, setelah gudang selesai packing.
+export const PICKUP_HOUR_WIB = 17
 export const PICKUP_TIME_HHMM = '17:00'
 
 // Hari pickup: Senin(1) sampai Sabtu(6). Minggu(0) tak ada penjemputan.
@@ -127,7 +132,7 @@ export function toMengantarDate(date: string): string | null {
 // Alasan sebuah tanggal pickup dipilih — dipakai untuk logging & pesan diagnostik.
 export type PickupDateReason =
   | 'hari-ini' // masih sebelum cutoff dan hari ini memang hari pickup
-  | 'lewat-cutoff' // sudah lewat 15:00 WIB → hari kerja berikutnya
+  | 'lewat-cutoff' // sudah lewat cutoff hari ini (bawaan 15:00 WIB) → hari kerja berikutnya
   | 'bukan-hari-pickup' // hari ini Minggu → hari kerja berikutnya
   | 'hari-libur' // hari ini libur yang didaftarkan admin → hari kerja berikutnya
 
@@ -148,9 +153,13 @@ export type ResolvedPickupDate = {
 // Libur HARUS sudah terdaftar sebelum hari H: pesanan yang masuk saat libur otomatis lari ke hari
 // kerja berikutnya, tapi booking yang sudah terkirim ke Mengantar sebelum libur didaftarkan tak
 // bisa ditarik kembali dari sini.
+//
+// `schedule` = jam jemput & cutoff dari OMS. Yang diuji adalah cutoff HARI INI: bila hari ini punya
+// jam khusus (mis. jemput 13.00, cutoff 11.00), pesanan pukul 12.00 sudah ikut hari kerja berikutnya.
 export function resolvePickupDate(
   nowMs: number = Date.now(),
   holidays: PickupHolidays = NO_HOLIDAYS,
+  schedule: PickupSchedule = DEFAULT_PICKUP_SCHEDULE,
 ): ResolvedPickupDate {
   const today = wibDateString(nowMs)
   const hour = wibHour(nowMs)
@@ -159,7 +168,7 @@ export function resolvePickupDate(
     const reason: PickupDateReason = holidays.has(today) ? 'hari-libur' : 'bukan-hari-pickup'
     return { date: nextPickupDate(today, holidays) ?? today, reason, today, hour }
   }
-  if (hour >= PICKUP_CUTOFF_HOUR_WIB) {
+  if (hour >= pickupHoursFor(today, schedule).cutoffHour) {
     return { date: nextPickupDate(today, holidays) ?? today, reason: 'lewat-cutoff', today, hour }
   }
   return { date: today, reason: 'hari-ini', today, hour }
@@ -244,4 +253,236 @@ export function normalizePickupHolidays(input: unknown, today: string): Normaliz
   }
   const holidays = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date))
   return { ok: true, holidays, dropped }
+}
+
+// === Jam penjemputan & cutoff (diatur admin di OMS → Pengaturan → Jam Penjemputan) ===
+//
+// Dua lapis, persis pola hari libur:
+//   - `default`   — jam rutin setiap hari pickup (mis. jemput 17.00, cutoff 15.00);
+//   - `overrides` — jam KHUSUS untuk tanggal tertentu (kurir datang lebih awal karena acara gudang,
+//                   atau lebih sore karena stok baru tiba).
+// Disimpan sebagai satu JSON di store_settings.pickup_schedule; dibaca sekali oleh cron, booking
+// kurir, dan kartu jadwal, lalu diteruskan ke fungsi-fungsi murni di bawah.
+//
+// ── Kenapa jam bulat, dan kenapa 09–18 ──
+// Mengantar hanya menerima jam penjemputan 9:00, 10:00, …, 18:00 (dokumentasi POST /time). Jam di
+// luar daftar itu akan ditolak saat slot dibuat — tepat di jalur bayar pembeli — jadi daftar yang
+// sama dipakai sebagai satu-satunya pilihan di form.
+//
+// ── Kenapa cutoff minimal 2 jam sebelum jemput ──
+// Mengantar menolak slot yang kurang dari 90 menit dari sekarang ("invalid pickup time"). Pesanan
+// terakhir yang masih ikut hari itu lunas pada cutoff − 1 menit, dan saat itulah booking-nya
+// dikirim. Dengan jarak 2 jam, booking paling akhir masih 2 jam 1 menit sebelum jemput; dengan
+// jarak 1 jam hanya 61 menit dan pesanan terakhir hari itu pasti gagal dibooking.
+
+export type PickupHours = { pickupHour: number; cutoffHour: number }
+export type PickupOverride = PickupHours & { date: string; label?: string }
+export type PickupSchedule = { default: PickupHours; overrides: PickupOverride[] }
+
+export const DEFAULT_PICKUP_HOURS: PickupHours = {
+  pickupHour: PICKUP_HOUR_WIB,
+  cutoffHour: PICKUP_CUTOFF_HOUR_WIB,
+}
+export const DEFAULT_PICKUP_SCHEDULE: PickupSchedule = {
+  default: DEFAULT_PICKUP_HOURS,
+  overrides: [],
+}
+
+// Jam penjemputan yang diterima Mengantar (POST /time).
+export const MENGANTAR_PICKUP_HOURS: readonly number[] = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+export const MIN_CUTOFF_GAP_HOURS = 2
+// Cutoff lebih pagi dari ini hampir pasti salah pilih: seluruh pesanan hari itu jadi ikut besok.
+export const MIN_CUTOFF_HOUR = 6
+export const MAX_PICKUP_OVERRIDES = 60
+// Artikel bantuan Mengantar "Layanan SPX di Mengantar": jadwal pickup SPX hanya 14.00–22.00 WIB.
+// Jam jemput lebih pagi dari ini kemungkinan membuat booking Shopee Express ditolak (UNVERIFIED) —
+// form hanya MEMPERINGATKAN, tidak menolak, karena J&T tidak terikat aturan itu.
+export const SPX_EARLIEST_PICKUP_HOUR = 14
+
+// Jam & cutoff yang berlaku pada satu tanggal: jam khusus bila ada, selain itu jam bawaan.
+export function pickupHoursFor(
+  date: string,
+  schedule: PickupSchedule = DEFAULT_PICKUP_SCHEDULE,
+): PickupHours & { special: boolean; label?: string } {
+  const o = schedule.overrides.find((x) => x.date === date)
+  if (o) {
+    return {
+      pickupHour: o.pickupHour,
+      cutoffHour: o.cutoffHour,
+      special: true,
+      ...(o.label ? { label: o.label } : {}),
+    }
+  }
+  return { ...schedule.default, special: false }
+}
+
+// Format jam untuk body POST /time Mengantar: "9:00", "17:00" — persis daftar di dokumentasinya
+// (tanpa nol di depan untuk jam satu digit).
+export function toMengantarTime(hour: number): string {
+  return `${hour}:00`
+}
+
+// Format jam untuk tampilan: "09.00", "17.00".
+export function formatPickupHour(hour: number): string {
+  return `${pad2(hour)}.00`
+}
+
+// Pilihan cutoff yang sah untuk sebuah jam jemput (MIN_CUTOFF_HOUR … jam jemput − 2).
+export function cutoffOptionsFor(pickupHour: number): number[] {
+  const out: number[] = []
+  for (let h = MIN_CUTOFF_HOUR; h <= pickupHour - MIN_CUTOFF_GAP_HOURS; h++) out.push(h)
+  return out
+}
+
+// null bila pasangan jam sah; selain itu pesan untuk admin.
+export function validatePickupHours(pickupHour: unknown, cutoffHour: unknown): string | null {
+  if (typeof pickupHour !== 'number' || !MENGANTAR_PICKUP_HOURS.includes(pickupHour)) {
+    return 'Jam jemput harus salah satu dari 09.00–18.00 (jam bulat), sesuai yang diterima Mengantar.'
+  }
+  if (typeof cutoffHour !== 'number' || !Number.isInteger(cutoffHour)) {
+    return 'Batas pesanan (cutoff) harus jam bulat.'
+  }
+  if (cutoffHour < MIN_CUTOFF_HOUR) {
+    return `Batas pesanan paling pagi ${formatPickupHour(MIN_CUTOFF_HOUR)}.`
+  }
+  if (cutoffHour > pickupHour - MIN_CUTOFF_GAP_HOURS) {
+    return `Batas pesanan minimal ${MIN_CUTOFF_GAP_HOURS} jam sebelum jam jemput — Mengantar menolak slot yang kurang dari 90 menit dari waktu booking.`
+  }
+  return null
+}
+
+// Mengurai simpanan store_settings.pickup_schedule. Toleran: simpanan rusak atau kosong → jadwal
+// bawaan, entri khusus yang rusak dilewati. Gangguan setting tak boleh mematikan booking kurir.
+export function parsePickupSchedule(raw: string | null | undefined): PickupSchedule {
+  if (!raw) return DEFAULT_PICKUP_SCHEDULE
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return DEFAULT_PICKUP_SCHEDULE
+  }
+  if (typeof parsed !== 'object' || parsed === null) return DEFAULT_PICKUP_SCHEDULE
+  const p = parsed as Record<string, unknown>
+  const d = (typeof p.default === 'object' && p.default !== null ? p.default : {}) as Record<
+    string,
+    unknown
+  >
+  const def: PickupHours =
+    validatePickupHours(d.pickupHour, d.cutoffHour) === null
+      ? { pickupHour: d.pickupHour as number, cutoffHour: d.cutoffHour as number }
+      : DEFAULT_PICKUP_HOURS
+
+  const overrides: PickupOverride[] = []
+  const seen = new Set<string>()
+  for (const entry of Array.isArray(p.overrides) ? p.overrides : []) {
+    if (typeof entry !== 'object' || entry === null) continue
+    const e = entry as Record<string, unknown>
+    if (typeof e.date !== 'string' || parsePickupDate(e.date) === null || seen.has(e.date)) continue
+    if (validatePickupHours(e.pickupHour, e.cutoffHour) !== null) continue
+    seen.add(e.date)
+    const label = typeof e.label === 'string' ? e.label.trim().slice(0, PICKUP_HOLIDAY_LABEL_MAX) : ''
+    overrides.push({
+      date: e.date,
+      pickupHour: e.pickupHour as number,
+      cutoffHour: e.cutoffHour as number,
+      ...(label ? { label } : {}),
+    })
+  }
+  overrides.sort((a, b) => a.date.localeCompare(b.date))
+  return { default: def, overrides }
+}
+
+export type NormalizedSchedule =
+  | { ok: true; schedule: PickupSchedule; dropped: string[] }
+  | { ok: false; error: string }
+
+// Memvalidasi jadwal dari form admin. Ketat (pola normalizePickupHolidays): masukan salah DITOLAK
+// dengan pesan; jam khusus untuk tanggal yang sudah lewat dibuang & dilaporkan di `dropped`.
+//
+// Jam khusus pada hari MINGGU ditolak: Minggu tak pernah ada penjemputan, jadi admin yang memilihnya
+// pasti salah tanggal. Jam khusus pada HARI LIBUR admin justru DITERIMA: libur bisa didaftarkan
+// belakangan pada tanggal yang sudah punya jam khusus, dan menolaknya di sini akan membuat seluruh
+// jadwal tak bisa disimpan lagi. Libur tetap menang (isPickupDay), jam khususnya hanya tak berlaku,
+// dan form menandainya. Form juga mencegah MENAMBAH jam khusus baru pada tanggal libur.
+export function normalizePickupSchedule(
+  input: unknown,
+  today: string,
+): NormalizedSchedule {
+  if (typeof input !== 'object' || input === null) {
+    return { ok: false, error: 'Jadwal penjemputan tidak valid.' }
+  }
+  const raw = input as Record<string, unknown>
+  const d = (typeof raw.default === 'object' && raw.default !== null ? raw.default : {}) as Record<
+    string,
+    unknown
+  >
+  const defErr = validatePickupHours(d.pickupHour, d.cutoffHour)
+  if (defErr) return { ok: false, error: `Jam rutin: ${defErr}` }
+
+  if (raw.overrides !== undefined && !Array.isArray(raw.overrides)) {
+    return { ok: false, error: 'Daftar jam khusus harus berupa array.' }
+  }
+  const byDate = new Map<string, PickupOverride>()
+  const dropped: string[] = []
+  for (const entry of (raw.overrides as unknown[] | undefined) ?? []) {
+    if (typeof entry !== 'object' || entry === null) {
+      return { ok: false, error: 'Tiap jam khusus harus berisi tanggal dan jam.' }
+    }
+    const e = entry as Record<string, unknown>
+    if (typeof e.date !== 'string' || parsePickupDate(e.date) === null) {
+      return { ok: false, error: `Tanggal tidak valid: ${String(e.date ?? '(kosong)')}.` }
+    }
+    if (e.label !== undefined && e.label !== null && typeof e.label !== 'string') {
+      return { ok: false, error: `Keterangan untuk ${e.date} harus berupa teks.` }
+    }
+    if (e.date < today) {
+      dropped.push(e.date)
+      continue
+    }
+    const err = validatePickupHours(e.pickupHour, e.cutoffHour)
+    if (err) return { ok: false, error: `${e.date}: ${err}` }
+    if (!isPickupDay(e.date)) {
+      return {
+        ok: false,
+        error: `${e.date} adalah hari Minggu — kurir tidak pernah dijadwalkan pada hari Minggu.`,
+      }
+    }
+    const label = typeof e.label === 'string' ? e.label.trim().slice(0, PICKUP_HOLIDAY_LABEL_MAX) : ''
+    byDate.set(e.date, {
+      date: e.date,
+      pickupHour: e.pickupHour as number,
+      cutoffHour: e.cutoffHour as number,
+      ...(label ? { label } : {}),
+    })
+  }
+  if (byDate.size > MAX_PICKUP_OVERRIDES) {
+    return { ok: false, error: `Terlalu banyak jam khusus (maksimal ${MAX_PICKUP_OVERRIDES}).` }
+  }
+  return {
+    ok: true,
+    schedule: {
+      default: { pickupHour: d.pickupHour as number, cutoffHour: d.cutoffHour as number },
+      overrides: [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)),
+    },
+    dropped,
+  }
+}
+
+// Tanggal slot yang harus DIBUAT ULANG setelah jadwal berubah: tanggal yang sudah punya slot di
+// mengantar_daily_pickup (`slotDates`) dan jam jemputnya berbeda antara jadwal lama & baru.
+//
+// Slot di tabel itu tidak menyimpan jamnya sendiri — ia hanya time_id yang dibuat dengan jam yang
+// berlaku saat itu. Tanpa membuangnya, cron dan booking terus memakai slot berjam lama karena
+// "tanggal ini sudah punya slot". Perubahan CUTOFF saja tidak memerlukan slot baru: cutoff hanya
+// dipakai sistem kita untuk memilih tanggal, tak pernah dikirim ke Mengantar.
+export function slotDatesToReset(
+  before: PickupSchedule,
+  after: PickupSchedule,
+  slotDates: readonly string[],
+): string[] {
+  return [...new Set(slotDates)]
+    .filter(
+      (date) => pickupHoursFor(date, before).pickupHour !== pickupHoursFor(date, after).pickupHour,
+    )
+    .sort()
 }
