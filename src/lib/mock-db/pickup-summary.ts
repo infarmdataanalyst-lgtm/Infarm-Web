@@ -1,7 +1,7 @@
 // src/lib/mock-db/pickup-summary.ts
 // Ringkasan JADWAL penjemputan kurir untuk kartu di halaman Pesanan OMS: hari ini ada penjemputan
-// atau tidak (Minggu / libur admin), berapa paket yang dijadwalkan dari gudang mana, dan berapa
-// yang jadwalnya sudah terlewat.
+// atau tidak (Minggu / libur admin), berapa paket per GUDANG × KURIR, dan berapa yang jadwalnya
+// sudah terlewat. Hitungannya sendiri ada di lib/pickup-summary-aggregate.ts (murni, teruji unit).
 //
 // Keputusan pemilik 2026-10-09: jadwal rutin tampil di KARTU, bukan di lonceng — lonceng hanya
 // memuat penyimpangan (lihat order-issues.ts: 'jadwal_jemput_terlewat'). Karena itu berkas ini
@@ -24,6 +24,7 @@ import {
   type PickupSchedule,
 } from '@/lib/pickup-schedule'
 import { OFFERED_COURIER_IDS, courierDisplayName } from '@/lib/mengantar-estimate'
+import { aggregatePickupRows, type PickupAggregate, type PickupRow } from '@/lib/pickup-summary-aggregate'
 
 // "17:00" dari jam bulat — bentuk yang sudah dipakai kartu sejak awal (lihat jam() di kartu).
 const hhmm = (hour: number) => `${String(hour).padStart(2, '0')}:00`
@@ -56,59 +57,38 @@ export type PickupDayStatus =
   | 'minggu'
   | 'libur'
 
-export type PickupWarehouseCount = {
-  warehouseId: string | null // null = pesanan lama tanpa gudang pemenuh
-  name: string
-  count: number
-}
-
-export type PickupScheduleSummary = {
+export type PickupScheduleSummary = PickupAggregate & {
   // false bila kolom pickup_date belum di-migrate — kartu menampilkan keterangan, bukan angka nol
   // yang menyesatkan.
   available: boolean
   today: string // YYYY-MM-DD (WIB)
-  hour: number // jam dinding WIB saat dihitung
   status: PickupDayStatus
   holidayLabel?: string // keterangan libur hari ini, bila admin mengisinya
-  // Jam yang berlaku HARI INI (rutin atau khusus, diatur di OMS → Pengaturan → Jam Penjemputan).
-  cutoffHour: number
-  pickupTime: string // HH:mm slot penjemputan hari ini
-  // true bila hari ini memakai jam khusus, bukan jam rutin — kartu menyebutnya supaya admin tidak
-  // mengira kurir datang pada jam biasa.
-  todaySpecial: boolean
-  todaySpecialLabel?: string
-  // Hari pickup berikutnya SETELAH hari ini (selalu ada, kecuali konfigurasi rusak) dan jamnya —
-  // jam berikutnya bisa berbeda dari hari ini bila salah satunya punya jam khusus.
-  nextDate: string | null
-  nextPickupTime: string | null
-  // Jam per ekspedisi hari ini & pada hari pickup berikutnya. Kartu merincinya HANYA bila jam antar
-  // ekspedisi berbeda; bila semuanya sama, kartu cukup menampilkan satu jam seperti biasa.
-  todayByCourier: CourierPickupTime[]
-  nextByCourier: CourierPickupTime[]
-  // Paket terjadwal hari ini (0 bila hari ini bukan hari pickup) dan pada hari pickup berikutnya.
-  todayCount: number
-  nextCount: number
-  // Rincian per gudang untuk tanggal yang RELEVAN: hari ini bila hari pickup, selain itu nextDate.
-  byWarehouse: PickupWarehouseCount[]
-  // Jadwalnya sudah lewat tapi masih Diproses — angka yang sama dengan 'jadwal_jemput_terlewat'.
-  overdueCount: number
-  // Pesanan Diproses ber-resi yang tak punya jadwal tercatat (dibooking sebelum migration).
-  unscheduledCount: number
+  // Tanggal yang dirinci tabel: HARI INI bila hari jemput, selain itu (Minggu/libur) hari jemput
+  // berikutnya — keputusan pemilik 2026-10-14. null hanya bila konfigurasi libur rusak.
+  targetDate: string | null
+  // Jam per ekspedisi pada targetDate (rutin atau khusus, diatur di OMS → Pengaturan) — judul kolom.
+  couriers: CourierPickupTime[]
+  specialLabel?: string // keterangan jam khusus pada targetDate, bila ada
+  // Hari jemput SETELAH targetDate — catatan kaki "pesanan lewat batas masuk jadwal berikutnya".
+  // Hanya diisi pada hari jemput; di hari Minggu/libur pesanan baru justru masuk targetDate.
+  followingDate: string | null
+  warehouseId?: string // terisi = ringkasan satu gudang saja
 }
-
-type Row = { warehouse_id: string | null; pickup_date: string | null }
 
 // Pagar, bukan paginasi — paket Diproses yang menembus angka ini berarti gudang punya masalah lain.
 const SOURCE_LIMIT = 2000
 
+// `warehouseId` diisi = ringkasan satu gudang (disiapkan untuk admin per gudang; peran itu belum ada,
+// jadi saat ini hanya bisa dipakai lewat ?gudang= di API).
 export async function readPickupScheduleSummary(
-  nowMs: number = Date.now(),
+  options: { nowMs?: number; warehouseId?: string } = {},
 ): Promise<PickupScheduleSummary> {
+  const nowMs = options.nowMs ?? Date.now()
   const [holidayList, schedule] = await Promise.all([getPickupHolidays(), getPickupSchedule()])
   const holidays = toHolidaySet(holidayList)
   const resolved = resolvePickupDate(nowMs, holidays, schedule)
   const today = resolved.today
-  const jamHariIni = pickupHoursFor(today, schedule)
 
   const status: PickupDayStatus =
     resolved.reason === 'hari-libur'
@@ -117,78 +97,64 @@ export async function readPickupScheduleSummary(
         ? 'minggu'
         : resolved.reason
   const holidayLabel = holidayList.find((h) => h.date === today)?.label
-  const nextDate = nextPickupDate(today, holidays)
   const isPickupToday = status === 'hari-ini' || status === 'lewat-cutoff'
+  const targetDate = isPickupToday ? today : nextPickupDate(today, holidays)
+  const followingDate = isPickupToday && targetDate ? nextPickupDate(targetDate, holidays) : null
+  const specialLabel = targetDate ? pickupHoursFor(targetDate, schedule).label : undefined
 
   const base: PickupScheduleSummary = {
     available: true,
     today,
-    hour: resolved.hour,
     status,
     ...(holidayLabel ? { holidayLabel } : {}),
-    cutoffHour: jamHariIni.cutoffHour,
-    pickupTime: hhmm(jamHariIni.pickupHour),
-    todaySpecial: jamHariIni.special,
-    ...(jamHariIni.label ? { todaySpecialLabel: jamHariIni.label } : {}),
-    nextDate,
-    nextPickupTime: nextDate ? hhmm(pickupHoursFor(nextDate, schedule).pickupHour) : null,
-    todayByCourier: jamPerKurir(today, schedule),
-    nextByCourier: nextDate ? jamPerKurir(nextDate, schedule) : [],
-    todayCount: 0,
-    nextCount: 0,
-    byWarehouse: [],
+    targetDate,
+    couriers: targetDate ? jamPerKurir(targetDate, schedule) : [],
+    ...(specialLabel ? { specialLabel } : {}),
+    followingDate,
+    ...(options.warehouseId ? { warehouseId: options.warehouseId } : {}),
+    warehouses: [],
+    targetTotal: 0,
     overdueCount: 0,
     unscheduledCount: 0,
+    followingCount: 0,
   }
 
   const supabase = createAdminClient()
-  // Hanya paket yang menunggu kurir: lunas, Diproses, resi sudah terbit. Pesanan tanpa jadwal ikut
-  // ditarik (pickup_date null) supaya bisa dihitung terpisah sebagai "tanpa jadwal".
-  const { data, error } = await supabase
-    .from('orders')
-    .select('warehouse_id, pickup_date')
-    .eq('order_status', 'PROCESSING')
-    .eq('shipment_status', 'BOOKED')
-    .limit(SOURCE_LIMIT)
+  // Hanya paket yang menunggu kurir: Diproses dan resi sudah terbit (BOOKED). Tiga kolom ramping;
+  // angka dihitung di server (keputusan pemilik 2026-10-14: tanpa fungsi SQL/migration — barisnya
+  // hanya paket yang sedang menunggu dijemput, bukan seluruh riwayat pesanan).
+  const [{ data, error }, allWarehouses] = await Promise.all([
+    supabase
+      .from('orders')
+      .select('warehouse_id, pickup_date, nama_ekspedisi')
+      .eq('order_status', 'PROCESSING')
+      .eq('shipment_status', 'BOOKED')
+      .limit(SOURCE_LIMIT),
+    readWarehouses(),
+  ])
 
   if (error) {
     if (error.code === '42703' || error.code === 'PGRST204') {
       console.error('[pickup-summary] kolom pickup_date belum di-migrate — kartu jadwal nonaktif')
-      return { ...base, available: false }
+    } else {
+      console.error('[pickup-summary] gagal membaca pesanan:', error.message)
     }
-    console.error('[pickup-summary] gagal membaca pesanan:', error.message)
     return { ...base, available: false }
   }
 
-  const rows = (data ?? []) as Row[]
-  const targetDate = isPickupToday ? today : nextDate
-  const perGudang = new Map<string | null, number>()
+  const aggregate = aggregatePickupRows({
+    rows: (data ?? []) as PickupRow[],
+    // Gudang default lebih dulu, sisanya urutan pembuatan (readWarehouses sudah urut created_at).
+    activeWarehouses: allWarehouses
+      .filter((w) => w.isActive)
+      .sort((a, b) => Number(b.isDefault) - Number(a.isDefault)),
+    warehouseNames: new Map(allWarehouses.map((w) => [w.id, w.nama])),
+    courierIds: OFFERED_COURIER_IDS,
+    today,
+    targetDate,
+    followingDate,
+    warehouseId: options.warehouseId,
+  })
 
-  for (const row of rows) {
-    if (!row.pickup_date) {
-      base.unscheduledCount += 1
-      continue
-    }
-    if (row.pickup_date < today) base.overdueCount += 1
-    if (row.pickup_date === today) base.todayCount += 1
-    if (nextDate && row.pickup_date === nextDate) base.nextCount += 1
-    if (targetDate && row.pickup_date === targetDate) {
-      perGudang.set(row.warehouse_id, (perGudang.get(row.warehouse_id) ?? 0) + 1)
-    }
-  }
-
-  if (perGudang.size > 0) {
-    // Nama gudang di-resolve sekali untuk semua baris; gudang yang sudah dihapus tetap tampil
-    // sebagai id-nya supaya angkanya tidak hilang dari jumlah.
-    const names = new Map((await readWarehouses()).map((w) => [w.id, w.nama]))
-    base.byWarehouse = [...perGudang.entries()]
-      .map(([warehouseId, count]) => ({
-        warehouseId,
-        name: warehouseId ? (names.get(warehouseId) ?? warehouseId) : 'Belum ditentukan',
-        count,
-      }))
-      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
-  }
-
-  return base
+  return { ...base, ...aggregate }
 }

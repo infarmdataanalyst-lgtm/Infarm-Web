@@ -104,6 +104,9 @@ export async function GET(request: NextRequest) {
   const rawMasalah = searchParams.get('masalah')
   const masalah = isOrderIssueKind(rawMasalah) ? rawMasalah : undefined
 
+  // Paket menunggu kurir tanpa jadwal jemput tercatat (tombol kuning kartu penjemputan).
+  const tanpaJadwal = searchParams.get('jadwal') === 'belum' ? true : undefined
+
   // Build filter options
   const filterOpts: OrderFilterOptions = {
     dari,
@@ -115,6 +118,7 @@ export async function GET(request: NextRequest) {
     sortBy,
     order,
     masalah,
+    tanpaJadwal,
   }
 
   // Fetch pesanan dengan filter (atau tanpa filter jika semua null)
