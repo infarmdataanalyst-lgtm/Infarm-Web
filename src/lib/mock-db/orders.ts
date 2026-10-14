@@ -56,6 +56,10 @@ export type OrderFilterOptions = {
   // Hanya pesanan yang PERLU TINDAKAN jenis ini (lihat src/lib/order-issues.ts). Tujuan tautan
   // dari kotak "Perlu tindakan" di dashboard & notifikasi lonceng.
   masalah?: OrderIssueKind
+  // Hanya paket yang menunggu kurir TANPA jadwal jemput tercatat: Diproses, resi terbit (BOOKED),
+  // pickup_date kosong — dibooking sebelum kolomnya ada. Tujuan tombol kuning di kartu penjemputan;
+  // definisinya sama dengan lib/pickup-summary-aggregate.ts.
+  tanpaJadwal?: boolean
 }
 
 // === Pemetaan enum DB <-> app ===
@@ -445,6 +449,10 @@ export async function readOrdersFiltered(opts: OrderFilterOptions = {}): Promise
   // lalu penilaian TEPAT di JS karena dua kriterianya bergantung waktu (15 menit, 2 hari).
   if (opts.masalah) {
     query = query.or(ORDER_ISSUE_CANDIDATE_FILTER)
+  }
+
+  if (opts.tanpaJadwal) {
+    query = query.eq('order_status', 'PROCESSING').eq('shipment_status', 'BOOKED').is('pickup_date', null)
   }
 
   // Sorting

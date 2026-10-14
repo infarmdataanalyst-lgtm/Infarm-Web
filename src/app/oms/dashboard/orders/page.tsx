@@ -7,7 +7,7 @@
 
 import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Download, ChevronLeft, ChevronRight, Inbox, Eye, AlertTriangle } from 'lucide-react'
+import { Download, ChevronLeft, ChevronRight, Inbox, Eye, AlertTriangle, CalendarClock } from 'lucide-react'
 import OmsHeader from '@/components/oms/OmsHeader'
 import OrderStatusModal from '@/components/oms/OrderStatusModal'
 import PickupScheduleCard from '@/components/oms/PickupScheduleCard'
@@ -96,6 +96,8 @@ function OrdersContent() {
   // label kosong untuk URL yang usang.
   const rawMasalah = searchParams.get('masalah')
   const masalah = isOrderIssueKind(rawMasalah) ? rawMasalah : null
+  // Paket tanpa jadwal jemput tercatat — tujuan tombol kuning di kartu penjemputan.
+  const tanpaJadwal = searchParams.get('jadwal') === 'belum'
 
   // Auto-sembunyikan toast
   useEffect(() => {
@@ -218,6 +220,7 @@ function OrdersContent() {
     if (order) params.set('order', order)
     if (activeTab !== 'Semua') params.set('status', activeTab)
     if (masalah) params.set('masalah', masalah)
+    if (tanpaJadwal) params.set('jadwal', 'belum')
 
     const queryString = params.toString()
     const url = `/api/orders/list${queryString ? '?' + queryString : ''}`
@@ -242,7 +245,7 @@ function OrdersContent() {
     return () => {
       active = false
     }
-  }, [dari, sampai, kurir, gudang, pembayaran, sortBy, order, activeTab, masalah])
+  }, [dari, sampai, kurir, gudang, pembayaran, sortBy, order, activeTab, masalah, tanpaJadwal])
 
   // Pesanan untuk halaman saat ini (orders sudah di-filter di server)
   const totalPages = Math.max(1, Math.ceil(orders.length / PAGE_SIZE))
@@ -325,6 +328,7 @@ function OrdersContent() {
       pembayaran ||
       sortBy ||
       masalah ||
+      tanpaJadwal ||
       activeTab !== 'Semua'
     )
   }
@@ -578,6 +582,27 @@ function OrdersContent() {
               type="button"
               onClick={() => updateFilters({ masalah: null })}
               className="ml-auto rounded-full border border-orange-300 px-2.5 py-0.5 text-xs font-semibold text-orange-800 transition hover:bg-orange-100"
+            >
+              Tampilkan semua
+            </button>
+          </div>
+        )}
+
+        {/* === Chip filter "tanpa jadwal tercatat" — dari tombol kuning kartu penjemputan === */}
+        {tanpaJadwal && (
+          <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-[#F2DD8C] bg-[#FFF3C4] px-3 py-2 text-sm text-[#7A5A00]">
+            <CalendarClock className="h-4 w-4 flex-none" aria-hidden />
+            <span>
+              Hanya menampilkan: <span className="font-semibold">Paket tanpa jadwal jemput tercatat</span>
+              <span className="opacity-80">
+                {' '}
+                — sudah dibooking ke Mengantar sebelum jadwal dicatat per pesanan; cek jadwalnya di dashboard Mengantar.
+              </span>
+            </span>
+            <button
+              type="button"
+              onClick={() => updateFilters({ jadwal: null })}
+              className="ml-auto rounded-full border border-[#E5C766] px-2.5 py-0.5 text-xs font-semibold transition hover:bg-[#FBE7A1]"
             >
               Tampilkan semua
             </button>

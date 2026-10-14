@@ -290,7 +290,11 @@ perantara yang diisi cron, dan checkout hanya **membaca**.
 - **Jadwal jemput DICATAT per pesanan** (`orders.pickup_date`, migration `20261009120000`): nilai
   `pickup.date`/`time_id` yang dikirim ke `POST /order`, ditulis `updateShipment`. Dipakai (1) kartu
   **Penjemputan kurir** di atas daftar Pesanan — hari ini ada penjemputan atau tidak (Minggu/libur,
-  dengan labelnya), jumlah paket per gudang, jadwal berikutnya; (2) alarm lonceng
+  dengan labelnya), tabel paket per **gudang × kurir** (semua gudang aktif, yang kosong "—"), tombol
+  "terlewat jadwal" (`?masalah=jadwal_jemput_terlewat[&gudang=]`) dan "tanpa jadwal tercatat"
+  (`?jadwal=belum`), jadwal berikutnya — desain ulang 2026-10-14, hitungan di
+  `lib/pickup-summary-aggregate.ts`, tampilan `PickupScheduleView` (pratinjau dev
+  `/dev/kartu-penjemputan`), `?gudang=` di API disiapkan untuk admin per gudang; (2) alarm lonceng
   `jadwal_jemput_terlewat` (order-issues.ts) — jadwal lewat tapi masih Diproses, tepat ke hari dan
   **menggantikan** tebakan 2 hari untuk pesanan berjadwal (tebakan itu berbunyi palsu saat libur
   panjang); (3) estimasi tiba di halaman sukses dihitung dari tanggal jemput 17.00 WIB, bukan dari
