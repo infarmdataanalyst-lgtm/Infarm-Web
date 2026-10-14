@@ -19,6 +19,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import {
   CalendarClock,
+  Layers,
   CalendarOff,
   CheckCircle2,
   Clock,
@@ -1159,7 +1160,14 @@ function JamPenjemputanSection({
         <span className="font-medium text-gray-800">{namaKurir(id)}</span>
       </span>
     ) : (
-      <span className="text-gray-500">Semua ekspedisi</span>
+      // Ikon tumpuk yang sama dengan opsi "Semua ekspedisi" di dropdown (CourierSelect), supaya baris
+      // jam khusus umum sejajar dengan baris berlogo ekspedisi.
+      <span className="inline-flex items-center gap-1.5">
+        <span className="flex h-4 w-10 flex-none items-center" aria-hidden>
+          <Layers className="h-4 w-4 text-gray-500" />
+        </span>
+        <span className="font-medium text-gray-800">Semua ekspedisi</span>
+      </span>
     )
 
   return (
