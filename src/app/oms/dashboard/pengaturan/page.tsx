@@ -19,6 +19,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import {
   CalendarClock,
+  Layers,
   CalendarOff,
   CheckCircle2,
   Clock,
@@ -1150,14 +1151,23 @@ function JamPenjemputanSection({
     ) : null
 
   // Logo + nama ekspedisi untuk baris daftar.
+  // Warna teks WAJIB eksplisit: tanpa itu nama ekspedisi mewarisi warna teks body, yang menjadi
+  // putih saat OS dalam mode gelap — tak terbaca di kartu putih (masalah yang sama dengan PR #57).
   const labelKurir = (id?: string) =>
     id ? (
       <span className="inline-flex items-center gap-1.5">
         <CourierLogo courier={id} label={namaKurir(id)} size="xs" />
-        <span>{namaKurir(id)}</span>
+        <span className="font-medium text-gray-800">{namaKurir(id)}</span>
       </span>
     ) : (
-      <span className="text-gray-500">Semua ekspedisi</span>
+      // Ikon tumpuk yang sama dengan opsi "Semua ekspedisi" di dropdown (CourierSelect), supaya baris
+      // jam khusus umum sejajar dengan baris berlogo ekspedisi.
+      <span className="inline-flex items-center gap-1.5">
+        <span className="flex h-4 w-10 flex-none items-center" aria-hidden>
+          <Layers className="h-4 w-4 text-gray-500" />
+        </span>
+        <span className="font-medium text-gray-800">Semua ekspedisi</span>
+      </span>
     )
 
   return (
@@ -1241,7 +1251,7 @@ function JamPenjemputanSection({
               {couriers.map((c) => {
                 const h = rutinTersimpan(c.id)
                 return (
-                  <li key={c.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                  <li key={c.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-gray-700">
                     {labelKurir(c.id)}
                     <span className="text-gray-700">
                       jemput {formatPickupHour(h.pickupHour)} · batas {formatPickupHour(h.cutoffHour)}
