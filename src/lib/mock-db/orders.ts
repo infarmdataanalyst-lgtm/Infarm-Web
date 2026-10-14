@@ -389,27 +389,6 @@ function rowToOrder(row: OrderRow, items: OrderItem[], warehouseNames?: Map<stri
 
 // === Baca ===
 
-// Mengambil daftar unik kurir (nama_ekspedisi) untuk dropdown filter.
-export async function getDistinctCouriers(): Promise<string[]> {
-  const supabase = createAdminClient()
-  const { data, error } = await supabase
-    .from('orders')
-    .select('nama_ekspedisi')
-    .not('nama_ekspedisi', 'is', null)
-    .order('nama_ekspedisi', { ascending: true })
-
-  if (error) {
-    console.error('Gagal ambil kurir dari Supabase:', error.message)
-    return []
-  }
-
-  const couriers = new Set<string>()
-  for (const row of (data as { nama_ekspedisi: string | null }[]) ?? []) {
-    if (row.nama_ekspedisi) couriers.add(row.nama_ekspedisi)
-  }
-  return Array.from(couriers)
-}
-
 // Membaca pesanan dengan filter (tanggal, kurir, status pembayaran) & sorting.
 // Query dijalankan di Supabase (server-side), bukan fetch-all-then-filter.
 export async function readOrdersFiltered(opts: OrderFilterOptions = {}): Promise<Order[]> {
