@@ -14,6 +14,7 @@ import PickupScheduleCard from '@/components/oms/PickupScheduleCard'
 import WarehouseMultiFilter from '@/components/oms/WarehouseMultiFilter'
 import DateRangePicker from '@/components/oms/DateRangePicker'
 import { paymentMethodLabel } from '@/lib/payment-method'
+import { orderExportFileName } from '@/lib/order-export'
 import { ORDER_ISSUE_META, isOrderIssueKind } from '@/lib/order-issues'
 import type {
   Order,
@@ -419,11 +420,10 @@ function OrdersContent() {
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
 
-    // Nama file mengandung rentang tanggal filter bila ada, agar mudah dibedakan
-    const rangeLabel = dari || sampai ? `_${dari || 'awal'}_sd_${sampai || 'kini'}` : ''
+    // Nama file selalu bertanggal: rentang filter, atau tanggal ekspor (lib/order-export.ts)
     const link = document.createElement('a')
     link.href = url
-    link.download = `pesanan${rangeLabel}.csv`
+    link.download = orderExportFileName(dari, sampai)
     link.click()
     URL.revokeObjectURL(url)
   }

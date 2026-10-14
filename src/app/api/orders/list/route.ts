@@ -12,10 +12,10 @@ import { maskOrdersForRole, shouldMaskBuyerPii } from '@/lib/oms-pii'
 import {
   readOrders,
   readOrdersFiltered,
-  getDistinctCouriers,
   WAREHOUSE_FILTER_NONE,
   type OrderFilterOptions,
 } from '@/lib/mock-db/orders'
+import { courierDisplayName, OFFERED_COURIER_IDS } from '@/lib/mengantar-estimate'
 import { readWarehouses } from '@/lib/mock-db/warehouses'
 import { isOrderIssueKind } from '@/lib/order-issues'
 import type { OrderFulfillmentStatus, OrderPaymentStatus } from '@/types/order'
@@ -33,6 +33,12 @@ const VALID_STATUSES: OrderFulfillmentStatus[] = [
 // Format id gudang (UUID). Selain itu hanya WAREHOUSE_FILTER_NONE yang diterima — mencegah nilai
 // liar masuk ke query.
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+// Pilihan filter kurir = kurir yang DITAWARKAN ke pembeli, dalam bentuk yang tersimpan di
+// orders.nama_ekspedisi ('J&T', 'Shopee Express'). Dulu daftar ini diambil dari nama kurir unik di
+// tabel pesanan, sehingga kurir dari pesanan uji lama (SiCepat, JNE, dll.) ikut muncul padahal tak
+// pernah ditawarkan (keputusan pemilik 2026-10-14). Kurir baru di OFFERED_COURIER_IDS otomatis ikut.
+const FILTER_COURIERS: string[] = OFFERED_COURIER_IDS.map(courierDisplayName)
 
 // Validasi format tanggal ISO (YYYY-MM-DD)
 function validateDate(dateStr: string | null | undefined): string | undefined {
@@ -57,7 +63,10 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const dari = validateDate(searchParams.get('dari'))
   const sampai = validateDate(searchParams.get('sampai'))
-  const kurir = searchParams.get('kurir') || undefined
+  // Hanya kurir yang ditawarkan ke pembeli (J&T, Shopee Express). Nilai lain dari URL lama
+  // diabaikan, aturan yang sama dengan `status`.
+  const rawKurir = searchParams.get('kurir')
+  const kurir = FILTER_COURIERS.find((c) => c === rawKurir)
   const pembayaran = (searchParams.get('pembayaran') as OrderPaymentStatus | null) || undefined
   const sortBy = (searchParams.get('sortBy') as 'total' | 'tanggal' | null) || undefined
   const order = (searchParams.get('order') as 'asc' | 'desc' | null) || undefined
@@ -112,10 +121,11 @@ export async function GET(request: NextRequest) {
   const hasFilters = Object.values(filterOpts).some((v) => v !== undefined)
   const orders = hasFilters ? await readOrdersFiltered(filterOpts) : await readOrders()
 
-  // Opsi dropdown filter di UI: kurir unik + gudang AKTIF.
+  // Opsi dropdown filter di UI: kurir yang ditawarkan + gudang AKTIF.
   // Gudang nonaktif tak ditawarkan sebagai pilihan filter (tak lagi menerima pesanan baru), tapi
   // namanya tetap tampil di kolom Gudang untuk pesanan lama — lihat resolveWarehouseNames.
-  const [couriers, warehouses] = await Promise.all([getDistinctCouriers(), readWarehouses(true)])
+  const couriers = FILTER_COURIERS
+  const warehouses = await readWarehouses(true)
 
   // Peran 'staff' menerima data pembeli tersensor (lib/oms-pii.ts). Identitas tak terbaca →
   // anggap staff: lebih baik admin sesekali melihat data tersamar daripada staff melihat utuh.

@@ -247,7 +247,8 @@ Dipindah dari `CLAUDE.md` → "Domain: Ecommerce & OMS". Daftar ini campuran `[x
 - [x] Manajemen order (`/oms/dashboard/orders`) — filter tanggal (range + shortcut)/kurir/status
       pembayaran/**status pesanan**/**gudang (MULTI-SELECT)**, sort Total & Tanggal, kombinasi filter
       tersimpan di URL query params, Reset Filter, ekspor CSV (SEMUA penyaringan server-side via
-      `readOrdersFiltered`/`getDistinctCouriers`, `OrderFilterOptions`). Kolom tabel memuat **Gudang**
+      `readOrdersFiltered`, `OrderFilterOptions`; pilihan kurir = kurir yang ditawarkan, J&T & Shopee
+      Express — sejak 2026-10-14; nama CSV `pesanan_YYYYMMDD[-YYYYMMDD].csv`). Kolom tabel memuat **Gudang**
 - [x] Filter Gudang multi-select bertema hijau (`WarehouseMultiFilter`) — checkbox + model draft
       ("Terapkan"/"Reset"), URL `gudang=id1,id2,none`, query `.in()`/`.is()`/`.or()`. Empat dropdown
       lain di halaman itu masih `<select>` native (highlight biru OS) — belum disamakan
