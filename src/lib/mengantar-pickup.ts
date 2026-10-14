@@ -208,11 +208,14 @@ export type EnsurePickupOutcome =
 // `holidays` = daftar libur admin (lib/pickup-schedule.ts). Dibawa pemanggil, bukan dibaca di sini:
 // cron memanggil fungsi ini sekali PER ALAMAT dan tak perlu membuka setting yang sama berulang.
 // `schedule` = jam jemput dari OMS, dibawa pemanggil dengan alasan yang sama.
+// `courier` = kode ekspedisi ('JT', 'spx') yang slotnya dicari: jam jemput tiap ekspedisi bisa
+// berbeda, dan slot Mengantar terikat pada satu jam. Kosong → jam umum.
 export async function ensurePickupForDate(
   date: string,
   addressId: string,
   holidays: PickupHolidays = NO_HOLIDAYS,
   schedule: PickupSchedule = DEFAULT_PICKUP_SCHEDULE,
+  courier?: string | null,
 ): Promise<EnsurePickupOutcome> {
   if (parsePickupDate(date) === null) {
     return { status: 'failed', reason: `format tanggal tidak valid: ${date}` }
@@ -227,13 +230,15 @@ export async function ensurePickupForDate(
     return { status: 'skipped-non-pickup-day' }
   }
 
-  const existing = await getPickupByDate(date, addressId)
+  const { pickupHour } = pickupHoursFor(date, schedule, courier)
+  const existing = await getPickupByDate(date, addressId, pickupHour)
   if (existing) {
-    console.log(`${LOG} ${date} alamat ${addressId} sudah ada time_id — dilewati (idempoten)`)
+    console.log(
+      `${LOG} ${date} ${toMengantarTime(pickupHour)} alamat ${addressId} sudah ada time_id — dilewati (idempoten)`,
+    )
     return { status: 'existing', pickup: existing }
   }
 
-  const { pickupHour } = pickupHoursFor(date, schedule)
   const created = await createPickupTime(date, addressId, pickupHour)
   if (!created.ok) {
     console.error(
@@ -242,7 +247,7 @@ export async function ensurePickupForDate(
     return { status: 'failed', reason: created.reason }
   }
 
-  const saved = await savePickup(date, addressId, created.timeId)
+  const saved = await savePickup(date, addressId, created.timeId, pickupHour)
   if (!saved) {
     // time_id sudah TERBUAT di Mengantar tapi gagal tercatat. Dilaporkan gagal supaya cron
     // tampak merah dan admin memeriksanya — bukan disimpan diam-diam di memori yang akan
@@ -299,25 +304,30 @@ export type PickupTimeId = {
 //
 // `schedule` opsional dengan alasan yang sama: cutoff HARI INI dan jam jemput tanggal tujuan diatur
 // admin di OMS, jadi dibaca di sini bila pemanggil tak membawanya.
+//
+// `courier` = kode ekspedisi pesanan ('JT', 'spx'). Menentukan cutoff dan jam jemput yang berlaku
+// (bisa berbeda per ekspedisi), dan karenanya slot mana yang dipakai.
 export async function getTodayPickupTimeId(
   addressId: string,
   nowMs: number = Date.now(),
   holidays?: PickupHolidays,
   schedule?: PickupSchedule,
+  courier?: string | null,
 ): Promise<PickupTimeId | null> {
   const [libur, jadwal] = await Promise.all([
     holidays ? Promise.resolve(holidays) : getPickupHolidays().then(toHolidaySet),
     schedule ? Promise.resolve(schedule) : getPickupSchedule(),
   ])
-  const { date, reason, today, hour } = resolvePickupDate(nowMs, libur, jadwal)
+  const { date, reason, today, hour } = resolvePickupDate(nowMs, libur, jadwal, courier)
+  const { pickupHour } = pickupHoursFor(date, jadwal, courier)
 
-  const existing = await getPickupByDate(date, addressId)
+  const existing = await getPickupByDate(date, addressId, pickupHour)
   if (existing) return { timeId: existing.timeId, addressId, date, reason, source: 'tabel' }
 
   console.warn(
-    `${LOG} tabel kosong untuk ${date} alamat ${addressId} (sekarang ${today} jam ${hour} WIB, alasan ${reason}) — fallback panggil Mengantar`,
+    `${LOG} tabel kosong untuk ${date} ${toMengantarTime(pickupHour)} alamat ${addressId} (ekspedisi ${courier ?? 'umum'}, sekarang ${today} jam ${hour} WIB, alasan ${reason}) — fallback panggil Mengantar`,
   )
-  const outcome = await ensurePickupForDate(date, addressId, libur, jadwal)
+  const outcome = await ensurePickupForDate(date, addressId, libur, jadwal, courier)
   if (outcome.status === 'created' || outcome.status === 'raced' || outcome.status === 'existing') {
     return { timeId: outcome.pickup.timeId, addressId, date, reason, source: 'fallback-api' }
   }

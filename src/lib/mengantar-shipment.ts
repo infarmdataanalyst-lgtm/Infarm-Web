@@ -237,10 +237,16 @@ export async function createShipmentOrder(order: Order): Promise<ShipmentResult>
     return { ok: false, reason: 'incomplete-order', detail: 'alamat pengiriman kosong' }
   }
 
+  // Kurir pilihan pembeli (orders.nama_ekspedisi), bukan J&T yang dipaku — sejak Shopee Express
+  // ditawarkan (2026-10-02). Kosong / pesanan lama → J&T, lihat courierIdFromLabel.
+  // Dibaca SEBELUM slot dicari: jam jemput & cutoff bisa berbeda per ekspedisi (Pengaturan → Jam
+  // Penjemputan), jadi slot yang benar bergantung pada kurirnya.
+  const courier = courierIdFromLabel(order.logistics?.courier)
+
   // Slot penjemputan MILIK ALAMAT DI ATAS. Tanpa time_id, `scheduledPickup` tak bisa dipakai.
   // Slot alamat lain tak boleh dipinjam: paketnya akan terdaftar pada penjemputan di gudang
   // yang berbeda dari tempat barangnya benar-benar berada.
-  const pickup = await getTodayPickupTimeId(addressId)
+  const pickup = await getTodayPickupTimeId(addressId, Date.now(), undefined, undefined, courier)
   if (!pickup) {
     return { ok: false, reason: 'no-pickup-time', detail: 'time_id pickup tak tersedia' }
   }
@@ -263,9 +269,6 @@ export async function createShipmentOrder(order: Order): Promise<ShipmentResult>
   }
 
   const weight = await buildWeightKg(order)
-  // Kurir pilihan pembeli (orders.nama_ekspedisi), bukan J&T yang dipaku — sejak Shopee Express
-  // ditawarkan (2026-10-02). Kosong / pesanan lama → J&T, lihat courierIdFromLabel.
-  const courier = courierIdFromLabel(order.logistics?.courier)
   const payload = {
     courier,
     pickup: {

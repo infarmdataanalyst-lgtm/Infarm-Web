@@ -17,8 +17,9 @@ import Image from 'next/image'
 import { Truck } from 'lucide-react'
 import { courierLogoSrc } from '@/lib/courier-logo'
 
-// Ukuran kotak. 'sm' untuk baris trigger, 'md' untuk kartu opsi di dalam sheet.
-type Size = 'sm' | 'md'
+// Ukuran kotak. 'sm' untuk baris trigger, 'md' untuk kartu opsi di dalam sheet, 'xs' untuk logo
+// kecil di samping teks OMS (dropdown ekspedisi di Pengaturan → Jam Penjemputan, kartu Penjemputan).
+type Size = 'xs' | 'sm' | 'md'
 
 // Kelas area + ukuran ikon fallback + hint `sizes` untuk next/image, per ukuran.
 //
@@ -29,6 +30,7 @@ type Size = 'sm' | 'md'
 // Di bawah `lg` (batas mobile/desktop seluruh halaman checkout) area logo 25% lebih kecil —
 // permintaan pemilik 2026-10-05: logo terlalu dominan di layar ponsel. Ukuran desktop tak berubah.
 const SIZES: Record<Size, { box: string; icon: string; sizes: string }> = {
+  xs: { box: 'h-4 w-10', icon: 'h-4 w-4', sizes: '40px' },
   sm: { box: 'h-6 w-15 lg:h-8 lg:w-20', icon: 'h-5 w-5', sizes: '(min-width: 1024px) 80px, 60px' },
   md: { box: 'h-7.5 w-18 lg:h-10 lg:w-24', icon: 'h-6 w-6', sizes: '(min-width: 1024px) 96px, 72px' },
 }

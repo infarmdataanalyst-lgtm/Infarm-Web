@@ -7,7 +7,7 @@
 //   3. Minimum Belanja    → store_settings.min_order_amount
 //   4. Hari Libur         → store_settings.pickup_holidays (gudang tutup, kurir tak dijadwalkan)
 //   5. Jam Penjemputan    → store_settings.pickup_schedule (jam jemput & batas pesanan, rutin dan
-//                           khusus per tanggal)
+//                           khusus per tanggal, untuk semua ekspedisi atau per ekspedisi)
 //
 // AKSES: halaman ini terbuka untuk sesi OMS apa pun perannya (staff perlu melihat aturan yang
 // berlaku), tapi TOMBOL SIMPAN hanya untuk peran 'admin'. Penyembunyian tombol BUKAN penjagaan —
@@ -31,7 +31,10 @@ import {
   Warehouse,
 } from 'lucide-react'
 import OmsHeader from '@/components/oms/OmsHeader'
+import CourierLogo from '@/components/checkout/CourierLogo'
+import CourierSelect, { SEMUA_EKSPEDISI, type CourierOption } from '@/components/oms/CourierSelect'
 import { formatRupiah } from '@/lib/format'
+import { SPX_COURIER_ID as SPX_ID } from '@/lib/mengantar-estimate'
 import {
   DEFAULT_PICKUP_SCHEDULE,
   MAX_PICKUP_HOLIDAYS,
@@ -824,13 +827,17 @@ function HariLiburSection({
 // Dua lapis: jam RUTIN untuk setiap hari pickup, dan jam KHUSUS untuk tanggal tertentu (kurir datang
 // lebih awal / lebih sore). Aturan & validasinya di lib/pickup-schedule.ts; server memvalidasi ulang.
 //
+// Sejak 2026-10-14 setiap aturan punya dropdown "Berlaku untuk": semua ekspedisi, atau satu
+// ekspedisi (J&T, Shopee Express, …) dengan logonya. Aturan per ekspedisi mengalahkan aturan umum —
+// urutan lengkapnya di pickupHoursFor(). Permintaan pemilik: SPX dan J&T punya jam jemput berbeda,
+// dan admin harus bisa melihat dengan jelas ekspedisi mana yang sedang ia atur.
+//
 // Pola simpan mengikuti tab Hari Libur: setiap perubahan mengirim SELURUH jadwal, dan layar baru
 // berubah setelah server menyimpannya. Jam rutin memakai tombol Simpan (dua pilihan yang diubah
 // bersamaan); jam khusus tersimpan langsung saat Tambah/Hapus.
 //
-// Bila jam jemput sebuah tanggal yang slotnya sudah dibuat ikut berubah, server membuang slot lama
-// supaya booking berikutnya memakai jam baru, dan melaporkan berapa paket yang sudah terlanjur
-// dibooking pada jam lama (`bookedOnOldTime`) — paket itu harus diatur manual di Mengantar.
+// Paket yang sudah terlanjur dibooking pada jam lama dilaporkan server (`bookedOnOldTime`) — paket
+// itu harus diatur manual di Mengantar karena API-nya tak menyediakan penjadwalan ulang.
 function JamPenjemputanSection({
   canEdit,
   onSaved,
@@ -840,8 +847,9 @@ function JamPenjemputanSection({
 }) {
   // Jadwal yang SUDAH tersimpan di server.
   const [schedule, setSchedule] = useState<PickupSchedule>(DEFAULT_PICKUP_SCHEDULE)
-  // Isian form jam rutin (belum tentu tersimpan).
-  const [rutin, setRutin] = useState<PickupHours>(DEFAULT_PICKUP_SCHEDULE.default)
+  const [couriers, setCouriers] = useState<CourierOption[]>([])
+  // false = migration slot per jam belum dijalankan: jam jemput per ekspedisi belum berlaku.
+  const [perCourierSlots, setPerCourierSlots] = useState(true)
   const [holidays, setHolidays] = useState<string[]>([])
   const [today, setToday] = useState('')
   const [loading, setLoading] = useState(true)
@@ -850,8 +858,13 @@ function JamPenjemputanSection({
   // Peringatan yang harus tetap terlihat (bukan toast 3 detik): paket terlanjur pada jam lama.
   const [notice, setNotice] = useState('')
 
+  // Form jam rutin: ekspedisi yang sedang diatur ('' = semua) + isian jamnya (belum tentu tersimpan).
+  const [rutinKurir, setRutinKurir] = useState<string>(SEMUA_EKSPEDISI)
+  const [rutin, setRutin] = useState<PickupHours>(DEFAULT_PICKUP_SCHEDULE.default)
+
   // Form jam khusus
   const [date, setDate] = useState('')
+  const [khususKurir, setKhususKurir] = useState<string>(SEMUA_EKSPEDISI)
   const [khusus, setKhusus] = useState<PickupHours>(DEFAULT_PICKUP_SCHEDULE.default)
   const [label, setLabel] = useState('')
 
@@ -859,16 +872,26 @@ function JamPenjemputanSection({
     let active = true
     fetch('/api/settings/pickup-schedule', { cache: 'no-store' })
       .then((res) => res.json())
-      .then((data: { schedule?: PickupSchedule; today?: string; holidays?: string[] }) => {
-        if (!active) return
-        if (data.schedule) {
-          setSchedule(data.schedule)
-          setRutin(data.schedule.default)
-          setKhusus(data.schedule.default)
-        }
-        if (typeof data.today === 'string') setToday(data.today)
-        if (Array.isArray(data.holidays)) setHolidays(data.holidays)
-      })
+      .then(
+        (data: {
+          schedule?: PickupSchedule
+          today?: string
+          holidays?: string[]
+          couriers?: CourierOption[]
+          perCourierSlots?: boolean
+        }) => {
+          if (!active) return
+          if (data.schedule) {
+            setSchedule(data.schedule)
+            setRutin(data.schedule.default)
+            setKhusus(data.schedule.default)
+          }
+          if (typeof data.today === 'string') setToday(data.today)
+          if (Array.isArray(data.holidays)) setHolidays(data.holidays)
+          if (Array.isArray(data.couriers)) setCouriers(data.couriers)
+          if (typeof data.perCourierSlots === 'boolean') setPerCourierSlots(data.perCourierSlots)
+        },
+      )
       .catch(() => {
         if (active) setError('Gagal memuat jam penjemputan.')
       })
@@ -888,6 +911,15 @@ function JamPenjemputanSection({
       year: 'numeric',
       timeZone: 'Asia/Jakarta',
     }).format(new Date(`${d}T00:00:00+07:00`))
+
+  const namaKurir = (id?: string) =>
+    id ? (couriers.find((c) => c.id === id)?.label ?? id) : 'Semua ekspedisi'
+
+  // Jam rutin yang SEKARANG tersimpan untuk satu cakupan ('' = semua ekspedisi). Ekspedisi tanpa
+  // jam sendiri memakai jam semua ekspedisi.
+  const rutinTersimpan = (kurir: string): PickupHours =>
+    (kurir && schedule.couriers?.[kurir]) || schedule.default
+  const punyaJamSendiri = (kurir: string) => Boolean(kurir && schedule.couriers?.[kurir])
 
   // Ganti jam jemput dan jaga cutoff tetap sah (≤ jam jemput − 2). Cutoff yang tak lagi sah
   // digeser ke pilihan terakhir yang sah, bukan dibiarkan tak terlihat di <select>.
@@ -922,17 +954,15 @@ function JamPenjemputanSection({
       }
       const tersimpan = data.schedule ?? next
       setSchedule(tersimpan)
-      setRutin(tersimpan.default)
+      setRutin((tersimpan.couriers?.[rutinKurir] ?? tersimpan.default))
       const dibuang = data.dropped?.length ?? 0
       onSaved(dibuang > 0 ? `${pesanSukses} ${dibuang} jam khusus yang sudah lewat dibuang.` : pesanSukses)
 
-      const terdampak = data.resetDates ?? []
       const paketLama = data.bookedOnOldTime
-      if (terdampak.length > 0 && paketLama !== 0) {
+      const adaSlotDibuang = (data.resetDates ?? []).length > 0
+      if ((paketLama ?? 0) > 0 || (paketLama === null && adaSlotDibuang)) {
         setNotice(
-          `${paketLama === null || paketLama === undefined ? 'Sebagian' : paketLama} paket sudah dibooking dengan jam lama untuk ${terdampak
-            .map((d) => tanggalPanjang(d))
-            .join(', ')}. Paket itu tidak ikut pindah — API Mengantar tidak menyediakan penjadwalan ulang. Atur lewat dashboard atau CS Mengantar; pesanan berikutnya otomatis memakai jam baru.`,
+          `${paketLama ?? 'Sebagian'} paket sudah dibooking dengan jam jemput lama. Paket itu tidak ikut pindah — API Mengantar tidak menyediakan penjadwalan ulang. Atur lewat dashboard atau CS Mengantar; pesanan berikutnya otomatis memakai jam baru.`,
         )
       }
       return true
@@ -944,15 +974,43 @@ function JamPenjemputanSection({
     }
   }
 
+  // === Jam rutin ===
+
+  function pilihRutinKurir(kurir: string) {
+    setRutinKurir(kurir)
+    setRutin(rutinTersimpan(kurir))
+    setError('')
+  }
+
+  const rutinAcuan = rutinTersimpan(rutinKurir)
   const rutinBerubah =
-    rutin.pickupHour !== schedule.default.pickupHour || rutin.cutoffHour !== schedule.default.cutoffHour
+    rutin.pickupHour !== rutinAcuan.pickupHour || rutin.cutoffHour !== rutinAcuan.cutoffHour
 
   function simpanRutin() {
+    const next: PickupSchedule = rutinKurir
+      ? { ...schedule, couriers: { ...(schedule.couriers ?? {}), [rutinKurir]: rutin } }
+      : { ...schedule, default: rutin }
     void simpan(
-      { ...schedule, default: rutin },
-      `Jam rutin tersimpan: jemput ${formatPickupHour(rutin.pickupHour)}, batas pesanan ${formatPickupHour(rutin.cutoffHour)}.`,
+      next,
+      `Jam rutin ${namaKurir(rutinKurir)} tersimpan: jemput ${formatPickupHour(rutin.pickupHour)}, batas pesanan ${formatPickupHour(rutin.cutoffHour)}.`,
     )
   }
+
+  // Ekspedisi kembali mengikuti jam rutin semua ekspedisi.
+  function ikutiJamUmum() {
+    if (!rutinKurir) return
+    const sisa = { ...(schedule.couriers ?? {}) }
+    delete sisa[rutinKurir]
+    const next: PickupSchedule = { default: schedule.default, overrides: schedule.overrides }
+    if (Object.keys(sisa).length > 0) next.couriers = sisa
+    void simpan(next, `${namaKurir(rutinKurir)} kembali mengikuti jam rutin semua ekspedisi.`).then(
+      (ok) => {
+        if (ok) setRutin(schedule.default)
+      },
+    )
+  }
+
+  // === Jam khusus ===
 
   async function tambahKhusus() {
     setError('')
@@ -972,8 +1030,9 @@ function JamPenjemputanSection({
       setError('Tanggal itu terdaftar sebagai hari libur — hapus dulu dari tab Hari Libur bila kurir tetap datang.')
       return
     }
-    if (schedule.overrides.some((o) => o.date === date)) {
-      setError('Tanggal itu sudah punya jam khusus. Hapus dulu untuk mengubahnya.')
+    const kurir = khususKurir || undefined
+    if (schedule.overrides.some((o) => o.date === date && (o.courier ?? '') === (kurir ?? ''))) {
+      setError(`Tanggal itu sudah punya jam khusus untuk ${namaKurir(kurir)}. Hapus dulu untuk mengubahnya.`)
       return
     }
     if (schedule.overrides.length >= MAX_PICKUP_OVERRIDES) {
@@ -981,14 +1040,21 @@ function JamPenjemputanSection({
       return
     }
     const clean = label.trim().slice(0, PICKUP_HOLIDAY_LABEL_MAX)
-    const baru: PickupOverride = clean ? { date, ...khusus, label: clean } : { date, ...khusus }
+    const baru: PickupOverride = {
+      date,
+      ...khusus,
+      ...(kurir ? { courier: kurir } : {}),
+      ...(clean ? { label: clean } : {}),
+    }
     const next: PickupSchedule = {
       ...schedule,
-      overrides: [...schedule.overrides, baru].sort((a, b) => a.date.localeCompare(b.date)),
+      overrides: [...schedule.overrides, baru].sort(
+        (a, b) => a.date.localeCompare(b.date) || (a.courier ?? '').localeCompare(b.courier ?? ''),
+      ),
     }
     const ok = await simpan(
       next,
-      `Jam khusus ${tanggalPanjang(date)} tersimpan: jemput ${formatPickupHour(khusus.pickupHour)}.`,
+      `Jam khusus ${tanggalPanjang(date)} (${namaKurir(kurir)}) tersimpan: jemput ${formatPickupHour(khusus.pickupHour)}.`,
     )
     if (ok) {
       setDate('')
@@ -996,15 +1062,36 @@ function JamPenjemputanSection({
     }
   }
 
-  function hapusKhusus(target: string) {
+  function hapusKhusus(target: PickupOverride) {
     void simpan(
-      { ...schedule, overrides: schedule.overrides.filter((o) => o.date !== target) },
-      `Jam khusus ${tanggalPanjang(target)} dihapus — kembali ke jam rutin.`,
+      {
+        ...schedule,
+        overrides: schedule.overrides.filter(
+          (o) => !(o.date === target.date && (o.courier ?? '') === (target.courier ?? '')),
+        ),
+      },
+      `Jam khusus ${tanggalPanjang(target.date)} (${namaKurir(target.courier)}) dihapus.`,
     )
   }
 
+  // === Potongan tampilan ===
+
   const selectCls =
     'rounded-xl border border-gray-300 px-3 py-2.5 text-sm text-gray-900 outline-none transition focus:border-brand-primary focus:ring-2 focus:ring-brand-primary/20 disabled:bg-gray-50 disabled:text-gray-500'
+
+  // Dropdown "Berlaku untuk" dengan logo ekspedisi.
+  const pilihKurir = (nilai: string, ubah: (v: string) => void, id: string) => (
+    <label className="block text-sm" htmlFor={id}>
+      <span className="font-medium text-gray-700">Berlaku untuk</span>
+      <CourierSelect
+        id={id}
+        value={nilai}
+        onChange={ubah}
+        options={couriers}
+        disabled={loading || saving || !canEdit}
+      />
+    </label>
+  )
 
   // Dua <select> jam jemput + batas pesanan, dipakai form rutin & form jam khusus.
   const pilihJam = (
@@ -1048,15 +1135,30 @@ function JamPenjemputanSection({
     </div>
   )
 
-  const peringatanSpx = (h: PickupHours) =>
-    h.pickupHour < SPX_EARLIEST_PICKUP_HOUR ? (
+  // Peringatan SPX hanya relevan bila aturannya mengenai Shopee Express: untuk SPX sendiri, atau
+  // untuk "semua ekspedisi" selama SPX belum punya jam sendiri.
+  const kenaSpx = (kurir: string) =>
+    kurir === SPX_ID || (kurir === SEMUA_EKSPEDISI && couriers.some((c) => c.id === SPX_ID))
+  const peringatanSpx = (h: PickupHours, kurir: string) =>
+    h.pickupHour < SPX_EARLIEST_PICKUP_HOUR && kenaSpx(kurir) ? (
       <p className="mt-2 flex gap-1.5 text-xs text-amber-700">
         <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
         Shopee Express (SPX) hanya menjemput pukul {formatPickupHour(SPX_EARLIEST_PICKUP_HOUR)}–22.00
-        menurut pusat bantuan Mengantar. Booking SPX pada jam ini kemungkinan ditolak; J&amp;T tidak
-        terpengaruh.
+        menurut pusat bantuan Mengantar. Booking SPX pada jam ini kemungkinan ditolak
+        {kurir === SEMUA_EKSPEDISI ? ' — atur jam SPX tersendiri bila perlu' : ''}.
       </p>
     ) : null
+
+  // Logo + nama ekspedisi untuk baris daftar.
+  const labelKurir = (id?: string) =>
+    id ? (
+      <span className="inline-flex items-center gap-1.5">
+        <CourierLogo courier={id} label={namaKurir(id)} size="xs" />
+        <span>{namaKurir(id)}</span>
+      </span>
+    ) : (
+      <span className="text-gray-500">Semua ekspedisi</span>
+    )
 
   return (
     <div className="space-y-5">
@@ -1073,34 +1175,92 @@ function JamPenjemputanSection({
           <p>{notice}</p>
         </div>
       )}
+      {!loading && !perCourierSlots && (
+        <div className="flex max-w-2xl gap-2 rounded-xl bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-800">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+          <p>
+            Jam <strong>jemput</strong> per ekspedisi belum berlaku: migration{' '}
+            <code>20261014120000_pickup_slot_per_jam</code> belum dijalankan di Supabase, jadi semua
+            ekspedisi masih memakai satu slot per hari. Batas pesanan per ekspedisi sudah berlaku.
+          </p>
+        </div>
+      )}
 
       {/* === Jam rutin === */}
       <SettingCard
         title="Jam Penjemputan Rutin"
-        description="Berlaku setiap hari penjemputan (Senin–Sabtu, di luar hari libur). Pesanan yang lunas sebelum batas ikut dijemput hari itu; setelah batas ikut penjemputan hari kerja berikutnya."
+        description="Berlaku setiap hari penjemputan (Senin–Sabtu, di luar hari libur). Pilih ekspedisi untuk memberinya jam sendiri; ekspedisi tanpa jam sendiri memakai jam Semua ekspedisi."
       >
-        <div className="mt-4">{pilihJam(rutin, setRutin, 'rutin')}</div>
+        <div className="mt-4 space-y-3">
+          {pilihKurir(rutinKurir, pilihRutinKurir, 'rutin-kurir')}
+          {!loading && rutinKurir && !punyaJamSendiri(rutinKurir) && (
+            <p className="text-xs text-gray-500">
+              {namaKurir(rutinKurir)} belum punya jam sendiri — saat ini mengikuti jam Semua
+              ekspedisi. Ubah jamnya lalu Simpan untuk memberi {namaKurir(rutinKurir)} jam tersendiri.
+            </p>
+          )}
+          {pilihJam(rutin, setRutin, 'rutin')}
+        </div>
         {!loading && (
           <p className="mt-3 rounded-xl bg-gray-50 px-3 py-2.5 text-xs leading-relaxed text-gray-600">
-            Pesanan lunas <strong>sebelum {formatPickupHour(rutin.cutoffHour)}</strong> dijemput hari
-            itu sekitar <strong>{formatPickupHour(rutin.pickupHour)} WIB</strong>; pesanan sesudahnya
-            ikut penjemputan hari kerja berikutnya.
+            <strong>{namaKurir(rutinKurir)}</strong>: pesanan lunas{' '}
+            <strong>sebelum {formatPickupHour(rutin.cutoffHour)}</strong> dijemput hari itu sekitar{' '}
+            <strong>{formatPickupHour(rutin.pickupHour)} WIB</strong>; pesanan sesudahnya ikut
+            penjemputan hari kerja berikutnya.
           </p>
         )}
-        {peringatanSpx(rutin)}
+        {peringatanSpx(rutin, rutinKurir)}
         {canEdit && (
-          <SaveButton
-            saving={saving}
-            disabled={loading || saving || !rutinBerubah}
-            onClick={simpanRutin}
-          />
+          <div className="flex flex-wrap items-center gap-3">
+            <SaveButton
+              saving={saving}
+              disabled={loading || saving || !rutinBerubah}
+              onClick={simpanRutin}
+            />
+            {punyaJamSendiri(rutinKurir) && (
+              <button
+                type="button"
+                onClick={ikutiJamUmum}
+                disabled={saving}
+                className="mt-5 text-sm font-semibold text-gray-500 underline-offset-2 hover:text-gray-800 hover:underline disabled:opacity-50"
+              >
+                Ikuti jam Semua ekspedisi
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Ringkasan jam rutin yang berlaku per ekspedisi — supaya admin tak perlu membuka dropdown
+            satu per satu untuk tahu jam tiap ekspedisi. */}
+        {!loading && couriers.length > 0 && (
+          <div className="mt-5 border-t border-gray-100 pt-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+              Jam rutin yang berlaku
+            </p>
+            <ul className="mt-2 space-y-1.5 text-sm">
+              {couriers.map((c) => {
+                const h = rutinTersimpan(c.id)
+                return (
+                  <li key={c.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    {labelKurir(c.id)}
+                    <span className="text-gray-700">
+                      jemput {formatPickupHour(h.pickupHour)} · batas {formatPickupHour(h.cutoffHour)}
+                    </span>
+                    <span className="text-xs text-gray-400">
+                      {punyaJamSendiri(c.id) ? '(jam sendiri)' : '(ikut semua ekspedisi)'}
+                    </span>
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
         )}
       </SettingCard>
 
       {/* === Jam khusus per tanggal === */}
       <SettingCard
         title="Jam Khusus per Tanggal"
-        description="Untuk hari ketika kurir datang lebih awal atau lebih sore dari biasanya. Tanggal tanpa jam khusus memakai jam rutin di atas. Gudang tutup seharian? Pakai tab Hari Libur."
+        description="Untuk hari ketika kurir datang lebih awal atau lebih sore dari biasanya — untuk semua ekspedisi atau satu ekspedisi saja. Tanggal tanpa jam khusus memakai jam rutin di atas. Gudang tutup seharian? Pakai tab Hari Libur."
       >
         <div className="mt-4">
           {loading ? (
@@ -1114,14 +1274,20 @@ function JamPenjemputanSection({
               {schedule.overrides.map((o) => {
                 const libur = holidays.includes(o.date)
                 return (
-                  <li key={o.date} className="flex items-center gap-3 px-3 py-2.5 text-sm">
+                  <li
+                    key={`${o.date}|${o.courier ?? ''}`}
+                    className="flex items-center gap-3 px-3 py-2.5 text-sm"
+                  >
                     <CalendarClock className="h-4 w-4 flex-none text-gray-400" aria-hidden />
                     <div className="min-w-0 flex-1">
                       <p className="font-medium text-gray-900">{tanggalPanjang(o.date)}</p>
-                      <p className="text-xs text-gray-600">
-                        Jemput {formatPickupHour(o.pickupHour)} · batas pesanan{' '}
-                        {formatPickupHour(o.cutoffHour)}
-                        {o.label && <span className="text-gray-500"> · {o.label}</span>}
+                      <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-gray-600">
+                        {labelKurir(o.courier)}
+                        <span>
+                          · jemput {formatPickupHour(o.pickupHour)} · batas pesanan{' '}
+                          {formatPickupHour(o.cutoffHour)}
+                        </span>
+                        {o.label && <span className="text-gray-500">· {o.label}</span>}
                       </p>
                       {libur && (
                         <p className="mt-0.5 text-xs font-medium text-amber-700">
@@ -1132,9 +1298,9 @@ function JamPenjemputanSection({
                     {canEdit && (
                       <button
                         type="button"
-                        onClick={() => hapusKhusus(o.date)}
+                        onClick={() => hapusKhusus(o)}
                         disabled={saving}
-                        aria-label={`Hapus jam khusus ${o.date}`}
+                        aria-label={`Hapus jam khusus ${o.date} ${namaKurir(o.courier)}`}
                         className="rounded-lg p-1.5 text-gray-400 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
                       >
                         <Trash2 className="h-4 w-4" aria-hidden />
@@ -1149,7 +1315,7 @@ function JamPenjemputanSection({
 
         {canEdit && (
           <div className="mt-4 space-y-3 rounded-xl border border-gray-200 p-3">
-            <div className="grid gap-3 sm:grid-cols-[180px_1fr]">
+            <div className="grid gap-3 sm:grid-cols-2">
               <label className="block text-sm" htmlFor="khusus-tanggal">
                 <span className="font-medium text-gray-700">Tanggal</span>
                 <input
@@ -1165,22 +1331,23 @@ function JamPenjemputanSection({
                   className={`mt-1 w-full ${selectCls}`}
                 />
               </label>
-              <label className="block text-sm" htmlFor="khusus-label">
-                <span className="font-medium text-gray-700">Keterangan (opsional)</span>
-                <input
-                  id="khusus-label"
-                  type="text"
-                  value={label}
-                  maxLength={PICKUP_HOLIDAY_LABEL_MAX}
-                  disabled={loading || saving}
-                  onChange={(e) => setLabel(e.target.value)}
-                  placeholder="mis. Stok opname, kurir datang pagi"
-                  className={`mt-1 w-full ${selectCls} placeholder:text-gray-400`}
-                />
-              </label>
+              {pilihKurir(khususKurir, setKhususKurir, 'khusus-kurir')}
             </div>
+            <label className="block text-sm" htmlFor="khusus-label">
+              <span className="font-medium text-gray-700">Keterangan (opsional)</span>
+              <input
+                id="khusus-label"
+                type="text"
+                value={label}
+                maxLength={PICKUP_HOLIDAY_LABEL_MAX}
+                disabled={loading || saving}
+                onChange={(e) => setLabel(e.target.value)}
+                placeholder="mis. Stok opname, kurir datang pagi"
+                className={`mt-1 w-full ${selectCls} placeholder:text-gray-400`}
+              />
+            </label>
             {pilihJam(khusus, setKhusus, 'khusus')}
-            {peringatanSpx(khusus)}
+            {peringatanSpx(khusus, khususKurir)}
             <button
               type="button"
               onClick={() => void tambahKhusus()}
@@ -1199,6 +1366,10 @@ function JamPenjemputanSection({
               Jam jemput hanya bisa jam bulat <strong>09.00–18.00</strong> (yang diterima Mengantar),
               dan batas pesanan minimal <strong>2 jam</strong> sebelumnya — Mengantar menolak booking
               yang kurang dari 90 menit sebelum jam jemput.
+            </p>
+            <p>
+              Urutan yang berlaku: jam khusus untuk ekspedisi itu → jam khusus semua ekspedisi → jam
+              rutin ekspedisi itu → jam rutin semua ekspedisi.
             </p>
             <p>
               Ubah <strong>sebelum</strong> ada paket yang dibooking pada tanggal itu. Paket yang

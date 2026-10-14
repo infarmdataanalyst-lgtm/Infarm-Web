@@ -14,7 +14,31 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { CalendarOff, Truck } from 'lucide-react'
-import type { PickupScheduleSummary } from '@/lib/mock-db/pickup-summary'
+import CourierLogo from '@/components/checkout/CourierLogo'
+import type { CourierPickupTime, PickupScheduleSummary } from '@/lib/mock-db/pickup-summary'
+
+// true bila jam jemput atau batas pesanan antar ekspedisi berbeda — baru saat itu kartu merinci
+// per ekspedisi; bila semua sama, satu jam di judul sudah cukup.
+function berbedaPerKurir(list: CourierPickupTime[]): boolean {
+  return new Set(list.map((c) => `${c.pickupTime}|${c.cutoffHour}`)).size > 1
+}
+
+// Baris kecil "[logo] J&T ±17.00 · batas 15.00   [logo] Shopee Express ±14.00 · batas 12.00".
+function RincianKurir({ list, tampilkanBatas }: { list: CourierPickupTime[]; tampilkanBatas: boolean }) {
+  return (
+    <span className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-600">
+      {list.map((c) => (
+        <span key={c.courier} className="inline-flex items-center gap-1.5">
+          <CourierLogo courier={c.courier} label={c.label} size="xs" />
+          <span>
+            {c.label} ±{jam(c.pickupTime)}
+            {tampilkanBatas && <span className="text-gray-400"> · batas {c.cutoffHour}.00</span>}
+          </span>
+        </span>
+      ))}
+    </span>
+  )
+}
 
 const REFRESH_MS = 5 * 60_000
 
@@ -81,6 +105,9 @@ export default function PickupScheduleCard() {
 
   const pickupToday = data.status === 'hari-ini' || data.status === 'lewat-cutoff'
   const rincian = data.byWarehouse.map((w) => `${w.name} ${w.count}`).join(' · ')
+  // `?? []`: respons dari deploy lama (sebelum jam per ekspedisi) belum membawa field ini.
+  const perKurirHariIni = berbedaPerKurir(data.todayByCourier ?? [])
+  const perKurirBerikutnya = berbedaPerKurir(data.nextByCourier ?? [])
 
   return (
     <div
@@ -99,13 +126,15 @@ export default function PickupScheduleCard() {
             {pickupToday ? (
               <>
                 <p className="font-semibold text-gray-900">
-                  Penjemputan hari ini · {hariTanggal(data.today)} · ±{jam(data.pickupTime)} WIB
+                  Penjemputan hari ini · {hariTanggal(data.today)}
+                  {!perKurirHariIni && <> · ±{jam(data.pickupTime)} WIB</>}
                   {data.todaySpecial && (
                     <span className="ml-1.5 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
                       Jam khusus{data.todaySpecialLabel ? `: ${data.todaySpecialLabel}` : ''}
                     </span>
                   )}
                 </p>
+                {perKurirHariIni && <RincianKurir list={data.todayByCourier} tampilkanBatas />}
                 <p className="mt-0.5 text-gray-700">
                   {data.todayCount === 0 ? (
                     'Belum ada paket terjadwal untuk hari ini.'
@@ -117,13 +146,18 @@ export default function PickupScheduleCard() {
                   )}
                 </p>
                 <p className="mt-0.5 text-xs text-gray-500">
-                  {data.status === 'lewat-cutoff'
-                    ? `Sudah lewat ${data.cutoffHour}.00: pesanan baru ikut penjemputan berikutnya`
-                    : `Pesanan masuk setelah ${data.cutoffHour}.00 ikut penjemputan berikutnya`}
+                  {perKurirHariIni
+                    ? 'Pesanan setelah batas ekspedisinya ikut penjemputan berikutnya'
+                    : data.status === 'lewat-cutoff'
+                      ? `Sudah lewat ${data.cutoffHour}.00: pesanan baru ikut penjemputan berikutnya`
+                      : `Pesanan masuk setelah ${data.cutoffHour}.00 ikut penjemputan berikutnya`}
                   {data.nextDate &&
-                    ` (${hariTanggal(data.nextDate)}${data.nextPickupTime ? ` ±${jam(data.nextPickupTime)}` : ''}${data.nextCount ? `, ${data.nextCount} paket sudah menunggu` : ''})`}
+                    ` (${hariTanggal(data.nextDate)}${data.nextPickupTime && !perKurirBerikutnya ? ` ±${jam(data.nextPickupTime)}` : ''}${data.nextCount ? `, ${data.nextCount} paket sudah menunggu` : ''})`}
                   .
                 </p>
+                {perKurirBerikutnya && data.nextDate && (
+                  <RincianKurir list={data.nextByCourier} tampilkanBatas={false} />
+                )}
               </>
             ) : (
               <>
@@ -137,8 +171,8 @@ export default function PickupScheduleCard() {
                 <p className="mt-0.5 text-gray-700">
                   {data.nextDate ? (
                     <>
-                      Berikutnya <span className="font-semibold">{hariTanggal(data.nextDate)}</span> ±
-                      {jam(data.nextPickupTime ?? data.pickupTime)} WIB
+                      Berikutnya <span className="font-semibold">{hariTanggal(data.nextDate)}</span>
+                      {!perKurirBerikutnya && <> ±{jam(data.nextPickupTime ?? data.pickupTime)} WIB</>}
                       {data.nextCount > 0 ? (
                         <>
                           {' '}
@@ -153,6 +187,9 @@ export default function PickupScheduleCard() {
                     'Hari penjemputan berikutnya belum bisa ditentukan — periksa daftar libur.'
                   )}
                 </p>
+                {perKurirBerikutnya && data.nextDate && (
+                  <RincianKurir list={data.nextByCourier} tampilkanBatas={false} />
+                )}
               </>
             )}
           </div>

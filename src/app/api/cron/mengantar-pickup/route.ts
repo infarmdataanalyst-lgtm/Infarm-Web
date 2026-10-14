@@ -19,7 +19,14 @@
 import { NextResponse } from 'next/server'
 import { ensurePickupForDate } from '@/lib/mengantar-pickup'
 import { getPickupHolidays, getPickupSchedule } from '@/lib/mock-db/settings'
-import { resolvePickupDate, toHolidaySet, wibDateString, wibHour } from '@/lib/pickup-schedule'
+import {
+  distinctPickupHours,
+  resolvePickupDate,
+  toHolidaySet,
+  wibDateString,
+  wibHour,
+} from '@/lib/pickup-schedule'
+import { OFFERED_COURIER_IDS } from '@/lib/mengantar-estimate'
 import { listPickupAddressIds } from '@/lib/warehouse'
 import { timingSafeEqual } from 'node:crypto'
 
@@ -92,15 +99,23 @@ export async function GET(request: Request) {
   // sementara fungsi serverless Vercel punya anggaran waktunya sendiri. Dua alamat berurutan sudah
   // menghabiskan 16 detik pada kasus terburuk dan fungsinya dimatikan sebelum sempat menulis ke DB.
   // Tiap alamat menulis BARIS yang berbeda, jadi tak ada yang perlu diserialkan.
+  //
+  // Per alamat, SATU slot untuk tiap jam jemput berbeda yang dipakai hari ini: bila J&T dijemput
+  // 17.00 dan Shopee Express 14.00, dua slot dibuat. Ekspedisi berjam sama berbagi satu slot.
+  const jamHariIni = distinctPickupHours(today, schedule, OFFERED_COURIER_IDS)
   const results = await Promise.all(
-    addressIds.map(async (addressId) => ({
-      addressId,
-      outcome: await ensurePickupForDate(today, addressId, holidays, schedule),
-    })),
+    addressIds.flatMap((addressId) =>
+      jamHariIni.map(async ({ pickupHour, courier }) => ({
+        addressId,
+        pickupHour,
+        outcome: await ensurePickupForDate(today, addressId, holidays, schedule, courier),
+      })),
+    ),
   )
 
-  const items = results.map(({ addressId, outcome }) => ({
+  const items = results.map(({ addressId, pickupHour, outcome }) => ({
     addressId,
+    pickupHour,
     status: outcome.status,
     ...(outcome.status === 'failed' ? { reason: outcome.reason } : {}),
     ...('pickup' in outcome ? { timeId: outcome.pickup.timeId } : {}),
@@ -112,8 +127,8 @@ export async function GET(request: Request) {
   const gagal = items.filter((i) => i.status === 'failed')
   if (gagal.length > 0) {
     console.error(
-      `${LOG} gagal untuk ${today} pada ${gagal.length}/${items.length} alamat: ${gagal
-        .map((i) => `${i.addressId}=${i.reason}`)
+      `${LOG} gagal untuk ${today} pada ${gagal.length}/${items.length} slot: ${gagal
+        .map((i) => `${i.addressId}@${i.pickupHour}:00=${i.reason}`)
         .join(', ')}`,
     )
     return NextResponse.json({ date: today, status: 'failed', items }, { status: 500 })

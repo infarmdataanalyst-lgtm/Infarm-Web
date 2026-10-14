@@ -112,11 +112,17 @@ sejak 2026-10-13).
   kartu: **Jam Rutin** (dua `<select>` + tombol Simpan; bawaan jemput 17.00, cutoff 15.00) dan
   **Jam Khusus per Tanggal** (Tambah/Hapus langsung tersimpan, pola tab Hari Libur). Pilihan jemput
   hanya 09–18 (yang diterima Mengantar), pilihan cutoff otomatis dibatasi ≤ jemput − 2 jam.
-  `GET/PATCH /api/settings/pickup-schedule` (PATCH = seluruh jadwal, peran admin). Bila jam jemput
-  tanggal yang slotnya sudah dibuat berubah, slot lama dibuang dan form menampilkan peringatan
-  berapa paket sudah terbooking di jam lama (harus diatur manual di Mengantar). Tanggal berjam
-  khusus yang kemudian dijadikan libur ditandai "Tidak berlaku". Kartu **Penjemputan kurir** di
-  halaman Pesanan memakai jam yang berlaku hari ini (badge "Jam khusus") dan jam hari berikutnya.
+  `GET/PATCH /api/settings/pickup-schedule` (PATCH = seluruh jadwal, peran admin). Form menampilkan
+  peringatan berapa paket sudah terbooking di jam lama (harus diatur manual di Mengantar). Tanggal
+  berjam khusus yang kemudian dijadikan libur ditandai "Tidak berlaku".
+  **Per ekspedisi** (sejak 2026-10-14): kedua kartu punya dropdown **"Berlaku untuk"** berlogo
+  (`src/components/oms/CourierSelect.tsx`, Headless UI Listbox — `<select>` native tak bisa memuat
+  gambar). Kartu Jam Rutin: pilih ekspedisi → atur jamnya → Simpan; tombol "Ikuti jam Semua
+  ekspedisi" mencabut jam sendirinya; di bawahnya ringkasan jam rutin yang berlaku per ekspedisi.
+  Peringatan SPX (< 14.00) hanya muncul bila aturannya mengenai Shopee Express. Bila migration
+  `20261014120000` belum dijalankan, tab menampilkan peringatan bahwa jam jemput per ekspedisi
+  belum berlaku. Kartu **Penjemputan kurir** di halaman Pesanan memakai jam yang berlaku hari ini
+  (badge "Jam khusus"); bila jam antar ekspedisi berbeda, ia merinci per ekspedisi dengan logo.
   Aturan lengkap: [docs/checkout-flow.md](checkout-flow.md) → "Jadwal Pickup Harian".
 
 - **Hari Libur** = tanggal gudang tutup di luar Minggu (Idul Fitri, cuti bersama, tutup dadakan);

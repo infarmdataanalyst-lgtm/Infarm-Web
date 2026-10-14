@@ -156,10 +156,14 @@ export type ResolvedPickupDate = {
 //
 // `schedule` = jam jemput & cutoff dari OMS. Yang diuji adalah cutoff HARI INI: bila hari ini punya
 // jam khusus (mis. jemput 13.00, cutoff 11.00), pesanan pukul 12.00 sudah ikut hari kerja berikutnya.
+//
+// `courier` = kode ekspedisi pesanan ('JT', 'spx'): cutoff tiap ekspedisi bisa berbeda, jadi pesanan
+// SPX pukul 12.00 bisa sudah ikut besok sementara pesanan J&T pada jam yang sama masih ikut hari ini.
 export function resolvePickupDate(
   nowMs: number = Date.now(),
   holidays: PickupHolidays = NO_HOLIDAYS,
   schedule: PickupSchedule = DEFAULT_PICKUP_SCHEDULE,
+  courier?: string | null,
 ): ResolvedPickupDate {
   const today = wibDateString(nowMs)
   const hour = wibHour(nowMs)
@@ -168,7 +172,7 @@ export function resolvePickupDate(
     const reason: PickupDateReason = holidays.has(today) ? 'hari-libur' : 'bukan-hari-pickup'
     return { date: nextPickupDate(today, holidays) ?? today, reason, today, hour }
   }
-  if (hour >= pickupHoursFor(today, schedule).cutoffHour) {
+  if (hour >= pickupHoursFor(today, schedule, courier).cutoffHour) {
     return { date: nextPickupDate(today, holidays) ?? today, reason: 'lewat-cutoff', today, hour }
   }
   return { date: today, reason: 'hari-ini', today, hour }
@@ -274,10 +278,27 @@ export function normalizePickupHolidays(input: unknown, today: string): Normaliz
 // terakhir yang masih ikut hari itu lunas pada cutoff − 1 menit, dan saat itulah booking-nya
 // dikirim. Dengan jarak 2 jam, booking paling akhir masih 2 jam 1 menit sebelum jemput; dengan
 // jarak 1 jam hanya 61 menit dan pesanan terakhir hari itu pasti gagal dibooking.
+//
+// ── Per ekspedisi (sejak 2026-10-14) ──
+// Tiap aturan bisa berlaku untuk SEMUA ekspedisi atau untuk SATU ekspedisi (kode API: 'JT', 'spx').
+// Ekspedisi berbeda punya jam operasional berbeda — mis. SPX hanya menjemput 14.00–22.00 menurut
+// pusat bantuan Mengantar — jadi admin perlu mengatur jam J&T dan SPX terpisah. Urutan prioritas
+// untuk satu tanggal & satu ekspedisi, dari yang paling spesifik:
+//   1. jam khusus tanggal itu untuk ekspedisi itu
+//   2. jam khusus tanggal itu untuk semua ekspedisi
+//   3. jam rutin ekspedisi itu (`couriers[kode]`)
+//   4. jam rutin semua ekspedisi (`default`)
+// Konsekuensinya satu tanggal bisa butuh beberapa slot Mengantar (satu per jam jemput), dan tabel
+// mengantar_daily_pickup menyimpan jam slotnya sejak migration 20261014120000.
 
 export type PickupHours = { pickupHour: number; cutoffHour: number }
-export type PickupOverride = PickupHours & { date: string; label?: string }
-export type PickupSchedule = { default: PickupHours; overrides: PickupOverride[] }
+// `courier` kosong = berlaku untuk semua ekspedisi.
+export type PickupOverride = PickupHours & { date: string; label?: string; courier?: string }
+export type PickupSchedule = {
+  default: PickupHours
+  couriers?: Record<string, PickupHours>
+  overrides: PickupOverride[]
+}
 
 export const DEFAULT_PICKUP_HOURS: PickupHours = {
   pickupHour: PICKUP_HOUR_WIB,
@@ -299,12 +320,18 @@ export const MAX_PICKUP_OVERRIDES = 60
 // form hanya MEMPERINGATKAN, tidak menolak, karena J&T tidak terikat aturan itu.
 export const SPX_EARLIEST_PICKUP_HOUR = 14
 
-// Jam & cutoff yang berlaku pada satu tanggal: jam khusus bila ada, selain itu jam bawaan.
+// Jam & cutoff yang berlaku pada satu tanggal untuk satu ekspedisi (urutan prioritas di atas).
+// `courier` kosong = pertanyaan "jam umum hari itu" (dipakai bila ekspedisi tak relevan).
+// `special` true bila yang berlaku jam khusus tanggal, bukan jam rutin.
 export function pickupHoursFor(
   date: string,
   schedule: PickupSchedule = DEFAULT_PICKUP_SCHEDULE,
+  courier?: string | null,
 ): PickupHours & { special: boolean; label?: string } {
-  const o = schedule.overrides.find((x) => x.date === date)
+  const khususKurir = courier
+    ? schedule.overrides.find((x) => x.date === date && x.courier === courier)
+    : undefined
+  const o = khususKurir ?? schedule.overrides.find((x) => x.date === date && !x.courier)
   if (o) {
     return {
       pickupHour: o.pickupHour,
@@ -313,7 +340,40 @@ export function pickupHoursFor(
       ...(o.label ? { label: o.label } : {}),
     }
   }
-  return { ...schedule.default, special: false }
+  const rutinKurir = courier ? schedule.couriers?.[courier] : undefined
+  return { ...(rutinKurir ?? schedule.default), special: false }
+}
+
+// Jam jemput berbeda yang dipakai pada satu tanggal, masing-masing dengan satu ekspedisi wakilnya.
+// Dipakai cron: satu slot Mengantar per jam jemput per alamat. Tanpa daftar ekspedisi → jam umum.
+export function distinctPickupHours(
+  date: string,
+  schedule: PickupSchedule,
+  couriers: readonly string[],
+): { pickupHour: number; courier: string | null }[] {
+  const daftar: (string | null)[] = couriers.length > 0 ? [...couriers] : [null]
+  const byHour = new Map<number, string | null>()
+  for (const c of daftar) {
+    const { pickupHour } = pickupHoursFor(date, schedule, c)
+    if (!byHour.has(pickupHour)) byHour.set(pickupHour, c)
+  }
+  return [...byHour.entries()]
+    .map(([pickupHour, courier]) => ({ pickupHour, courier }))
+    .sort((a, b) => a.pickupHour - b.pickupHour)
+}
+
+// Jumlah paket terbooking yang jam jemputnya BERUBAH oleh suatu perubahan jadwal. Paket itu tetap
+// pada slot lamanya di Mengantar (tak ada reschedule di API), jadi admin perlu diberi tahu.
+export function countOrdersOnChangedHour(
+  before: PickupSchedule,
+  after: PickupSchedule,
+  orders: readonly { pickupDate: string; courier: string | null }[],
+): number {
+  return orders.filter(
+    (o) =>
+      pickupHoursFor(o.pickupDate, before, o.courier).pickupHour !==
+      pickupHoursFor(o.pickupDate, after, o.courier).pickupHour,
+  ).length
 }
 
 // Format jam untuk body POST /time Mengantar: "9:00", "17:00" — persis daftar di dokumentasinya
@@ -372,24 +432,52 @@ export function parsePickupSchedule(raw: string | null | undefined): PickupSched
       ? { pickupHour: d.pickupHour as number, cutoffHour: d.cutoffHour as number }
       : DEFAULT_PICKUP_HOURS
 
+  // Jam rutin per ekspedisi: entri rusak dilewati, ekspedisi itu kembali memakai jam umum.
+  const couriers: Record<string, PickupHours> = {}
+  if (typeof p.couriers === 'object' && p.couriers !== null && !Array.isArray(p.couriers)) {
+    for (const [kode, nilai] of Object.entries(p.couriers as Record<string, unknown>)) {
+      if (!kode || typeof nilai !== 'object' || nilai === null) continue
+      const h = nilai as Record<string, unknown>
+      if (validatePickupHours(h.pickupHour, h.cutoffHour) !== null) continue
+      couriers[kode] = { pickupHour: h.pickupHour as number, cutoffHour: h.cutoffHour as number }
+    }
+  }
+
   const overrides: PickupOverride[] = []
   const seen = new Set<string>()
   for (const entry of Array.isArray(p.overrides) ? p.overrides : []) {
     if (typeof entry !== 'object' || entry === null) continue
     const e = entry as Record<string, unknown>
-    if (typeof e.date !== 'string' || parsePickupDate(e.date) === null || seen.has(e.date)) continue
+    const courier = typeof e.courier === 'string' && e.courier ? e.courier : undefined
+    const kunci = overrideKey(String(e.date), courier)
+    if (typeof e.date !== 'string' || parsePickupDate(e.date) === null || seen.has(kunci)) continue
     if (validatePickupHours(e.pickupHour, e.cutoffHour) !== null) continue
-    seen.add(e.date)
+    seen.add(kunci)
     const label = typeof e.label === 'string' ? e.label.trim().slice(0, PICKUP_HOLIDAY_LABEL_MAX) : ''
     overrides.push({
       date: e.date,
       pickupHour: e.pickupHour as number,
       cutoffHour: e.cutoffHour as number,
+      ...(courier ? { courier } : {}),
       ...(label ? { label } : {}),
     })
   }
-  overrides.sort((a, b) => a.date.localeCompare(b.date))
-  return { default: def, overrides }
+  overrides.sort(compareOverrides)
+  return {
+    default: def,
+    ...(Object.keys(couriers).length > 0 ? { couriers } : {}),
+    overrides,
+  }
+}
+
+// Satu jam khusus per (tanggal, ekspedisi). Ekspedisi kosong = semua ekspedisi.
+export function overrideKey(date: string, courier?: string | null): string {
+  return `${date}|${courier ?? ''}`
+}
+
+// Urut tanggal, lalu "semua ekspedisi" sebelum ekspedisi tertentu.
+function compareOverrides(a: PickupOverride, b: PickupOverride): number {
+  return a.date.localeCompare(b.date) || (a.courier ?? '').localeCompare(b.courier ?? '')
 }
 
 export type NormalizedSchedule =
@@ -404,9 +492,14 @@ export type NormalizedSchedule =
 // belakangan pada tanggal yang sudah punya jam khusus, dan menolaknya di sini akan membuat seluruh
 // jadwal tak bisa disimpan lagi. Libur tetap menang (isPickupDay), jam khususnya hanya tak berlaku,
 // dan form menandainya. Form juga mencegah MENAMBAH jam khusus baru pada tanggal libur.
+//
+// `allowedCouriers` = kode ekspedisi yang ditawarkan ke pembeli (OFFERED_COURIER_IDS). Aturan untuk
+// kode lain DITOLAK: jamnya tak akan pernah dipakai booking mana pun, dan kode salah ketik ('jt'
+// kecil) akan diam-diam membuat J&T kembali ke jam umum.
 export function normalizePickupSchedule(
   input: unknown,
   today: string,
+  allowedCouriers: readonly string[] = [],
 ): NormalizedSchedule {
   if (typeof input !== 'object' || input === null) {
     return { ok: false, error: 'Jadwal penjemputan tidak valid.' }
@@ -418,6 +511,21 @@ export function normalizePickupSchedule(
   >
   const defErr = validatePickupHours(d.pickupHour, d.cutoffHour)
   if (defErr) return { ok: false, error: `Jam rutin: ${defErr}` }
+
+  const kurirSah = new Set(allowedCouriers)
+  const couriers: Record<string, PickupHours> = {}
+  if (raw.couriers !== undefined && raw.couriers !== null) {
+    if (typeof raw.couriers !== 'object' || Array.isArray(raw.couriers)) {
+      return { ok: false, error: 'Jam rutin per ekspedisi tidak valid.' }
+    }
+    for (const [kode, nilai] of Object.entries(raw.couriers as Record<string, unknown>)) {
+      if (!kurirSah.has(kode)) return { ok: false, error: `Ekspedisi tidak dikenal: ${kode}.` }
+      const h = (typeof nilai === 'object' && nilai !== null ? nilai : {}) as Record<string, unknown>
+      const err = validatePickupHours(h.pickupHour, h.cutoffHour)
+      if (err) return { ok: false, error: `Jam rutin ${kode}: ${err}` }
+      couriers[kode] = { pickupHour: h.pickupHour as number, cutoffHour: h.cutoffHour as number }
+    }
+  }
 
   if (raw.overrides !== undefined && !Array.isArray(raw.overrides)) {
     return { ok: false, error: 'Daftar jam khusus harus berupa array.' }
@@ -435,6 +543,13 @@ export function normalizePickupSchedule(
     if (e.label !== undefined && e.label !== null && typeof e.label !== 'string') {
       return { ok: false, error: `Keterangan untuk ${e.date} harus berupa teks.` }
     }
+    const courier = typeof e.courier === 'string' && e.courier ? e.courier : undefined
+    if (e.courier !== undefined && e.courier !== null && e.courier !== '' && !courier) {
+      return { ok: false, error: `Ekspedisi untuk ${e.date} tidak valid.` }
+    }
+    if (courier && !kurirSah.has(courier)) {
+      return { ok: false, error: `Ekspedisi tidak dikenal: ${courier}.` }
+    }
     if (e.date < today) {
       dropped.push(e.date)
       continue
@@ -448,10 +563,12 @@ export function normalizePickupSchedule(
       }
     }
     const label = typeof e.label === 'string' ? e.label.trim().slice(0, PICKUP_HOLIDAY_LABEL_MAX) : ''
-    byDate.set(e.date, {
+    // Satu jam khusus per (tanggal, ekspedisi); entri kedua untuk kunci yang sama menimpa yang pertama.
+    byDate.set(overrideKey(e.date, courier), {
       date: e.date,
       pickupHour: e.pickupHour as number,
       cutoffHour: e.cutoffHour as number,
+      ...(courier ? { courier } : {}),
       ...(label ? { label } : {}),
     })
   }
@@ -462,7 +579,8 @@ export function normalizePickupSchedule(
     ok: true,
     schedule: {
       default: { pickupHour: d.pickupHour as number, cutoffHour: d.cutoffHour as number },
-      overrides: [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)),
+      ...(Object.keys(couriers).length > 0 ? { couriers } : {}),
+      overrides: [...byDate.values()].sort(compareOverrides),
     },
     dropped,
   }
@@ -475,14 +593,22 @@ export function normalizePickupSchedule(
 // berlaku saat itu. Tanpa membuangnya, cron dan booking terus memakai slot berjam lama karena
 // "tanggal ini sudah punya slot". Perubahan CUTOFF saja tidak memerlukan slot baru: cutoff hanya
 // dipakai sistem kita untuk memilih tanggal, tak pernah dikirim ke Mengantar.
+//
+// Sejak migration 20261014120000 slot menyimpan jamnya sendiri (kolom pickup_hour) dan fungsi ini
+// hanya dipakai untuk database yang BELUM menjalankannya: di sana satu tanggal hanya bisa punya satu
+// slot, jadi tanggal di-reset bila jam jemput salah satu ekspedisi (`couriers`) berubah.
 export function slotDatesToReset(
   before: PickupSchedule,
   after: PickupSchedule,
   slotDates: readonly string[],
+  couriers: readonly string[] = [],
 ): string[] {
+  const daftar: (string | null)[] = [null, ...couriers]
   return [...new Set(slotDates)]
-    .filter(
-      (date) => pickupHoursFor(date, before).pickupHour !== pickupHoursFor(date, after).pickupHour,
+    .filter((date) =>
+      daftar.some(
+        (c) => pickupHoursFor(date, before, c).pickupHour !== pickupHoursFor(date, after, c).pickupHour,
+      ),
     )
     .sort()
 }

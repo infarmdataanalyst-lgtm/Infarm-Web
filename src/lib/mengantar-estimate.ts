@@ -85,7 +85,11 @@ export const SPX_COURIER_ID = 'spx'
 // pencocokan substring akan ikut menyambar kurir lain begitu Mengantar menambah key baru yang
 // kebetulan memuat huruf itu — pembeli tiba-tiba ditawari layanan yang belum kita dukung booking-nya.
 // Menambah layanan lain = tambah satu entri di sini, bukan melonggarkan pencocokan.
-const ALLOWED_COURIER_IDS = new Set<string>([JT_COURIER_ID, SPX_COURIER_ID])
+//
+// Daftar urut yang sama juga dipakai tab "Jam Penjemputan" di OMS: setiap kurir yang ditawarkan ke
+// pembeli bisa punya jam jemput sendiri. Menambah kurir di sini otomatis memunculkannya di sana.
+export const OFFERED_COURIER_IDS: readonly string[] = [JT_COURIER_ID, SPX_COURIER_ID]
+const ALLOWED_COURIER_IDS = new Set<string>(OFFERED_COURIER_IDS)
 
 // Label tampilan untuk kode kurir ('spx' → 'Shopee Express'); fallback ke kodenya sendiri.
 // Inilah yang disimpan ke orders.nama_ekspedisi, sehingga OMS & halaman lacak tak menampilkan kode API.

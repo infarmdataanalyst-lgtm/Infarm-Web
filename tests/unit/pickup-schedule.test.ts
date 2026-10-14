@@ -10,7 +10,9 @@ import {
   MAX_PICKUP_HOLIDAYS,
   NO_HOLIDAYS,
   PICKUP_HOLIDAY_LABEL_MAX,
+  countOrdersOnChangedHour,
   cutoffOptionsFor,
+  distinctPickupHours,
   formatPickupHour,
   isPickupDay,
   nextPickupDate,
@@ -382,5 +384,145 @@ describe('slotDatesToReset', () => {
   it('hapus jam khusus yang jamnya beda dari rutin → slot tanggal itu dibuat ulang', () => {
     const sesudah: PickupSchedule = { ...JADWAL, overrides: [] }
     expect(slotDatesToReset(JADWAL, sesudah, SLOT)).toEqual([SELASA_13])
+  })
+
+  it('database lama: jam rutin SPX berubah → tanggal ber-slot ikut dibuat ulang', () => {
+    const sesudah: PickupSchedule = { ...JADWAL, couriers: { spx: { pickupHour: 14, cutoffHour: 12 } } }
+    expect(slotDatesToReset(JADWAL, sesudah, SLOT, ['JT', 'spx'])).toEqual([RABU_14])
+  })
+})
+
+// === Jam per ekspedisi ===
+
+const KURIR = ['JT', 'spx'] as const
+
+// Rutin: semua 17/15, SPX 14/12. Selasa 13: semua ekspedisi 12/10. Rabu 14: khusus SPX 16/14.
+const JADWAL_KURIR: PickupSchedule = {
+  default: { pickupHour: 17, cutoffHour: 15 },
+  couriers: { spx: { pickupHour: 14, cutoffHour: 12 } },
+  overrides: [
+    { date: SELASA_13, pickupHour: 12, cutoffHour: 10 },
+    { date: RABU_14, pickupHour: 16, cutoffHour: 14, courier: 'spx' },
+  ],
+}
+
+describe('pickupHoursFor per ekspedisi (urutan prioritas)', () => {
+  it('hari biasa: J&T ikut jam umum, SPX memakai jam rutinnya sendiri', () => {
+    const KAMIS_15 = '2026-10-15'
+    expect(pickupHoursFor(KAMIS_15, JADWAL_KURIR, 'JT')).toMatchObject({ pickupHour: 17, cutoffHour: 15 })
+    expect(pickupHoursFor(KAMIS_15, JADWAL_KURIR, 'spx')).toMatchObject({ pickupHour: 14, cutoffHour: 12 })
+  })
+
+  it('jam khusus semua ekspedisi mengalahkan jam rutin ekspedisi', () => {
+    expect(pickupHoursFor(SELASA_13, JADWAL_KURIR, 'spx')).toMatchObject({ pickupHour: 12, special: true })
+  })
+
+  it('jam khusus satu ekspedisi hanya berlaku untuk ekspedisi itu', () => {
+    expect(pickupHoursFor(RABU_14, JADWAL_KURIR, 'spx')).toMatchObject({ pickupHour: 16, special: true })
+    expect(pickupHoursFor(RABU_14, JADWAL_KURIR, 'JT')).toMatchObject({ pickupHour: 17, special: false })
+  })
+
+  it('jam khusus ekspedisi mengalahkan jam khusus semua ekspedisi pada tanggal yang sama', () => {
+    const j: PickupSchedule = {
+      ...JADWAL_KURIR,
+      overrides: [
+        { date: SELASA_13, pickupHour: 12, cutoffHour: 10 },
+        { date: SELASA_13, pickupHour: 15, cutoffHour: 13, courier: 'spx' },
+      ],
+    }
+    expect(pickupHoursFor(SELASA_13, j, 'spx').pickupHour).toBe(15)
+    expect(pickupHoursFor(SELASA_13, j, 'JT').pickupHour).toBe(12)
+  })
+})
+
+describe('resolvePickupDate per ekspedisi', () => {
+  it('pukul 13.00: pesanan SPX (batas 12.00) ikut besok, J&T (batas 15.00) masih hari ini', () => {
+    const kamis13 = wib(2026, 10, 15, 13, 0)
+    expect(resolvePickupDate(kamis13, NO_HOLIDAYS, JADWAL_KURIR, 'spx').reason).toBe('lewat-cutoff')
+    expect(resolvePickupDate(kamis13, NO_HOLIDAYS, JADWAL_KURIR, 'JT').reason).toBe('hari-ini')
+  })
+})
+
+describe('distinctPickupHours (slot yang dibuat cron)', () => {
+  it('jam berbeda → satu slot per jam, masing-masing dengan ekspedisi wakilnya', () => {
+    expect(distinctPickupHours('2026-10-15', JADWAL_KURIR, KURIR)).toEqual([
+      { pickupHour: 14, courier: 'spx' },
+      { pickupHour: 17, courier: 'JT' },
+    ])
+  })
+
+  it('jam sama untuk semua ekspedisi → satu slot saja', () => {
+    expect(distinctPickupHours(SELASA_13, JADWAL_KURIR, KURIR)).toEqual([{ pickupHour: 12, courier: 'JT' }])
+  })
+
+  it('tanpa daftar ekspedisi → jam umum', () => {
+    expect(distinctPickupHours('2026-10-15', JADWAL_KURIR, [])).toEqual([{ pickupHour: 17, courier: null }])
+  })
+})
+
+describe('countOrdersOnChangedHour', () => {
+  it('hanya paket yang jam ekspedisinya berubah yang dihitung', () => {
+    const sesudah: PickupSchedule = { ...JADWAL_KURIR, couriers: { spx: { pickupHour: 15, cutoffHour: 13 } } }
+    const paket = [
+      { pickupDate: '2026-10-15', courier: 'spx' }, // 14 → 15: berubah
+      { pickupDate: '2026-10-15', courier: 'JT' }, // tetap 17
+      { pickupDate: SELASA_13, courier: 'spx' }, // jam khusus semua 12: tetap
+    ]
+    expect(countOrdersOnChangedHour(JADWAL_KURIR, sesudah, paket)).toBe(1)
+  })
+})
+
+describe('normalizePickupSchedule per ekspedisi', () => {
+  const dasar = { default: { pickupHour: 17, cutoffHour: 15 } }
+
+  it('jam rutin & jam khusus untuk ekspedisi yang ditawarkan diterima', () => {
+    const r = normalizePickupSchedule(
+      {
+        ...dasar,
+        couriers: { spx: { pickupHour: 14, cutoffHour: 12 } },
+        overrides: [
+          { date: RABU_14, pickupHour: 16, cutoffHour: 14, courier: 'spx' },
+          { date: RABU_14, pickupHour: 12, cutoffHour: 10 },
+        ],
+      },
+      '2026-10-13',
+      KURIR,
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.schedule.couriers).toEqual({ spx: { pickupHour: 14, cutoffHour: 12 } })
+    // Tanggal sama, ekspedisi berbeda → dua entri; "semua ekspedisi" diurutkan lebih dulu.
+    expect(r.schedule.overrides.map((o) => o.courier ?? '')).toEqual(['', 'spx'])
+  })
+
+  it('ekspedisi yang tak ditawarkan ditolak (mis. salah huruf "jt")', () => {
+    expect(normalizePickupSchedule({ ...dasar, couriers: { jt: { pickupHour: 17, cutoffHour: 15 } } }, '2026-10-13', KURIR).ok).toBe(false)
+    expect(
+      normalizePickupSchedule(
+        { ...dasar, overrides: [{ date: RABU_14, pickupHour: 16, cutoffHour: 14, courier: 'jne' }] },
+        '2026-10-13',
+        KURIR,
+      ).ok,
+    ).toBe(false)
+  })
+
+  it('jam rutin ekspedisi yang tak sah ditolak', () => {
+    const r = normalizePickupSchedule({ ...dasar, couriers: { spx: { pickupHour: 14, cutoffHour: 13 } } }, '2026-10-13', KURIR)
+    expect(r.ok).toBe(false)
+  })
+})
+
+describe('parsePickupSchedule per ekspedisi (toleran)', () => {
+  it('jam ekspedisi rusak dilewati, yang sah dipertahankan bersama ekspedisi jam khusus', () => {
+    const raw = JSON.stringify({
+      default: { pickupHour: 17, cutoffHour: 15 },
+      couriers: { spx: { pickupHour: 14, cutoffHour: 12 }, JT: { pickupHour: 30, cutoffHour: 1 } },
+      overrides: [{ date: RABU_14, pickupHour: 16, cutoffHour: 14, courier: 'spx' }],
+    })
+    expect(parsePickupSchedule(raw)).toEqual({
+      default: { pickupHour: 17, cutoffHour: 15 },
+      couriers: { spx: { pickupHour: 14, cutoffHour: 12 } },
+      overrides: [{ date: RABU_14, pickupHour: 16, cutoffHour: 14, courier: 'spx' }],
+    })
   })
 })

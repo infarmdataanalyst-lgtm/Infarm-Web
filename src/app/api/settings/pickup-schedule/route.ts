@@ -1,21 +1,26 @@
 // src/app/api/settings/pickup-schedule/route.ts
 // Jam penjemputan kurir & batas pesanan (cutoff) — store_settings.pickup_schedule.
 //   GET   → ADMIN ONLY (sesi OMS apa pun perannya).
-//           { schedule: { default: {pickupHour, cutoffHour}, overrides: [{date, pickupHour,
-//             cutoffHour, label?}] }, today, holidays: string[] }
+//           { schedule: { default: {pickupHour, cutoffHour}, couriers?: {[kode]: {pickupHour,
+//             cutoffHour}}, overrides: [{date, pickupHour, cutoffHour, courier?, label?}] },
+//             today, holidays: string[], couriers: [{id, label}], perCourierSlots: boolean }
 //           `today` = tanggal WIB menurut server (batas bawah input tanggal); `holidays` = tanggal
 //           libur terdaftar, supaya form bisa mencegah jam khusus baru pada hari libur dan menandai
 //           jam khusus lama yang tak berlaku karena tanggalnya kemudian dijadikan libur.
+//           `couriers` = ekspedisi yang ditawarkan ke pembeli (pilihan dropdown "Berlaku untuk").
+//           `perCourierSlots` = false bila migration 20261014120000 belum dijalankan.
 //   PATCH → peran 'admin' saja. Body { schedule } = SELURUH jadwal baru (pola yang sama dengan
 //           pickup-holidays). Balasan { success, schedule, dropped, resetDates, bookedOnOldTime }.
 //
 // ── Slot yang sudah dibuat ──
-// mengantar_daily_pickup menyimpan satu time_id per tanggal & alamat, dibuat dengan jam yang berlaku
-// saat itu. Bila admin mengubah JAM JEMPUT sebuah tanggal yang slotnya sudah ada (biasanya hari ini,
-// dibuat cron 06.00, atau besok bila sudah ada pesanan lewat cutoff), slot lama dibuang supaya
-// booking berikutnya membuat slot baru berjam baru. Paket yang SUDAH dibooking tetap pada slot
-// lamanya — API Mengantar tak menyediakan penjadwalan ulang — dan jumlahnya dikembalikan di
-// `bookedOnOldTime` agar admin bisa mengaturnya di dashboard Mengantar.
+// Sejak migration 20261014120000, slot di mengantar_daily_pickup menyimpan JAM-nya (pickup_hour).
+// Mengubah jam jemput tak perlu membuang apa pun: booking berikutnya mencari slot dengan jam baru,
+// tak menemukannya, lalu membuatnya. Sebelum migration itu (satu slot per tanggal & alamat), slot
+// tanggal yang jamnya berubah DIBUANG supaya booking berikutnya membuat ulang dengan jam baru.
+//
+// Pada keduanya, paket yang SUDAH dibooking tetap pada slot lamanya — API Mengantar tak menyediakan
+// penjadwalan ulang — dan jumlahnya dikembalikan di `bookedOnOldTime` agar admin bisa mengaturnya
+// di dashboard Mengantar.
 //
 // Route ini sendiri TIDAK memanggil Mengantar. Slot baru baru dibuat oleh booking/cron berikutnya,
 // lewat jalur yang sudah ada (getTodayPickupTimeId → ensurePickupForDate).
@@ -28,11 +33,22 @@ import {
   setPickupSchedule,
 } from '@/lib/mock-db/settings'
 import {
-  countBookedOrdersOnDates,
   deletePickupSlotsForDates,
+  listBookedOrdersFrom,
   listPickupSlotDatesFrom,
+  pickupSlotsSupportHour,
 } from '@/lib/mock-db/pickup'
-import { normalizePickupSchedule, slotDatesToReset, wibDateString } from '@/lib/pickup-schedule'
+import {
+  countOrdersOnChangedHour,
+  normalizePickupSchedule,
+  slotDatesToReset,
+  wibDateString,
+} from '@/lib/pickup-schedule'
+import {
+  OFFERED_COURIER_IDS,
+  courierDisplayName,
+  courierIdFromLabel,
+} from '@/lib/mengantar-estimate'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -41,11 +57,17 @@ export async function GET() {
   const unauthorized = await requireAdmin()
   if (unauthorized) return unauthorized
 
-  const [schedule, holidays] = await Promise.all([getPickupSchedule(), getPickupHolidays()])
+  const [schedule, holidays, perCourierSlots] = await Promise.all([
+    getPickupSchedule(),
+    getPickupHolidays(),
+    pickupSlotsSupportHour(),
+  ])
   return NextResponse.json({
     schedule,
     today: wibDateString(Date.now()),
     holidays: holidays.map((h) => h.date),
+    couriers: OFFERED_COURIER_IDS.map((id) => ({ id, label: courierDisplayName(id) })),
+    perCourierSlots,
   })
 }
 
@@ -63,17 +85,20 @@ export async function PATCH(request: Request) {
   }
 
   const today = wibDateString(Date.now())
-  const before = await getPickupSchedule()
-  const result = normalizePickupSchedule(body.schedule, today)
+  const [before, perCourierSlots] = await Promise.all([getPickupSchedule(), pickupSlotsSupportHour()])
+  const result = normalizePickupSchedule(body.schedule, today, OFFERED_COURIER_IDS)
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 422 })
   }
   const after = result.schedule
 
-  const resetDates = slotDatesToReset(before, after, await listPickupSlotDatesFrom(today))
+  // Database lama (tanpa kolom jam): slot tanggal yang jamnya berubah harus dibuang.
+  const resetDates = perCourierSlots
+    ? []
+    : slotDatesToReset(before, after, await listPickupSlotDatesFrom(today), OFFERED_COURIER_IDS)
 
   try {
-    // Urutan: buang slot lama → simpan jadwal → buang sekali lagi.
+    // Urutan (hanya relevan untuk database lama): buang slot lama → simpan jadwal → buang lagi.
     //   - Bila pembuangan pertama gagal, jadwal TIDAK disimpan: jadwal baru dengan slot berjam lama
     //     yang masih tertinggal adalah keadaan paling menyesatkan (layar bilang 13.00, kurir 17.00).
     //   - Pembuangan kedua menutup celah sempit: booking yang masuk di antara dua langkah pertama
@@ -82,10 +107,19 @@ export async function PATCH(request: Request) {
     const saved = await setPickupSchedule(after)
     await deletePickupSlotsForDates(resetDates)
 
-    const bookedOnOldTime = await countBookedOrdersOnDates(resetDates)
-    if (resetDates.length > 0) {
+    // Paket terbooking yang jam jemput EKSPEDISI-nya berubah — tertinggal pada jam lama.
+    const booked = await listBookedOrdersFrom(today)
+    const bookedOnOldTime =
+      booked === null
+        ? null
+        : countOrdersOnChangedHour(
+            before,
+            after,
+            booked.map((o) => ({ pickupDate: o.pickupDate, courier: courierIdFromLabel(o.courierLabel) })),
+          )
+    if (resetDates.length > 0 || (bookedOnOldTime ?? 0) > 0) {
       console.log(
-        `[pickup-schedule] jam jemput berubah untuk ${resetDates.join(', ')} — slot lama dibuang, ${bookedOnOldTime ?? '?'} paket tetap pada slot lama`,
+        `[pickup-schedule] jam jemput berubah — slot dibuang: ${resetDates.join(', ') || '-'}, paket tetap pada jam lama: ${bookedOnOldTime ?? '?'}`,
       )
     }
     return NextResponse.json({
