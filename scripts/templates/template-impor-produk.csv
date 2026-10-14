@@ -1,0 +1,5 @@
+sku_produk,nama_produk,kategori,deskripsi,berat_gram,min_beli,harga_coret,harga_jual,nama_varian,sku_varian,varian_utama
+BNH-001,Benih Selada Keriting,Benih Premium,"Benih selada keriting impor dengan daya tumbuh tinggi, cocok untuk hidroponik maupun tanah.",50,1,20000,15000,,,
+PPK-010,Pupuk NPK Mutiara 16-16-16,Pupuk Nutrisi,"Pupuk NPK seimbang untuk pertumbuhan daun, batang, dan buah. Larutkan 2 gram per liter air.",250,1,,12000,250 gram,PPK-010-250,
+PPK-010,,,,,,,20000,500 gram,PPK-010-500,ya
+PPK-010,,,,,,,36000,1 kg,PPK-010-1000,

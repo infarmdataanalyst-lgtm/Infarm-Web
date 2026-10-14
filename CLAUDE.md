@@ -369,6 +369,10 @@ src/
 #   dari SOURCE .env.local ke TARGET .env.migration.local — untuk mengisi project Supabase preview.
 #   Pesanan, ulasan, admin_users SENGAJA tidak disalin (data pembeli & hash password). Urut FK,
 #   preserve id. Jalankan: node scripts/migrate-data.mjs [--run [--replace --target=<ref target>]]
+# scripts/import-produk.ts: IMPOR PRODUK MASSAL dari spreadsheet (.csv/.xlsx) + foto (folder/ZIP unduhan
+#   Drive) langsung ke Supabase dari laptop admin — Vercel tak terlibat. Logika murni di
+#   src/lib/product-import/ (teruji unit). Stok selalu 0 & produk disembunyikan (diisi tim gudang).
+#   Jalankan: npm run impor-produk -- "<paket.zip>" [--simpan [--tampilkan]] — panduan docs/impor-produk.md
 # public/images/email/: aset gambar email (mis. logo-infarm.png) — lihat README di folder tsb
 # public/images/categories/<slug>.(webp|jpg): foto latar tombol kategori beranda (CategoryGrid resolve fs)
 # public/images/icons/{cart,user}.png: ikon UI header (512px, PUTIH, transparan — latar header hijau)
