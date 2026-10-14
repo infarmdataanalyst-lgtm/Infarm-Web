@@ -326,7 +326,10 @@ perantara yang diisi cron, dan checkout hanya **membaca**.
   (satu slot per tanggal; slot tanggal yang jamnya berubah dibuang lewat `slotDatesToReset`) dan tab
   Jam Penjemputan menampilkan peringatan; cutoff per ekspedisi tetap berlaku. Paket yang sudah
   terbooking tetap pada jam lamanya (tak ada reschedule di API); jumlahnya dihitung per ekspedisi
-  (`countOrdersOnChangedHour`) dan dilaporkan ke admin.
+  (`countOrdersOnChangedHour`) dan dilaporkan ke admin. Yang dibandingkan adalah **jam slot yang
+  benar-benar dipakai paket** (`orders.pickup_time_id` → `mengantar_daily_pickup.pickup_hour`)
+  dengan jam baru, bukan jadwal sebelum vs sesudah: mengubah jam lalu mengembalikannya
+  (15 → 17 → 15) tidak memunculkan peringatan palsu pada simpan kedua (temuan uji 2026-10-14).
 - Lewat cutoff, pesanan memakai `time_id` **hari kerja berikutnya**. Sabtu sore →
   Senin. **Hari Minggu, jam berapa pun, juga → Senin** — cabang `bukan-hari-pickup` di
   `resolvePickupDate`; tanpa itu pesanan Minggu pagi meminta slot untuk hari yang kurirnya tidak

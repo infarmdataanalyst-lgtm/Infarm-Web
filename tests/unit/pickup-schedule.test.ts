@@ -470,6 +470,28 @@ describe('countOrdersOnChangedHour', () => {
     ]
     expect(countOrdersOnChangedHour(JADWAL_KURIR, sesudah, paket)).toBe(1)
   })
+
+  // Kasus nyata 14 Okt: SPX 15 → 17 → 15. Dua paket SPX dibooking di slot jam 15.
+  const spx15: PickupSchedule = { ...JADWAL_KURIR, couriers: { spx: { pickupHour: 15, cutoffHour: 13 } } }
+  const spx17: PickupSchedule = { ...JADWAL_KURIR, couriers: { spx: { pickupHour: 17, cutoffHour: 15 } } }
+  const paketSpxJam15 = [
+    { pickupDate: '2026-10-15', courier: 'spx', slotHour: 15 },
+    { pickupDate: '2026-10-16', courier: 'spx', slotHour: 15 },
+  ]
+
+  it('jam diganti: paket di slot jam lama dihitung', () => {
+    expect(countOrdersOnChangedHour(spx15, spx17, paketSpxJam15)).toBe(2)
+  })
+
+  it('jam dikembalikan: paket yang slotnya sudah cocok TIDAK dihitung (tanpa alarm palsu)', () => {
+    expect(countOrdersOnChangedHour(spx17, spx15, paketSpxJam15)).toBe(0)
+  })
+
+  it('jam slot tak diketahui → jatuh ke pembandingan jadwal sebelum vs sesudah', () => {
+    const tanpaSlot = paketSpxJam15.map((p) => ({ ...p, slotHour: null }))
+    expect(countOrdersOnChangedHour(spx17, spx15, tanpaSlot)).toBe(2)
+    expect(countOrdersOnChangedHour(spx15, spx15, tanpaSlot)).toBe(0)
+  })
 })
 
 describe('normalizePickupSchedule per ekspedisi', () => {

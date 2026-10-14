@@ -115,7 +115,11 @@ export async function PATCH(request: Request) {
         : countOrdersOnChangedHour(
             before,
             after,
-            booked.map((o) => ({ pickupDate: o.pickupDate, courier: courierIdFromLabel(o.courierLabel) })),
+            booked.map((o) => ({
+              pickupDate: o.pickupDate,
+              courier: courierIdFromLabel(o.courierLabel),
+              slotHour: o.slotHour,
+            })),
           )
     if (resetDates.length > 0 || (bookedOnOldTime ?? 0) > 0) {
       console.log(

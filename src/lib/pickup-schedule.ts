@@ -362,18 +362,28 @@ export function distinctPickupHours(
     .sort((a, b) => a.pickupHour - b.pickupHour)
 }
 
-// Jumlah paket terbooking yang jam jemputnya BERUBAH oleh suatu perubahan jadwal. Paket itu tetap
+// Jumlah paket terbooking yang SEKARANG berada di jam yang berbeda dari jadwal baru. Paket itu tetap
 // pada slot lamanya di Mengantar (tak ada reschedule di API), jadi admin perlu diberi tahu.
+//
+// Pembanding utamanya `slotHour` — jam slot yang BENAR-BENAR dipakai paket (pickup_time_id →
+// mengantar_daily_pickup.pickup_hour), bukan jadwal sebelum disimpan. Bila dibandingkan dengan
+// jadwal sebelumnya, admin yang mengubah jam lalu mengembalikannya (15 → 17 → 15) mendapat alarm
+// palsu pada simpan kedua: paket yang memang di slot jam 15 terhitung "tertinggal di jam lama".
+// `slotHour` tak diketahui (slot tak ditemukan / database tanpa kolom jam) → jatuh ke pembandingan
+// jadwal sebelum vs sesudah seperti semula.
 export function countOrdersOnChangedHour(
   before: PickupSchedule,
   after: PickupSchedule,
-  orders: readonly { pickupDate: string; courier: string | null }[],
+  orders: readonly { pickupDate: string; courier: string | null; slotHour?: number | null }[],
 ): number {
-  return orders.filter(
-    (o) =>
-      pickupHoursFor(o.pickupDate, before, o.courier).pickupHour !==
-      pickupHoursFor(o.pickupDate, after, o.courier).pickupHour,
-  ).length
+  return orders.filter((o) => {
+    const jamBaru = pickupHoursFor(o.pickupDate, after, o.courier).pickupHour
+    const jamPaket =
+      typeof o.slotHour === 'number'
+        ? o.slotHour
+        : pickupHoursFor(o.pickupDate, before, o.courier).pickupHour
+    return jamPaket !== jamBaru
+  }).length
 }
 
 // Format jam untuk body POST /time Mengantar: "9:00", "17:00" — persis daftar di dokumentasinya
