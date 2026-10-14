@@ -129,16 +129,19 @@ export async function deletePickupSlotsForDates(dates: readonly string[]): Promi
 }
 
 // Paket yang SUDAH dibooking (resi terbit, masih Diproses) dengan jadwal jemput ≥ `fromDate`, beserta
-// label ekspedisinya (orders.nama_ekspedisi, mis. 'J&T'). Dipakai menghitung paket yang tertinggal
-// di jam lama saat admin mengubah jam jemput — paket itu tak ikut pindah karena API Mengantar tak
-// menyediakan penjadwalan ulang. null bila gagal membaca.
+// label ekspedisinya (orders.nama_ekspedisi, mis. 'J&T') dan jam slot yang dipakainya. Dipakai
+// menghitung paket yang tertinggal di jam lama saat admin mengubah jam jemput — paket itu tak ikut
+// pindah karena API Mengantar tak menyediakan penjadwalan ulang. null bila gagal membaca.
+//
+// `slotHour` dibaca dari mengantar_daily_pickup lewat orders.pickup_time_id; null bila slotnya tak
+// ditemukan atau kolom pickup_hour belum ada — pemanggil lalu memakai pembandingan jadwal.
 export async function listBookedOrdersFrom(
   fromDate: string,
-): Promise<{ pickupDate: string; courierLabel: string | null }[] | null> {
+): Promise<{ pickupDate: string; courierLabel: string | null; slotHour: number | null }[] | null> {
   const supabase = createAdminClient()
   const { data, error } = await supabase
     .from('orders')
-    .select('pickup_date, nama_ekspedisi')
+    .select('pickup_date, nama_ekspedisi, pickup_time_id')
     .gte('pickup_date', fromDate)
     .eq('order_status', 'PROCESSING')
     .eq('shipment_status', 'BOOKED')
@@ -148,10 +151,39 @@ export async function listBookedOrdersFrom(
     console.error('Gagal membaca paket terbooking:', error.message)
     return null
   }
-  return (data ?? []).map((r) => {
-    const row = r as { pickup_date: string; nama_ekspedisi: string | null }
-    return { pickupDate: row.pickup_date, courierLabel: row.nama_ekspedisi }
-  })
+  const rows = (data ?? []) as {
+    pickup_date: string
+    nama_ekspedisi: string | null
+    pickup_time_id: string | null
+  }[]
+  const jamSlot = await slotHoursByTimeId(rows.map((r) => r.pickup_time_id))
+  return rows.map((row) => ({
+    pickupDate: row.pickup_date,
+    courierLabel: row.nama_ekspedisi,
+    slotHour: row.pickup_time_id ? (jamSlot.get(row.pickup_time_id) ?? null) : null,
+  }))
+}
+
+// time_id → pickup_hour untuk slot-slot yang dipakai paket. Map kosong bila gagal membaca atau kolom
+// jam belum ada — tak pernah melempar, karena ini hanya mempertajam hitungan peringatan.
+async function slotHoursByTimeId(timeIds: readonly (string | null)[]): Promise<Map<string, number>> {
+  const ids = [...new Set(timeIds.filter((id): id is string => Boolean(id)))]
+  const hasil = new Map<string, number>()
+  if (ids.length === 0) return hasil
+
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('mengantar_daily_pickup')
+    .select('time_id, pickup_hour')
+    .in('time_id', ids)
+  if (error) {
+    if (!kolomJamBelumAda(error)) console.error('Gagal membaca jam slot pickup:', error.message)
+    return hasil
+  }
+  for (const r of (data ?? []) as { time_id: string; pickup_hour: number | null }[]) {
+    if (typeof r.pickup_hour === 'number') hasil.set(r.time_id, r.pickup_hour)
+  }
+  return hasil
 }
 
 // Hasil penyimpanan: `inserted` false berarti baris untuk tanggal & alamat itu SUDAH ADA dan yang

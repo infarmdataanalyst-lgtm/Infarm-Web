@@ -113,7 +113,8 @@ sejak 2026-10-13).
   **Jam Khusus per Tanggal** (Tambah/Hapus langsung tersimpan, pola tab Hari Libur). Pilihan jemput
   hanya 09–18 (yang diterima Mengantar), pilihan cutoff otomatis dibatasi ≤ jemput − 2 jam.
   `GET/PATCH /api/settings/pickup-schedule` (PATCH = seluruh jadwal, peran admin). Form menampilkan
-  peringatan berapa paket sudah terbooking di jam lama (harus diatur manual di Mengantar). Tanggal
+  peringatan berapa paket sudah terbooking di jam yang berbeda dari jam baru (harus diatur manual di
+  Mengantar) — dihitung dari jam slot paket, jadi mengembalikan jam semula tidak memicunya. Tanggal
   berjam khusus yang kemudian dijadikan libur ditandai "Tidak berlaku".
   **Per ekspedisi** (sejak 2026-10-14): kedua kartu punya dropdown **"Berlaku untuk"** berlogo
   (`src/components/oms/CourierSelect.tsx`, Headless UI Listbox — `<select>` native tak bisa memuat
