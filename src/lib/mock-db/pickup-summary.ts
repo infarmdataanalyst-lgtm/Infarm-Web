@@ -21,10 +21,34 @@ import {
   pickupHoursFor,
   resolvePickupDate,
   toHolidaySet,
+  type PickupSchedule,
 } from '@/lib/pickup-schedule'
+import { OFFERED_COURIER_IDS, courierDisplayName } from '@/lib/mengantar-estimate'
 
 // "17:00" dari jam bulat — bentuk yang sudah dipakai kartu sejak awal (lihat jam() di kartu).
 const hhmm = (hour: number) => `${String(hour).padStart(2, '0')}:00`
+
+// Jam yang berlaku per ekspedisi pada satu tanggal.
+export type CourierPickupTime = {
+  courier: string // kode API ('JT', 'spx')
+  label: string // 'J&T', 'Shopee Express'
+  pickupTime: string // HH:mm
+  cutoffHour: number
+  special: boolean
+}
+
+function jamPerKurir(date: string, schedule: PickupSchedule): CourierPickupTime[] {
+  return OFFERED_COURIER_IDS.map((courier) => {
+    const h = pickupHoursFor(date, schedule, courier)
+    return {
+      courier,
+      label: courierDisplayName(courier),
+      pickupTime: hhmm(h.pickupHour),
+      cutoffHour: h.cutoffHour,
+      special: h.special,
+    }
+  })
+}
 
 export type PickupDayStatus =
   | 'hari-ini' // hari pickup, sebelum cutoff: pesanan baru masih ikut hari ini
@@ -57,6 +81,10 @@ export type PickupScheduleSummary = {
   // jam berikutnya bisa berbeda dari hari ini bila salah satunya punya jam khusus.
   nextDate: string | null
   nextPickupTime: string | null
+  // Jam per ekspedisi hari ini & pada hari pickup berikutnya. Kartu merincinya HANYA bila jam antar
+  // ekspedisi berbeda; bila semuanya sama, kartu cukup menampilkan satu jam seperti biasa.
+  todayByCourier: CourierPickupTime[]
+  nextByCourier: CourierPickupTime[]
   // Paket terjadwal hari ini (0 bila hari ini bukan hari pickup) dan pada hari pickup berikutnya.
   todayCount: number
   nextCount: number
@@ -104,6 +132,8 @@ export async function readPickupScheduleSummary(
     ...(jamHariIni.label ? { todaySpecialLabel: jamHariIni.label } : {}),
     nextDate,
     nextPickupTime: nextDate ? hhmm(pickupHoursFor(nextDate, schedule).pickupHour) : null,
+    todayByCourier: jamPerKurir(today, schedule),
+    nextByCourier: nextDate ? jamPerKurir(nextDate, schedule) : [],
     todayCount: 0,
     nextCount: 0,
     byWarehouse: [],

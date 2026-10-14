@@ -273,6 +273,7 @@ perantara yang diisi cron, dan checkout hanya **membaca**.
 | `vercel.json` | `"schedule": "0 23 * * 0-5"` |
 | `src/app/api/settings/pickup-holidays/route.ts` | GET/PATCH daftar libur (`store_settings.pickup_holidays`), tab **Hari Libur** di Pengaturan |
 | `supabase/migrations/20261009120000_orders_pickup_date.sql` | `orders.pickup_date` & `pickup_time_id` — jadwal jemput yang dipakai saat booking |
+| `supabase/migrations/20261014120000_pickup_slot_per_jam.sql` | `mengantar_daily_pickup.pickup_hour` + unique `(date, address_id, pickup_hour)` — slot per jam jemput, untuk jam per ekspedisi |
 | `src/lib/mock-db/pickup-summary.ts` + `GET /api/oms/pickup-schedule` | angka untuk kartu **Penjemputan kurir** di halaman Pesanan |
 
 - **Hari libur (gudang tutup) diatur ADMIN, bukan di kode** (2026-10-09). Minggu tetap aturan tetap;
@@ -309,11 +310,24 @@ perantara yang diisi cron, dan checkout hanya **membaca**.
   jemput hanya 09–18 bulat (daftar POST /time Mengantar), cutoff ≥ 06.00 dan **≤ jemput − 2 jam**
   (Mengantar menolak slot < 90 menit dari booking); jam khusus pada Minggu ditolak, pada hari libur
   diterima tapi tak berlaku (libur menang). Jam jemput < 14.00 memunculkan peringatan SPX (pusat
-  bantuan: SPX hanya 14.00–22.00, UNVERIFIED). **Slot yang sudah dibuat** untuk tanggal yang jam
-  jemputnya berubah dibuang oleh `PATCH /api/settings/pickup-schedule` (`slotDatesToReset`) agar
-  booking berikutnya membuat slot baru; paket yang sudah terbooking tetap pada slot lama (tak ada
-  reschedule di API) dan jumlahnya dilaporkan ke admin. Simpanan rusak/kosong → bawaan 17/15
-  (gagal-terbuka). Lewat cutoff, pesanan memakai `time_id` **hari kerja berikutnya**. Sabtu sore →
+  bantuan: SPX hanya 14.00–22.00, UNVERIFIED). Simpanan rusak/kosong → bawaan 17/15
+  (gagal-terbuka).
+- **Jam per ekspedisi** (sejak 2026-10-14): tiap aturan punya dropdown **"Berlaku untuk"** (Semua
+  ekspedisi / J&T / Shopee Express, berlogo — `CourierSelect`). Simpanan bertambah
+  `couriers: {[kode]: {pickupHour, cutoffHour}}` (rutin per ekspedisi) dan `courier?` pada jam
+  khusus. Prioritas di `pickupHoursFor(date, schedule, courier)`: khusus ekspedisi → khusus semua →
+  rutin ekspedisi → rutin semua. Booking membaca kurir pesanan (`courierIdFromLabel`) **sebelum**
+  mencari slot, jadi cutoff & jam jemput mengikuti ekspedisinya. Daftar ekspedisi =
+  `OFFERED_COURIER_IDS` (mengantar-estimate.ts) — kurir baru otomatis muncul di dropdown.
+  **Slot per jam** (migration `20261014120000`, kolom `pickup_hour`, unique `(date, address_id,
+  pickup_hour)`): satu tanggal bisa punya slot J&T 17:00 dan SPX 14:00; cron membuat satu slot per
+  jam berbeda (`distinctPickupHours`). Mengubah jam tak perlu membuang slot — booking berikutnya
+  mencari slot berjam baru. **Sebelum migration itu dijalankan**, kode jatuh ke perilaku lama
+  (satu slot per tanggal; slot tanggal yang jamnya berubah dibuang lewat `slotDatesToReset`) dan tab
+  Jam Penjemputan menampilkan peringatan; cutoff per ekspedisi tetap berlaku. Paket yang sudah
+  terbooking tetap pada jam lamanya (tak ada reschedule di API); jumlahnya dihitung per ekspedisi
+  (`countOrdersOnChangedHour`) dan dilaporkan ke admin.
+- Lewat cutoff, pesanan memakai `time_id` **hari kerja berikutnya**. Sabtu sore →
   Senin. **Hari Minggu, jam berapa pun, juga → Senin** — cabang `bukan-hari-pickup` di
   `resolvePickupDate`; tanpa itu pesanan Minggu pagi meminta slot untuk hari yang kurirnya tidak
   datang.
