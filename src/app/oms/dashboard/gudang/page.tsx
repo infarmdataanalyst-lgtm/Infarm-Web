@@ -557,7 +557,9 @@ function Field({
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         aria-invalid={!!error}
-        className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none transition focus:ring-2 focus:ring-brand-primary/20 ${
+        // Warna teks & latar WAJIB eksplisit: tanpa itu input mewarisi warna body, yang menjadi
+        // putih saat perangkat memakai mode gelap (masalah yang sama dengan PR #57 dan #69).
+        className={`w-full rounded-xl border bg-white px-3 py-2.5 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:ring-2 focus:ring-brand-primary/20 ${
           mono ? 'font-mono' : ''
         } ${error ? 'border-red-400' : 'border-gray-300 focus:border-brand-primary'}`}
       />
