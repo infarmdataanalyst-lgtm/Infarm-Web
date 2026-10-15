@@ -180,9 +180,9 @@ export default function PromotionForm({
     usageLimit === ''
       ? null
       : usageLimit < 1
-        ? 'Batas pemakaian minimal 1, atau kosongkan untuk tanpa batas'
+        ? 'Kuota minimal 1, atau kosongkan bila tidak dibatasi'
         : usageLimit > 1_000_000
-          ? 'Batas pemakaian maksimal 1.000.000'
+          ? 'Kuota maksimal 1.000.000'
           : null
 
   // Pesan progres opsional; bila diisi maksimal 150 karakter
@@ -428,7 +428,7 @@ export default function PromotionForm({
 
             {/* Kuota pemakaian (migration 20260928120000) */}
             <div id="promo-quota" className="mt-5">
-              <Field label="Batas Pemakaian (opsional)" error={usageLimitError}>
+              <Field label="Kuota (opsional)" error={usageLimitError}>
                 <div className="relative">
                   <input
                     type="text"
@@ -438,7 +438,7 @@ export default function PromotionForm({
                       const digits = e.target.value.replace(/\D/g, '')
                       setUsageLimit(digits === '' ? '' : Number(digits))
                     }}
-                    placeholder="Kosongkan untuk tanpa batas"
+                    placeholder="Kosongkan bila kuota tidak dibatasi"
                     className={`${inputClass} pr-20`}
                   />
                   <span className="pointer-events-none absolute inset-y-0 right-0 flex items-center border-l border-gray-200 px-3 text-sm font-medium text-gray-500">
@@ -455,7 +455,7 @@ export default function PromotionForm({
                   Sudah terpakai: {usageCount} pesanan
                   {usageLimit !== '' && !usageLimitError && usageLimit <= usageCount && (
                     <span className="text-orange-600">
-                      {' '}— batas ini sudah tercapai, promo langsung berhenti ditawarkan.
+                      {' '}— kuota sudah habis, promo langsung berhenti ditawarkan.
                     </span>
                   )}
                 </p>
