@@ -4,8 +4,10 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Montserrat } from "next/font/google";
 import GoogleAnalyticsGate from "@/components/analytics/GoogleAnalyticsGate";
+import MetaPixelGate from "@/components/analytics/MetaPixelGate";
 import SpeedInsightsGate from "@/components/analytics/SpeedInsightsGate";
 import { buildReferrerOverrideScript } from "@/lib/ga-referrer-override";
+import { isValidMetaPixelId } from "@/lib/meta-pixel";
 import "./globals.css";
 
 // Font identitas merek: dipakai untuk judul & tombol utama (class `font-heading`), BUKAN teks isi —
@@ -46,6 +48,11 @@ export default function RootLayout({
   // supaya placeholder tidak ikut jalan di lokal/dev. Gate membatasi GA hanya di
   // routing e-commerce (buyer), bukan di OMS/admin.
   const gaId = process.env.NEXT_PUBLIC_GA_ID;
+  // Meta Pixel (iklan FB/IG) dengan pola yang sama: dari env, dipasang hanya bila terisi. ID yang
+  // bukan angka diperlakukan sebagai kosong — nilainya masuk ke <script> inline, jadi lebih baik
+  // pixel tak terpasang daripada menyisipkan teks sembarang (lihat lib/meta-pixel.ts).
+  const rawPixelId = process.env.NEXT_PUBLIC_META_PIXEL_ID;
+  const metaPixelId = isValidMetaPixelId(rawPixelId) ? rawPixelId : undefined;
   // Speed Insights (Core Web Vitals dari browser pembeli) memakai gate yang sama: hanya halaman
   // toko, bukan OMS/maintenance. Tanpa ID — skripnya dilayani Vercel di /_vercel/speed-insights/.
 
@@ -68,6 +75,7 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col">
         {children}
         {gaId && <GoogleAnalyticsGate gaId={gaId} />}
+        {metaPixelId && <MetaPixelGate pixelId={metaPixelId} />}
         <SpeedInsightsGate />
       </body>
     </html>

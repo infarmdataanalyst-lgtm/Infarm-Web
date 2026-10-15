@@ -15,9 +15,15 @@ import { ArrowLeft, Loader2, Search, X } from 'lucide-react'
 import type { Product } from '@/types/product'
 import { formatRupiah } from '@/lib/format'
 import { useDebounce } from '@/hooks/use-debounce'
+import { trackSearch } from '@/lib/analytics'
 
 // Jeda debounce (ms) sebelum saran diambil dari server
 const DEBOUNCE_DELAY = 350
+// Jeda diam (ms) setelah saran tiba sebelum kata kunci dianggap FINAL dan dilaporkan ke analytics.
+// Autocomplete mengambil saran tiap jeda ketik, jadi "bayam" lewat sebagai "ba", "bay", "baya"…
+// Melaporkan semuanya memenuhi laporan dengan kata setengah jadi; yang dilaporkan hanya kata yang
+// pembeli berhenti padanya (atau yang sarannya ia pilih — lihat reportSearch).
+const SEARCH_REPORT_IDLE = 1500
 const PLACEHOLDER = 'Cari pupuk, benih, media tanam…'
 
 // Search bar header dengan autocomplete + mode overlay mobile.
@@ -63,6 +69,30 @@ export default function HeaderSearch() {
   const showDropdown = open && query.trim().length > 0
   const showEmpty = showDropdown && !isSearching && debouncedQuery.length > 0 && suggestions.length === 0
 
+  // === Laporkan kata kunci FINAL ke analytics (GA4 `search` + Meta `Search`) ===
+  // Kata kunci yang sudah dilaporkan selama komponen hidup (header persisten → ≈ satu kunjungan).
+  // Mengetik ulang kata yang sama, atau timer diam yang menyusul setelah saran dipilih, tak
+  // melaporkan dua kali.
+  const reportedTerms = useRef(new Set<string>())
+
+  function reportSearch(term: string, results: Product[]) {
+    const key = term.toLowerCase()
+    if (!key || reportedTerms.current.has(key)) return
+    reportedTerms.current.add(key)
+    trackSearch(
+      term,
+      results.map((p) => ({ id: p.id, name: p.name, category: p.category, price: p.promoPrice })),
+    )
+  }
+
+  // Jalur 1: pembeli berhenti mengetik. Saran untuk kata ini sudah tiba (fetching false) dan tak ada
+  // perubahan selama SEARCH_REPORT_IDLE. Mengetik lagi membatalkan timer lewat cleanup.
+  useEffect(() => {
+    if (!debouncedQuery || fetching) return
+    const timer = setTimeout(() => reportSearch(debouncedQuery, suggestions), SEARCH_REPORT_IDLE)
+    return () => clearTimeout(timer)
+  }, [debouncedQuery, fetching, suggestions])
+
   // Tutup dropdown saat klik di luar komponen (desktop)
   useEffect(() => {
     function handlePointerDown(event: MouseEvent) {
@@ -79,8 +109,10 @@ export default function HeaderSearch() {
     if (expanded) overlayInputRef.current?.focus()
   }, [expanded])
 
-  // Arahkan ke detail produk lalu tutup dropdown & overlay
+  // Arahkan ke detail produk lalu tutup dropdown & overlay.
+  // Jalur 2 pelaporan: memilih saran = kata kunci saat itu sudah final, tak perlu menunggu timer.
   function goToProduct(id: string) {
+    reportSearch(query.trim(), suggestions)
     setOpen(false)
     setExpanded(false)
     router.push(`/produk/${id}`)
@@ -99,7 +131,12 @@ export default function HeaderSearch() {
       if (expanded) closeOverlay()
       return
     }
-    if (!suggestions.length) return
+    if (!suggestions.length) {
+      // Enter pada pencarian tanpa hasil: pembeli sudah menyerah pada kata ini — justru data yang
+      // paling berharga (produk yang dicari tapi tak dijual), jangan tunggu timer.
+      if (event.key === 'Enter' && debouncedQuery && !fetching) reportSearch(debouncedQuery, [])
+      return
+    }
     if (event.key === 'ArrowDown') {
       event.preventDefault()
       setActiveIndex((index) => (index + 1) % suggestions.length)
@@ -189,6 +226,8 @@ export default function HeaderSearch() {
                 <Link
                   href={`/produk/${product.id}`}
                   onClick={() => {
+                    // Klik saran = kata kunci final (jalur 2), sama seperti Enter/ikon cari
+                    reportSearch(query.trim(), suggestions)
                     setOpen(false)
                     setExpanded(false)
                   }}

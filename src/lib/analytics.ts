@@ -1,11 +1,17 @@
 // src/lib/analytics.ts
-// Helper terpusat event Google Analytics 4 (GA4) untuk storefront.
-// GA4 dipasang lewat <GoogleAnalytics> (@next/third-parties) di root layout — helper ini
-// hanya MENGIRIM event via window.gtag. Format payload mengikuti skema GA4 ecommerce
-// (currency/value/items) agar konsisten & mudah ditambah event lain (begin_checkout, purchase).
+// Helper terpusat event analytics sisi klien untuk storefront.
+// Payload ditulis SEKALI dalam skema GA4 ecommerce (currency/value/items), lalu `sendEvent`
+// menyebarkannya ke dua tujuan: GA4 via window.gtag, dan Meta Pixel via terjemahan di
+// lib/meta-pixel.ts. Komponen pemanggil tak perlu tahu ada berapa tujuan — menambah platform
+// berarti menambah penerjemah di sendEvent, bukan menyentuh halaman.
 //
-// Catatan: aman dipanggil di mana pun — bila gtag belum ada (dev tanpa GA_ID, atau halaman OMS
-// yang tidak memuat GA), fungsi diam saja (no-op).
+// GA4 dipasang lewat <GoogleAnalytics> (@next/third-parties), Meta Pixel lewat <MetaPixelGate>;
+// keduanya di root layout dan sama-sama tak dimuat di /oms & /maintenance.
+//
+// Catatan: aman dipanggil di mana pun — bila gtag/fbq belum ada (dev tanpa ID, atau halaman OMS
+// yang tidak memuat skrip), fungsi diam saja (no-op).
+
+import { sendMetaEvent, toMetaEvent } from '@/lib/meta-pixel'
 
 // gtag disuntikkan oleh script GA4; tipe minimal agar tak perlu `any`.
 declare global {
@@ -34,10 +40,12 @@ function toItem(p: AnalyticsProduct, quantity: number) {
   }
 }
 
-// Kirim event ke GA4 bila gtag tersedia (client-only). No-op bila tidak.
+// Kirim event ke SEMUA tujuan (client-only). Tiap tujuan memeriksa sendiri apakah skripnya ada,
+// jadi GA4 tanpa Meta (atau sebaliknya) tetap jalan — pemblokir iklan sering menahan salah satunya saja.
 function sendEvent(name: string, params: Record<string, unknown>): void {
-  if (typeof window === 'undefined' || typeof window.gtag !== 'function') return
-  window.gtag('event', name, params)
+  if (typeof window === 'undefined') return
+  if (typeof window.gtag === 'function') window.gtag('event', name, params)
+  sendMetaEvent(toMetaEvent(name, params))
 }
 
 // view_item — produk dilihat (dipanggil saat halaman detail mount).
@@ -130,5 +138,28 @@ export function trackAddShippingInfo(
     shipping_tier: shippingTier,
     shipping_cost: shippingCost,
     items: toItems(lines),
+  })
+}
+
+// === Pencarian ===
+
+// Hasil pencarian seperti yang dikembalikan /api/products/search: kartu ringan TANPA sku, jadi
+// item_id-nya selalu id produk. Untuk event pencarian itu tak masalah — yang dianalisis kata
+// kuncinya, bukan funnel per produk.
+export type AnalyticsSearchResult = { id: string; name: string; category: string; price: number }
+
+// search — pembeli selesai mencari satu kata kunci (bukan tiap ketukan; lihat HeaderSearch).
+//
+// `search_term` parameter GA4 standar. `results_count` parameter TAMBAHAN milik kita: jumlah saran
+// yang muncul. Nol berarti "dicari tapi tidak ketemu" — daftar permintaan produk yang nyata,
+// dan itulah laporan yang ingin dibuat dari event ini.
+//
+// ⚠️ `results_count` harus didaftarkan sebagai custom metric di GA4 (Admin → Custom definitions,
+// scope Event) sebelum muncul di laporan — kasusnya sama dengan `shipping_cost` di atas.
+export function trackSearch(term: string, results: AnalyticsSearchResult[]): void {
+  sendEvent('search', {
+    search_term: term,
+    results_count: results.length,
+    items: results.map((r) => toItem({ id: r.id, name: r.name, category: r.category, price: r.price }, 1)),
   })
 }
