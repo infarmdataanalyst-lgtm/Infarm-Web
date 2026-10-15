@@ -12,7 +12,7 @@ import {
   saveOrder,
   OrderStockError,
   PromoQuotaError,
-  attachGaIdentifiers,
+  attachAnalyticsIdentifiers,
   attachDeliveryEstimate,
 } from '@/lib/mock-db/orders'
 import { readProductsByIds } from '@/lib/mock-db/products'
@@ -22,6 +22,7 @@ import { getComboById } from '@/lib/mock-db/combos'
 import { allocateComboPrices, computeOrderPromos } from '@/lib/promo-cart'
 import { comboMultiplier } from '@/lib/cart-lines'
 import { XENDIT_MIN_AMOUNT } from '@/lib/payment-limits'
+import { parseMetaCookie } from '@/lib/meta-cookies'
 import { getVariantsByIds } from '@/lib/mock-db/variants'
 import { getMinOrderAmount, getMaxDiscountPercent } from '@/lib/mock-db/settings'
 import {
@@ -377,6 +378,8 @@ export async function POST(request: Request) {
     weight?: unknown
     gaClientId?: unknown
     gaSessionId?: unknown
+    metaFbp?: unknown
+    metaFbc?: unknown
     // Promo yang ditampilkan checkout ke pembeli (lihat lib/promo-quota.ts)
     expectedPromoIds?: unknown
   }
@@ -397,6 +400,10 @@ export async function POST(request: Request) {
     typeof extra.gaSessionId === 'string' && /^\d{1,20}$/.test(extra.gaSessionId)
       ? extra.gaSessionId
       : undefined
+  // Penanda Meta Pixel, alasan penyaringan yang sama: isinya kelak terkirim ke Meta atas nama
+  // toko ini. Aturan bentuknya SATU — parseMetaCookie — dipakai klien dan server.
+  const metaFbp = typeof extra.metaFbp === 'string' ? parseMetaCookie(extra.metaFbp) : undefined
+  const metaFbc = typeof extra.metaFbc === 'string' ? parseMetaCookie(extra.metaFbc) : undefined
   // Varian yang dipilih (fresh, bukan cache) — untuk harga & validasi otoritatif produk bervarian.
   const variantIds = body.items
     .map((it) => (it as OrderItem).variantId)
@@ -981,11 +988,16 @@ export async function POST(request: Request) {
       appliedPromos: [...promoResult.appliedPromos, ...freeProductPromos],
     })
 
-    // Penanda GA4 dititipkan ke barisnya SETELAH pesanan tersimpan (UPDATE terpisah, bukan
-    // parameter RPC — alasannya di attachGaIdentifiers). Hasilnya tak diperiksa: pesanannya sudah
-    // nyata, dan kegagalan mencatat atribusi tak boleh mengubah apa pun yang dilihat pembeli.
-    if (gaClientId || gaSessionId) {
-      await attachGaIdentifiers(saved.orderId, { clientId: gaClientId, sessionId: gaSessionId })
+    // Penanda GA4 & Meta dititipkan ke barisnya SETELAH pesanan tersimpan (UPDATE terpisah, bukan
+    // parameter RPC — alasannya di attachAnalyticsIdentifiers). Hasilnya tak diperiksa: pesanannya
+    // sudah nyata, dan kegagalan mencatat atribusi tak boleh mengubah apa pun yang dilihat pembeli.
+    if (gaClientId || gaSessionId || metaFbp || metaFbc) {
+      await attachAnalyticsIdentifiers(saved.orderId, {
+        clientId: gaClientId,
+        sessionId: gaSessionId,
+        metaFbp,
+        metaFbc,
+      })
     }
 
     // Estimasi lama pengiriman untuk halaman sukses — diambil dari daftar tarif yang SERVER

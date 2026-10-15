@@ -198,9 +198,13 @@ punya pemilik yang bisa dibuktikan lewat jalur email, jadi tak akan pernah muncu
   GA4 ke gtag DAN ke Meta lewat penerjemah murni `lib/meta-pixel.ts` (`view_item`→ViewContent,
   `add_to_cart`→AddToCart, `begin_checkout`→InitiateCheckout, `add_shipping_info`→AddPaymentInfo,
   `search`→Search; `content_ids` = `item_id` GA4). Tiap event membawa `eventID` unik untuk
-  deduplikasi browser↔server. `Purchase` SENGAJA tidak ada di browser — rencananya dari webhook Xendit
-  lewat Conversions API (`event_id` = nomor invoice; butuh token + kolom `orders.meta_fbp/meta_fbc`),
-  belum dikerjakan. Domain Meta sudah masuk CSP report-only di `next.config.ts`.
+  deduplikasi browser↔server. `Purchase` SENGAJA tidak ada di browser: ia dikirim dari webhook Xendit
+  lewat **Conversions API** (`src/lib/meta-capi.ts`, tepat setelah purchase GA4) dengan `event_id` =
+  nomor invoice, email & telepon pembeli di-hash SHA-256 setelah dinormalisasi (08xx → 62xx), plus
+  cookie `_fbp`/`_fbc` yang dititipkan checkout ke `orders.meta_fbp/meta_fbc` (migration
+  20261015120000, `attachAnalyticsIdentifiers` — UPDATE terpisah seperti GA). Butuh
+  `META_CAPI_TOKEN`; tanpa pengenal pembeli sama sekali event dilewati. Domain Meta sudah masuk CSP
+  report-only di `next.config.ts`.
 
 ### Roadmap integrasi (belum terpasang)
 
@@ -860,8 +864,14 @@ NEXT_PUBLIC_META_PIXEL_ID        # PUBLIC/client, OPSIONAL. Pixel ID Meta (deret
                                  # Manager akun iklan PEMILIK. Dipasang di src/app/layout.tsx via
                                  # <MetaPixelGate> hanya bila terisi & berbentuk angka; nilai lain
                                  # diabaikan (pixel tak terpasang). Set di Vercel + redeploy.
-                                 # Token Conversions API (server-only) BELUM ada — menyusul bersama
-                                 # event Purchase dari webhook.
+META_CAPI_TOKEN                  # server-only, OPSIONAL. Access token Conversions API (Events Manager →
+                                 # pixel → Settings → Generate access token). Dipakai webhook Xendit
+                                 # mengirim `Purchase` dari SERVER (src/lib/meta-capi.ts) dengan email &
+                                 # telepon pembeli di-hash SHA-256 + cookie orders.meta_fbp/meta_fbc.
+                                 # HANYA di Vercel Production. Kosong = Purchase ke Meta dilewati.
+META_CAPI_TEST_EVENT_CODE        # server-only, OPSIONAL, HANYA saat uji. Kode dari Events Manager →
+                                 # Test Events; event muncul di tab itu & tak dihitung data iklan.
+                                 # WAJIB dikosongkan lagi sebelum iklan jalan.
 
 # Sudah dipakai sekarang (Google Analytics 4)
 NEXT_PUBLIC_GA_ID                # PUBLIC/client; Measurement ID GA4 (format G-XXXXXXXXXX). Dipasang di

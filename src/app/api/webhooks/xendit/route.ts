@@ -31,6 +31,7 @@ import {
 import { expireOrder, revalidateAfterExpiry } from '@/lib/order-expiry'
 import { getCachedProducts } from '@/lib/mock-db/cached-reads'
 import { sendPurchaseEvent, type ProductMeta } from '@/lib/analytics-server'
+import { sendMetaPurchase } from '@/lib/meta-capi'
 import { bookShipmentForPaidOrder } from '@/lib/shipment-booking'
 import { reportRefundToGa } from '@/lib/ga-refund'
 import {
@@ -297,7 +298,13 @@ async function handlePaid(
   // SETELAH booking kurir, bukan sebelum: keduanya di-await sebelum membalas Xendit, dan yang
   // menyangkut paket sungguhan berhak jalan lebih dulu. Kegagalan di sini tak mengubah balasan —
   // pembayarannya sah dan sudah tercatat apa pun kata Google.
-  await sendPurchaseEvent(updated, await productMetaFor(updated), LOG)
+  const productMeta = await productMetaFor(updated)
+  await sendPurchaseEvent(updated, productMeta, LOG)
+
+  // === Meta Purchase (Conversions API) ===
+  // Alasan dan posisinya sama persis dengan GA4 di atas; event_id = nomor invoice (lihat
+  // lib/meta-capi.ts). Tak pernah melempar, tak mengubah balasan ke Xendit.
+  await sendMetaPurchase(updated, productMeta, LOG)
 
   return NextResponse.json({ received: true, handled: true, status: 'PAID', shipment })
 }
