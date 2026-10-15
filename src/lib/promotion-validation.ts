@@ -92,7 +92,7 @@ export function validatePromotionInput(body: unknown): PromotionValidation {
   if (b.usageLimit !== undefined && b.usageLimit !== null && b.usageLimit !== '') {
     const v = typeof b.usageLimit === 'number' ? b.usageLimit : NaN
     if (!Number.isInteger(v) || v < 1 || v > 1_000_000) {
-      return { ok: false, error: 'Batas pemakaian harus bilangan bulat antara 1–1.000.000, atau dikosongkan.' }
+      return { ok: false, error: 'Kuota harus bilangan bulat antara 1–1.000.000, atau dikosongkan.' }
     }
     usageLimit = v
   }
