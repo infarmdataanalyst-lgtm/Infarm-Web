@@ -6,11 +6,12 @@
 // Menyimpan lewat PATCH /api/orders/update-status (validasi ulang di server).
 
 import { useState } from 'react'
-import { X, Loader2, Package, AlertTriangle, Truck } from 'lucide-react'
+import { X, Loader2, Package, AlertTriangle, Truck, Tag } from 'lucide-react'
 import { formatRupiah } from '@/lib/format'
 import { nextStatuses, isFinalStatus } from '@/lib/order-status-machine'
 import { paymentMethodLabel } from '@/lib/payment-method'
 import type { Order, OrderFulfillmentStatus } from '@/types/order'
+import { PROMOTION_TYPE_LABELS, type PromotionType } from '@/types/promotion'
 
 type OrderStatusModalProps = {
   order: Order
@@ -219,6 +220,42 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
             )}
           </dl>
 
+          {/* === Promo yang dipakai ===
+              Dari snapshot orders.promo_terpakai, jadi nama promo tetap terbaca meski promonya
+              sudah dihapus/diubah. Nilai per promo adalah MAKSUD promo (mis. harga jual hadiah);
+              angka yang benar-benar memotong tagihan ditampilkan terpisah di bawahnya. */}
+          {order.appliedPromos && order.appliedPromos.length > 0 && (
+            <div className="mt-4">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Promo Dipakai</p>
+              <ul className="divide-y divide-emerald-100 rounded-lg border border-emerald-100 bg-emerald-50/60">
+                {order.appliedPromos.map((p, i) => (
+                  <li key={`${p.id}-${i}`} className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <Tag className="h-4 w-4 shrink-0 text-emerald-600" />
+                      <span className="truncate font-medium text-gray-900">{p.name}</span>
+                      <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-xs font-medium text-emerald-700">
+                        {PROMOTION_TYPE_LABELS[p.type as PromotionType] ?? p.type}
+                      </span>
+                    </span>
+                    {p.value > 0 && (
+                      <span className="shrink-0 text-gray-700">{formatRupiah(p.value)}</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              {Boolean(order.discount || order.shippingSubsidy) && (
+                <p className="mt-1.5 text-xs text-gray-500">
+                  {[
+                    order.discount ? `Potongan harga ${formatRupiah(order.discount)}` : '',
+                    order.shippingSubsidy ? `ongkir ditanggung ${formatRupiah(order.shippingSubsidy)}` : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </p>
+              )}
+            </div>
+          )}
+
           {/* Item pesanan */}
           <div className="mt-4">
             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Item Pesanan</p>
@@ -232,6 +269,11 @@ export default function OrderStatusModal({ order, onClose, onUpdated }: OrderSta
                       <Package className="h-4 w-4 shrink-0 text-gray-300" />
                       <span className="truncate text-gray-700">{item.name}</span>
                       <span className="shrink-0 text-gray-400">×{item.quantity}</span>
+                      {item.isPromoItem && (
+                        <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                          Hadiah
+                        </span>
+                      )}
                     </span>
                     <span className="shrink-0 font-medium text-gray-900">{formatRupiah(item.price * item.quantity)}</span>
                   </li>

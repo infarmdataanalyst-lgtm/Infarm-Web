@@ -96,6 +96,12 @@ export type Order = {
   // dengan tagihan Mengantar. `undefined` untuk pesanan yang dibuat sebelum kolomnya ada — itu
   // BUKAN berarti gratis ongkir (nilai 0 yang berarti gratis).
   shippingCost?: number
+  // Promo yang diterapkan saat checkout — snapshot orders.promo_terpakai (nama tetap terbaca meski
+  // promonya sudah dihapus). `value` = nilai MAKSUD promo (lihat AppliedPromo di promo-cart.ts);
+  // angka penagihan yang otoritatif adalah `discount` dan `shippingSubsidy`. undefined/[] = tanpa promo.
+  appliedPromos?: { id: string; name: string; type: string; value: number }[]
+  discount?: number // = orders.diskon, potongan harga barang
+  shippingSubsidy?: number // = orders.ongkos_kirim_ditanggung, ongkir yang ditanggung promo
   paymentStatus: OrderPaymentStatus
   status?: OrderFulfillmentStatus
   logistics?: OrderLogistics
