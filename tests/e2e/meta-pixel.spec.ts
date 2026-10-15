@@ -23,9 +23,12 @@ type FbqCall = [string, string, Record<string, unknown>?, { eventID?: string }?]
 // Seluruh isi fbq.queue, atau null bila fbq tak ada di halaman.
 async function fbqQueue(page: Page): Promise<FbqCall[] | null> {
   return page.evaluate(() => {
-    const w = window as unknown as { fbq?: { queue?: ArrayLike<unknown>[] } }
+    // fbq adalah FUNGSI yang membawa properti `queue` (snippet Meta). Tipenya harus menyebut
+    // keduanya — tipe objek polos membuat `typeof === 'function'` menyempitkannya ke `never`.
+    type FbqStub = ((...args: unknown[]) => void) & { queue?: ArrayLike<unknown>[] }
+    const w = window as unknown as { fbq?: FbqStub }
     if (typeof w.fbq !== 'function' || !w.fbq.queue) return null
-    return w.fbq.queue.map((a) => Array.from(a)) as FbqCall[]
+    return Array.from(w.fbq.queue, (a) => Array.from(a)) as FbqCall[]
   })
 }
 
