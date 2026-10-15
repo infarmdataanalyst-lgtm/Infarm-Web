@@ -24,6 +24,7 @@ import {
 } from '@/lib/order-issues'
 import type { RevenueOrderRow } from '@/lib/dashboard-revenue'
 import { paymentMethodLabel } from '@/lib/payment-method'
+import { parseAppliedPromos } from '@/lib/applied-promos'
 import type { OmsSearchResult } from '@/types/oms-search'
 import type {
   Order,
@@ -132,6 +133,10 @@ type OrderRow = {
   // Kolom baru (migration 20260827120000). Optional di tipe ini supaya kode tetap jalan bila
   // migration belum di-apply — PostgREST tak mengembalikan kolom yang belum ada.
   ongkos_kirim?: number | null
+  // Angka & snapshot promo (migration 20260907130000) — optional, alasan sama.
+  diskon?: number | null
+  ongkos_kirim_ditanggung?: number | null
+  promo_terpakai?: unknown
   // Metode pembayaran dari callback Xendit (migration 20260828120000) — optional, alasan sama.
   metode_pembayaran?: string | null
   order_status: string
@@ -371,6 +376,13 @@ function rowToOrder(row: OrderRow, items: OrderItem[], warehouseNames?: Map<stri
   // `typeof number`, bukan truthy: ongkir 0 (promo gratis ongkir) sah dan harus tetap terbawa.
   // `if (row.ongkos_kirim)` akan membuangnya dan menyamakannya dengan "tak pernah dicatat".
   if (typeof row.ongkos_kirim === 'number') order.shippingCost = row.ongkos_kirim
+  // Promo yang dipakai — ditampilkan di Detail Pesanan OMS.
+  const promos = parseAppliedPromos(row.promo_terpakai)
+  if (promos.length > 0) order.appliedPromos = promos
+  if (typeof row.diskon === 'number' && row.diskon > 0) order.discount = row.diskon
+  if (typeof row.ongkos_kirim_ditanggung === 'number' && row.ongkos_kirim_ditanggung > 0) {
+    order.shippingSubsidy = row.ongkos_kirim_ditanggung
+  }
   // Gudang pemenuh — dipakai saat pembatalan untuk mengembalikan stok ke gudang yang benar
   if (row.warehouse_id) {
     order.warehouseId = row.warehouse_id
