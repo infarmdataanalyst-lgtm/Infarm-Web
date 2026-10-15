@@ -267,6 +267,36 @@ export default function PrivacyPolicyPage() {
           </div>
 
           <div className="rounded-xl bg-brand-surface p-3">
+            <p className="font-bold text-zinc-900">Meta (Facebook &amp; Instagram) — pengukuran iklan</p>
+            <p className="mt-1">
+              Kami memasang <strong>Meta Pixel</strong> untuk mengukur hasil iklan kami di Facebook
+              dan Instagram. Pixel mencatat aktivitas Anda di situs ini: halaman yang dibuka, produk
+              yang dilihat, kata kunci yang Anda cari, produk yang dimasukkan ke keranjang, dan
+              langkah checkout. Meta dapat mengaitkan aktivitas tersebut dengan akun Facebook/
+              Instagram Anda, dan memakainya untuk menampilkan iklan kami kepada Anda kembali serta
+              mengukur efektivitas iklan.
+            </p>
+            <p className="mt-1">
+              Saat pesanan Anda lunas, kami juga mengirimkan data pembelian ke Meta dari server kami
+              (<em>Conversions API</em>): nilai pesanan, produk yang dibeli, pengenal peramban dari
+              cookie Meta, serta <strong>alamat email dan nomor telepon Anda dalam bentuk hash
+              SHA-256</strong> — bukan teks aslinya — agar Meta dapat mencocokkan pembelian dengan
+              akun yang melihat iklan. Hash tersebut tidak dapat dibaca kembali menjadi email atau
+              nomor telepon Anda. Pixel tidak dijalankan di area administrasi internal kami.
+            </p>
+            <p className="mt-1">
+              Anda dapat mengatur atau menolak iklan berdasarkan aktivitas Anda di situs lain melalui{' '}
+              <LegalExternalLink href={THIRD_PARTY_LINKS.metaAdPreferences}>
+                Preferensi Iklan Meta
+              </LegalExternalLink>
+              . Kebijakan Meta:{' '}
+              <LegalExternalLink href={THIRD_PARTY_LINKS.metaPrivacy}>
+                Kebijakan Privasi Meta
+              </LegalExternalLink>
+            </p>
+          </div>
+
+          <div className="rounded-xl bg-brand-surface p-3">
             <p className="font-bold text-zinc-900">Penyedia infrastruktur</p>
             <p className="mt-1">
               Situs dan basis data kami dijalankan pada layanan hosting dan basis data pihak ketiga
@@ -283,7 +313,7 @@ export default function PrivacyPolicyPage() {
       </LegalSection>
 
       <LegalSection id="cookie" title="8. Cookie & Teknologi Serupa">
-        <p>Kami memakai cookie untuk dua tujuan saja:</p>
+        <p>Kami memakai cookie untuk tiga tujuan saja:</p>
         <LegalList
           items={[
             <>
@@ -295,12 +325,18 @@ export default function PrivacyPolicyPage() {
               <strong>Cookie analitik.</strong> Dipasang oleh Google Analytics untuk statistik
               kunjungan sebagaimana dijelaskan pada bagian 7.
             </>,
+            <>
+              <strong>Cookie iklan.</strong> Dipasang oleh Meta Pixel (<code>_fbp</code>,{' '}
+              <code>_fbc</code>) untuk mengukur iklan kami di Facebook/Instagram dan menampilkan
+              iklan kami kembali kepada Anda, sebagaimana dijelaskan pada bagian 7. Cookie ini hanya
+              dipakai untuk iklan kami sendiri; kami tidak menjual data Anda kepada pengiklan lain.
+            </>,
           ]}
         />
         <p>
-          Kami tidak memasang cookie iklan dan tidak melakukan penargetan iklan lintas situs. Anda
-          dapat memblokir atau menghapus cookie melalui pengaturan peramban, dengan konsekuensi
-          fitur keranjang dan checkout tidak berjalan sebagaimana mestinya.
+          Anda dapat memblokir atau menghapus cookie melalui pengaturan peramban. Memblokir cookie
+          iklan dan analitik tidak mengganggu belanja Anda; memblokir cookie fungsional membuat
+          keranjang dan checkout tidak berjalan sebagaimana mestinya.
         </p>
       </LegalSection>
 

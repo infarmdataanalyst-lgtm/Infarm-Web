@@ -34,4 +34,8 @@ export const THIRD_PARTY_LINKS = {
   xenditPrivacy: 'https://www.xendit.co/en/privacy-policy/',
   xenditTerms: 'https://www.xendit.co/en/terms-and-conditions/',
   mengantarPrivacy: 'https://www.mengantar.com/privacy-policy/',
+  metaPrivacy: 'https://www.facebook.com/privacy/policy/',
+  // Halaman tempat pengguna Meta mengatur iklan yang ditampilkan kepadanya (termasuk menolak
+  // iklan berdasarkan aktivitas di situs lain) — jalur keluar yang disebut di bagian 7 & 8.
+  metaAdPreferences: 'https://www.facebook.com/adpreferences/',
 } as const
