@@ -111,6 +111,12 @@ export type Order = {
   // pendapatan mendarat di baris "Unassigned" laporan Akuisisi traffic, dan kanal asal pembeli
   // tak bisa diketahui. `undefined` bila cookie tak terbaca; pesanan tetap sah.
   gaSessionId?: string
+  // Penanda Meta Pixel pembeli, dititipkan checkout dari cookie `_fbp` (browser) dan `_fbc` (klik
+  // iklan; hanya ada bila pembeli tiba lewat ?fbclid=…) — migration 20261015120000. Dipakai webhook
+  // Xendit untuk mengirim `Purchase` lewat Conversions API (src/lib/meta-capi.ts). `undefined`
+  // = pixel diblokir / bukan dari iklan / pesanan lama; semuanya normal.
+  metaFbp?: string
+  metaFbc?: string
   // Estimasi lama pengiriman dari Mengantar saat pesanan dibuat, teks mentah ("2-4 hari").
   // Diurai oleh src/lib/delivery-estimate.ts. Kosong = pesanan lama → perkiraan 2–4 hari.
   deliveryEstimate?: string

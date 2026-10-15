@@ -48,6 +48,7 @@ import {
   type AnalyticsLineItem,
 } from '@/lib/analytics'
 import { readGaClientId, readGaSessionId } from '@/lib/ga-client-id'
+import { readMetaFbc, readMetaFbp } from '@/lib/meta-cookies'
 import { setGuestPhone, incrementActiveOrderCount } from '@/lib/guest-phone'
 import { setGuestEmail } from '@/lib/guest-email'
 import { freshUrl } from '@/lib/cdn-cache'
@@ -733,6 +734,11 @@ export default function CheckoutPage() {
           // Dibaca di titik yang sama dengan client_id, dan dengan alasan yang sama: cookie GA4
           // baru ada setelah skripnya selesai dimuat.
           gaSessionId: readGaSessionId(),
+          // Penanda Meta Pixel dari cookie `_fbp` (browser) & `_fbc` (klik iklan), alasan dan
+          // waktu pembacaan sama dengan GA4: webhook mengirim `Purchase` ke Meta atas nama
+          // browser ini lewat Conversions API. `undefined` otomatis hilang dari JSON.
+          metaFbp: readMetaFbp(),
+          metaFbc: readMetaFbc(),
           // Alamat terstruktur dari form + hasil search Mengantar
           address: {
             shippingAddress: address.street,
