@@ -250,29 +250,60 @@ export async function getEffectiveStock(
 // Versi BATCH dari getEffectiveStock — wajib dipakai untuk daftar produk (katalog, keranjang,
 // tabel OMS). Tanpa ini, memanggil getEffectiveStock per produk = N+1 query ke Supabase.
 //
-// Mengembalikan dua peta: `byProduct` (stok produk tanpa varian) dan `byVariant` (per varian).
+// Mengembalikan tiga peta: `byProduct` (stok produk tanpa varian), `byVariant` (per varian), dan
+// `variantTotalByProduct` (jumlah stok SEMUA varian satu produk).
 // Peta kosong bila tabel belum di-migrate → pemanggil memakai kolom stok lama.
 export async function getEffectiveStockMaps(
   productIds?: string[],
   options?: { warehouseId?: string },
-): Promise<{ byProduct: Map<string, number>; byVariant: Map<string, number> }> {
+): Promise<EffectiveStockMaps> {
   const rows = await readStockRows(productIds ? { productIds } : undefined)
+  const warehouseId = (await isMultiWarehouse()) ? options?.warehouseId : undefined
+  return aggregateStockRows(rows, warehouseId)
+}
+
+export type EffectiveStockMaps = {
+  byProduct: Map<string, number>
+  byVariant: Map<string, number>
+  variantTotalByProduct: Map<string, number>
+}
+
+// Bagian murni getEffectiveStockMaps (tanpa database) — dipisah supaya bisa di-unit-test.
+export function aggregateStockRows(
+  rows: readonly { productId: string; variantId?: string | null; warehouseId: string; stok: number }[],
+  warehouseId?: string,
+): EffectiveStockMaps {
   const byProduct = new Map<string, number>()
   const byVariant = new Map<string, number>()
-
-  const warehouseId = (await isMultiWarehouse()) ? options?.warehouseId : undefined
+  const variantTotalByProduct = new Map<string, number>()
 
   for (const row of rows) {
     // Mode multi dengan gudang spesifik → abaikan baris gudang lain.
     if (warehouseId && row.warehouseId !== warehouseId) continue
     if (row.variantId) {
       byVariant.set(row.variantId, (byVariant.get(row.variantId) ?? 0) + row.stok)
+      variantTotalByProduct.set(
+        row.productId,
+        (variantTotalByProduct.get(row.productId) ?? 0) + row.stok,
+      )
     } else {
       byProduct.set(row.productId, (byProduct.get(row.productId) ?? 0) + row.stok)
     }
   }
 
-  return { byProduct, byVariant }
+  return { byProduct, byVariant, variantTotalByProduct }
+}
+
+// Stok efektif SATU PRODUK (bukan varian) dari peta di atas; undefined = belum ada baris gudang,
+// pemanggil jatuh ke kolom products.stock.
+//
+// Produk bervarian → total stok semua variannya. Stoknya hanya tersimpan per varian, jadi tanpa
+// cabang ini ia jatuh ke products.stock: angka lama milik produk induk dari sebelum ia punya
+// varian, yang tak pernah diperbarui lagi (temuan 2026-10-15: INF-SM-045 tampil 120 di modal Edit
+// Produk, padahal 3 varian × 100 = 300 di Kelola Stok). Didahulukan atas baris tanpa varian karena
+// baris semacam itu pada produk bervarian juga sisa masa sebelum varian.
+export function productStockFrom(maps: EffectiveStockMaps, productId: string): number | undefined {
+  return maps.variantTotalByProduct.get(productId) ?? maps.byProduct.get(productId)
 }
 
 // Menyimpan stok absolut ke gudang. Mode single → selalu gudang default (admin tak perlu

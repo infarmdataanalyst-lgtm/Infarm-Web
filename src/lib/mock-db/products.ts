@@ -13,6 +13,7 @@ import { randomUUID } from 'node:crypto'
 import { createAdminClient } from '@/lib/supabase/server'
 import {
   getEffectiveStockMaps,
+  productStockFrom,
   returnStockToWarehouse,
   writeEffectiveStock,
 } from '@/lib/warehouse'
@@ -192,12 +193,15 @@ export async function readProducts(): Promise<StoredProduct[]> {
 //
 // Dipakai versi BATCH (satu query untuk semua produk) supaya tidak terjadi N+1 query.
 // Produk yang belum punya baris gudang tetap memakai nilai products.stock (fail-safe).
+// Produk bervarian → total stok semua varian (lihat productStockFrom).
 async function applyEffectiveStock(products: StoredProduct[]): Promise<StoredProduct[]> {
   if (products.length === 0) return products
-  const { byProduct } = await getEffectiveStockMaps(products.map((p) => p.id))
-  if (byProduct.size === 0) return products // tabel gudang belum di-migrate → pakai kolom lama
+  const maps = await getEffectiveStockMaps(products.map((p) => p.id))
+  if (maps.byProduct.size === 0 && maps.variantTotalByProduct.size === 0) {
+    return products // tabel gudang belum di-migrate → pakai kolom lama
+  }
   return products.map((p) => {
-    const effective = byProduct.get(p.id)
+    const effective = productStockFrom(maps, p.id)
     return effective === undefined ? p : { ...p, stock: effective }
   })
 }
