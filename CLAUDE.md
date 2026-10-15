@@ -174,7 +174,9 @@ punya pemilik yang bisa dibuktikan lewat jalur email, jadi tak akan pernah muncu
   `<GoogleAnalyticsGate>` (`src/components/analytics/`) di `src/app/layout.tsx`: render kondisional
   bila `NEXT_PUBLIC_GA_ID` terisi, dan di-gate agar TIDAK aktif di area `/oms` (tak melacak admin).
   Event GA4 sisi klien (`view_item`, `add_to_cart`, `begin_checkout`, `add_shipping_info`) via
-  `src/lib/analytics.ts`. Event `purchase` TIDAK dikirim dari browser: pembayaran Xendit asinkron,
+  `src/lib/analytics.ts` (plus `search` dari `HeaderSearch`, hanya untuk kata kunci FINAL — saran
+  dipilih / Enter / diam 1,5 dtk — bukan tiap ketukan; `results_count` = custom metric, 0 berarti
+  "dicari tapi tak ada"). Event `purchase` TIDAK dikirim dari browser: pembayaran Xendit asinkron,
   jadi ia dikirim dari webhook lewat Measurement Protocol (`src/lib/analytics-server.ts`, butuh
   `GA_API_SECRET` + kolom `orders.ga_client_id` & `orders.ga_session_id`). Keduanya dititipkan
   checkout dari cookie `_ga` dan `_ga_<measurement-id>`: `client_id` menjawab SIAPA yang membeli,
@@ -188,6 +190,17 @@ punya pemilik yang bisa dibuktikan lewat jalur email, jadi tak akan pernah muncu
   `<head>` root layout (`src/lib/ga-referrer-override.ts`) SEBELUM GA dimuat — aturan "rujukan yang
   tidak diinginkan" di GA4 (xendit.co, xen.to) sudah terpasang dan hit sudah membawa `ir=1`, tapi
   data final GA4 tetap mencatat `checkout-staging.xendit.co / referral` (terukur 12 Okt 2026).
+- **Meta Pixel (iklan FB/IG)**: `<MetaPixelGate>` (`src/components/analytics/`) di root layout, hanya
+  bila `NEXT_PUBLIC_META_PIXEL_ID` terisi DAN berbentuk angka (`isValidMetaPixelId`, karena nilainya
+  masuk ke `<script>` inline); pengecualian path sama dengan GA (`/oms`, `/maintenance`). Gate juga
+  mengirim `PageView` tiap pathname berubah — snippet Meta hanya mengirimnya sekali saat load.
+  Event TIDAK dipanggil langsung dari komponen: `sendEvent` di `lib/analytics.ts` menyebarkan payload
+  GA4 ke gtag DAN ke Meta lewat penerjemah murni `lib/meta-pixel.ts` (`view_item`→ViewContent,
+  `add_to_cart`→AddToCart, `begin_checkout`→InitiateCheckout, `add_shipping_info`→AddPaymentInfo,
+  `search`→Search; `content_ids` = `item_id` GA4). Tiap event membawa `eventID` unik untuk
+  deduplikasi browser↔server. `Purchase` SENGAJA tidak ada di browser — rencananya dari webhook Xendit
+  lewat Conversions API (`event_id` = nomor invoice; butuh token + kolom `orders.meta_fbp/meta_fbc`),
+  belum dikerjakan. Domain Meta sudah masuk CSP report-only di `next.config.ts`.
 
 ### Roadmap integrasi (belum terpasang)
 
@@ -841,6 +854,14 @@ MENGANTAR_ORIGIN_ID              # server-only, OPSIONAL; alias non-public dari 
                                  # store_settings.warehouse_mode, diubah lewat toggle di OMS →
                                  # Gudang (berlaku seketika, tanpa redeploy). Jangan hidupkan
                                  # kembali env ini — dua sumber kebenaran = bug menunggu terjadi.
+
+# Sudah dipakai sekarang (Meta Pixel — iklan Facebook/Instagram)
+NEXT_PUBLIC_META_PIXEL_ID        # PUBLIC/client, OPSIONAL. Pixel ID Meta (deretan angka) dari Events
+                                 # Manager akun iklan PEMILIK. Dipasang di src/app/layout.tsx via
+                                 # <MetaPixelGate> hanya bila terisi & berbentuk angka; nilai lain
+                                 # diabaikan (pixel tak terpasang). Set di Vercel + redeploy.
+                                 # Token Conversions API (server-only) BELUM ada — menyusul bersama
+                                 # event Purchase dari webhook.
 
 # Sudah dipakai sekarang (Google Analytics 4)
 NEXT_PUBLIC_GA_ID                # PUBLIC/client; Measurement ID GA4 (format G-XXXXXXXXXX). Dipasang di

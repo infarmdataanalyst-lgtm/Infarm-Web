@@ -95,6 +95,9 @@
   - Desktop (sm+): input inline (`bg-white/15`, pill, ikon search kanan sebagai trigger), lebar `max-w-[320px]` rata kanan.
   - Mobile: ikon kaca pembesar → **overlay full-width** (`fixed inset-0`) menutupi header (tombol ←, input, dropdown).
   - Saran on-type via `GET /api/products/search` (debounce). Logika autocomplete sama dgn versi hero lama.
+  - Analytics `search` (GA4 + Meta `Search`) HANYA untuk kata kunci final: saran dipilih (klik/Enter/ikon),
+    Enter tanpa hasil, atau diam 1,5 dtk setelah saran tiba. Kata yang sama tak dilaporkan dua kali selama
+    komponen hidup. Payload: `search_term`, `results_count` (0 = dicari tapi tak ada), item hasil.
 
 ## Halaman Katalog `/products` — Filter Lengkap
 

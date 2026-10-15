@@ -49,13 +49,15 @@ const securityHeaders = [
       "form-action 'self'",
       "frame-ancestors 'none'",
       "object-src 'none'",
-      // Supabase Storage (foto produk) + data: untuk pratinjau gambar sebelum diunggah
-      "img-src 'self' data: blob: https://*.supabase.co",
+      // Supabase Storage (foto produk) + data: untuk pratinjau gambar sebelum diunggah.
+      // www.facebook.com: Meta Pixel mengirim event sebagai beacon gambar ke /tr (juga <noscript>).
+      "img-src 'self' data: blob: https://*.supabase.co https://www.facebook.com",
       "font-src 'self' data:",
-      // 'unsafe-inline' & 'unsafe-eval': lihat alasan di atas (hidrasi Next + Turbopack dev)
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      // 'unsafe-inline' & 'unsafe-eval': lihat alasan di atas (hidrasi Next + Turbopack dev).
+      // connect.facebook.net: fbevents.js milik Meta Pixel (MetaPixelGate).
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://connect.facebook.net",
       "style-src 'self' 'unsafe-inline'",
-      "connect-src 'self' https://*.supabase.co",
+      "connect-src 'self' https://*.supabase.co https://www.facebook.com https://connect.facebook.net",
     ].join('; '),
   },
 ]

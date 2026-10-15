@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   trackAddShippingInfo,
   trackBeginCheckout,
+  trackSearch,
   trackViewItem,
   type AnalyticsLineItem,
   type AnalyticsProduct,
@@ -103,6 +104,57 @@ describe('trackAddShippingInfo', () => {
     const calls = pasangGtag()
     trackAddShippingInfo(92000, 'J&T Reguler', 66720, baris)
     expect(calls[0].params.value).toBe(92000)
+  })
+})
+
+describe('penyebaran ke Meta Pixel', () => {
+  it('satu panggilan helper → GA4 DAN Meta menerima event yang setara', () => {
+    const calls = pasangGtag()
+    const fbqCalls: unknown[][] = []
+    ;(globalThis as { window?: { fbq?: unknown } }).window!.fbq = (...args: unknown[]) => fbqCalls.push(args)
+
+    trackBeginCheckout(92000, baris)
+
+    expect(calls[0].name).toBe('begin_checkout')
+    expect(fbqCalls).toHaveLength(1)
+    expect(fbqCalls[0][1]).toBe('InitiateCheckout')
+    expect(fbqCalls[0][2]).toMatchObject({ content_ids: ['SPR-2L'], value: 92000 })
+  })
+
+  it('GA4 tetap terkirim walau fbq tidak ada (pemblokir iklan sering menahan Meta saja)', () => {
+    const calls = pasangGtag()
+    expect(() => trackViewItem(sprayer)).not.toThrow()
+    expect(calls).toHaveLength(1)
+  })
+
+  it('Meta tetap terkirim walau gtag tidak ada', () => {
+    const fbqCalls: unknown[][] = []
+    ;(globalThis as { window?: unknown }).window = { fbq: (...args: unknown[]) => fbqCalls.push(args) }
+    trackViewItem(sprayer)
+    expect(fbqCalls).toHaveLength(1)
+    expect(fbqCalls[0][1]).toBe('ViewContent')
+  })
+})
+
+describe('trackSearch', () => {
+  it('mengirim search_term, results_count, dan item hasilnya', () => {
+    const calls = pasangGtag()
+    trackSearch('bayam', [{ id: 'prod-1', name: 'Benih Bayam', category: 'benih-premium', price: 15000 }])
+
+    expect(calls[0].name).toBe('search')
+    expect(calls[0].params).toMatchObject({ search_term: 'bayam', results_count: 1 })
+    expect(calls[0].params.items).toEqual([
+      { item_id: 'prod-1', item_name: 'Benih Bayam', item_category: 'benih-premium', price: 15000, quantity: 1 },
+    ])
+  })
+
+  it('tanpa hasil: results_count 0 dan items kosong — bukan dilewati', () => {
+    // Pencarian tanpa hasil adalah data yang paling dicari dari event ini (produk yang diminta tapi
+    // tak dijual). Kalau helper diam saat kosong, laporan itu tak pernah bisa dibuat.
+    const calls = pasangGtag()
+    trackSearch('durian', [])
+    expect(calls).toHaveLength(1)
+    expect(calls[0].params).toMatchObject({ search_term: 'durian', results_count: 0, items: [] })
   })
 })
 
