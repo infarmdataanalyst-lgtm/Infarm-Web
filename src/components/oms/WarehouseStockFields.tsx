@@ -13,7 +13,7 @@
 // parent, yang mengirimkannya bersama payload produk.
 
 import { useEffect, useState } from 'react'
-import { Info } from 'lucide-react'
+import { Info, Warehouse as WarehouseIcon } from 'lucide-react'
 import type { Warehouse, WarehouseMode } from '@/types/warehouse'
 
 // Peta stok per gudang. '' = input dikosongkan (dianggap 0 saat disimpan).
@@ -141,15 +141,23 @@ export default function WarehouseStockFields({
         </p>
       </div>
 
+      {/* Nama gudang DI ATAS input, bukan di sampingnya. Dulu label & input sebaris dengan input
+          `w-24`, tetapi `inputClassName` milik form pemanggil membawa `w-full` yang menang, sehingga
+          input melebar penuh dan label (flex-1, truncate) terdesak sampai lebar nol: admin melihat
+          dua kotak "0" tanpa tahu mana gudang yang mana (temuan 2026-10-15). */}
       {warehouses.map((w) => (
-        <div key={w.id} className="flex items-center gap-2">
+        <div key={w.id}>
           <label
             htmlFor={`wh-stock-${w.id}`}
-            className="min-w-0 flex-1 truncate text-xs text-gray-600"
-            title={w.nama}
+            className="mb-1 flex items-center gap-1.5 text-xs font-medium text-gray-700"
           >
-            {w.nama}
-            {w.isDefault && <span className="ml-1 text-[11px] text-brand-primary">(default)</span>}
+            <WarehouseIcon className="h-3.5 w-3.5 shrink-0 text-gray-400" aria-hidden />
+            <span className="truncate" title={w.nama}>{w.nama}</span>
+            {w.isDefault && (
+              <span className="shrink-0 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-700">
+                Default
+              </span>
+            )}
           </label>
           <input
             id={`wh-stock-${w.id}`}
@@ -158,7 +166,7 @@ export default function WarehouseStockFields({
             value={value[w.id] ?? ''}
             onChange={(e) => handleChange(w.id, e.target.value)}
             placeholder="0"
-            className={`${inputClassName} w-24 shrink-0`}
+            className={inputClassName}
           />
         </div>
       ))}
