@@ -24,6 +24,7 @@
 
 import { NextResponse } from 'next/server'
 import { requireAdminRole } from '@/lib/oms-guard'
+import { logAdminActivity } from '@/lib/admin-activity'
 import {
   PROBE_OBJECT_ID,
   buildCancelPayload,
@@ -127,6 +128,14 @@ export async function POST(request: Request) {
       note: `ditandai manual oleh admin pada ${new Date().toISOString()} — dihapus lewat dashboard Mengantar, bukan lewat sistem`,
     })
 
+    await logAdminActivity({
+      action: 'shipment.cancel',
+      entityType: 'order',
+      entityId: invoice,
+      entityLabel: invoice,
+      details: { mode: 'tandaiManual', resi: order.trackingNumber ?? null, dbDiperbarui: ditandai },
+    })
+
     return NextResponse.json({
       mode: 'tandaiManual',
       catatan:
@@ -200,6 +209,22 @@ export async function POST(request: Request) {
           error: `${hasil.reason}${status} setelah ${hasil.attempts}x percobaan: ${hasil.detail}`,
         },
   )
+
+  // Dicatat berhasil MAUPUN gagal: keduanya sama-sama permintaan hapus yang sungguh terkirim ke
+  // Mengantar atas perintah admin ini.
+  await logAdminActivity({
+    action: 'shipment.cancel',
+    entityType: 'order',
+    entityId: invoice,
+    entityLabel: invoice,
+    details: {
+      mode: 'hapus',
+      resi: order.trackingNumber ?? null,
+      berhasil: hasil.ok,
+      ...(hasil.ok ? {} : { alasan: hasil.reason }),
+      percobaan: hasil.attempts,
+    },
+  })
 
   return NextResponse.json({
     mode: 'hapus',

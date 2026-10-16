@@ -14,6 +14,7 @@ import {
   setMinOrderAmount,
   MAX_MIN_ORDER_AMOUNT,
 } from '@/lib/mock-db/settings'
+import { logAdminActivity } from '@/lib/admin-activity'
 
 // createAdminClient (Supabase) butuh runtime Node.js, bukan Edge
 export const runtime = 'nodejs'
@@ -48,7 +49,16 @@ export async function PATCH(request: Request) {
   }
 
   try {
+    // Nilai lama — hanya untuk log aktivitas.
+    const sebelum = await getMinOrderAmount()
     const saved = await setMinOrderAmount(raw)
+    await logAdminActivity({
+      action: 'setting.update',
+      entityType: 'setting',
+      entityId: 'min_order_amount',
+      entityLabel: 'Minimum belanja',
+      details: { before: sebelum, after: saved },
+    })
     // Segarkan cache storefront yang membaca nilai ini (getCachedMinOrderAmount)
     revalidateTag('settings', 'max')
     return NextResponse.json({ success: true, minOrderAmount: saved })

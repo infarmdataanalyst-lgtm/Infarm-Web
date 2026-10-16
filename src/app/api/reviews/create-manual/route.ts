@@ -20,6 +20,7 @@ import {
   REVIEW_COMMENT_MAX,
   REVIEW_COMMENT_TOO_LONG,
 } from '@/lib/review-validation'
+import { logAdminActivity } from '@/lib/admin-activity'
 
 export const runtime = 'nodejs'
 
@@ -89,6 +90,14 @@ export async function POST(request: Request) {
     const id = await createManualReview({ productId, authorName, rating, comment, category, createdAt })
 
     // Halaman detail produk + ringkasan rating ikut berubah begitu ulasan masuk.
+    await logAdminActivity({
+      action: 'review.create_manual',
+      entityType: 'review',
+      entityId: id,
+      entityLabel: authorName,
+      details: { productId, rating, comment, category: category ?? null, createdAt: createdAt ?? null },
+    })
+
     revalidateTag('reviews', 'max')
     revalidatePath(`/produk/${productId}`)
 

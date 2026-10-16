@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server'
 import { revalidateTag } from 'next/cache'
 import { requireAdmin } from '@/lib/oms-guard'
 import { setReviewReply } from '@/lib/mock-db/reviews'
+import { logAdminActivity } from '@/lib/admin-activity'
 
 export const runtime = 'nodejs'
 
@@ -35,6 +36,13 @@ export async function POST(request: Request) {
   }
 
   // Invalidasi cache baca ulasan storefront agar balasan admin langsung tampil
+  await logAdminActivity({
+    action: 'review.reply',
+    entityType: 'review',
+    entityId: body.id,
+    details: { reply },
+  })
+
   revalidateTag('reviews', 'max')
 
   return NextResponse.json({ success: true })

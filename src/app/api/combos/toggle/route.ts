@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server'
 import { revalidateTag } from 'next/cache'
 import { requireAdmin } from '@/lib/oms-guard'
 import { setComboActive } from '@/lib/mock-db/combos'
+import { logAdminActivity } from '@/lib/admin-activity'
 
 export const runtime = 'nodejs'
 
@@ -35,5 +36,12 @@ export async function PATCH(request: Request) {
 
   // Invalidasi cache combo storefront
   revalidateTag('combos', 'max')
+  await logAdminActivity({
+    action: 'combo.toggle',
+    entityType: 'combo',
+    entityId: combo.id,
+    entityLabel: combo.name,
+    details: { isActive: body.isActive },
+  })
   return NextResponse.json({ success: true, combo })
 }

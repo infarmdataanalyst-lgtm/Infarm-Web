@@ -49,6 +49,7 @@ import {
   courierDisplayName,
   courierIdFromLabel,
 } from '@/lib/mengantar-estimate'
+import { logAdminActivity } from '@/lib/admin-activity'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -105,6 +106,13 @@ export async function PATCH(request: Request) {
     //     masih membaca jadwal lama dan bisa membuat ulang slot berjam lama.
     await deletePickupSlotsForDates(resetDates)
     const saved = await setPickupSchedule(after)
+    await logAdminActivity({
+      action: 'setting.update',
+      entityType: 'setting',
+      entityId: 'pickup_schedule',
+      entityLabel: 'Jadwal penjemputan',
+      details: { before, after: saved, resetDates },
+    })
     await deletePickupSlotsForDates(resetDates)
 
     // Paket terbooking yang jam jemput EKSPEDISI-nya berubah — tertinggal pada jam lama.

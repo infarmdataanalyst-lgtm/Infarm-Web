@@ -14,6 +14,7 @@ import {
   setLowStockThreshold,
   MAX_LOW_STOCK_THRESHOLD,
 } from '@/lib/mock-db/settings'
+import { logAdminActivity } from '@/lib/admin-activity'
 
 // createAdminClient (Supabase) butuh runtime Node.js, bukan Edge
 export const runtime = 'nodejs'
@@ -54,7 +55,16 @@ export async function PATCH(request: Request) {
   }
 
   try {
+    // Nilai lama — hanya untuk log aktivitas.
+    const sebelum = await getLowStockThreshold()
     const saved = await setLowStockThreshold(raw)
+    await logAdminActivity({
+      action: 'setting.update',
+      entityType: 'setting',
+      entityId: 'low_stock_threshold',
+      entityLabel: 'Ambang stok menipis',
+      details: { before: sebelum, after: saved },
+    })
     // Dashboard OMS membaca ambang ini saat render (Server Component) — segarkan agar widget
     // "Stok Rendah" langsung memakai angka baru tanpa menunggu kunjungan berikutnya.
     revalidatePath('/oms/dashboard')

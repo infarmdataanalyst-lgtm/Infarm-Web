@@ -3,8 +3,9 @@
 
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/oms-guard'
-import { PromotionWriteError, updatePromotion } from '@/lib/mock-db/promotions'
+import { PromotionWriteError, getPromotionById, updatePromotion } from '@/lib/mock-db/promotions'
 import { validatePromotionInput } from '@/lib/promotion-validation'
+import { diffFields, logAdminActivity } from '@/lib/admin-activity'
 
 export const runtime = 'nodejs'
 
@@ -30,6 +31,9 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: result.error }, { status: 422 })
   }
 
+  // Versi sebelum diubah — hanya untuk log aktivitas.
+  const before = await getPromotionById(body.id)
+
   let promotion
   try {
     promotion = await updatePromotion(body.id, result.value)
@@ -42,6 +46,19 @@ export async function PATCH(request: Request) {
   if (!promotion) {
     return NextResponse.json({ error: 'Promo tidak ditemukan.' }, { status: 404 })
   }
+
+  await logAdminActivity({
+    action: 'promotion.update',
+    entityType: 'promotion',
+    entityId: promotion.id,
+    entityLabel: promotion.name,
+    details: {
+      changes: diffFields(
+        (before ?? {}) as Record<string, unknown>,
+        result.value as unknown as Record<string, unknown>,
+      ),
+    },
+  })
 
   return NextResponse.json({ success: true, promotion })
 }

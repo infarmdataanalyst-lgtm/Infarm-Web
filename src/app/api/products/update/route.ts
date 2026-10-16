@@ -17,7 +17,7 @@
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/oms-guard'
 import { revalidatePath, revalidateTag } from 'next/cache'
-import { updateProduct } from '@/lib/mock-db/products'
+import { getProductById, updateProduct } from '@/lib/mock-db/products'
 import { parseStockPerWarehouse, writeStockPerWarehouse } from '@/lib/warehouse'
 import { readStockRows } from '@/lib/mock-db/warehouses'
 import { recordAdminStockChanges } from '@/lib/stock-audit'
@@ -35,6 +35,7 @@ import {
 } from '@/lib/product-validation'
 import { validateProductImages } from '@/lib/product-image-validation'
 import type { StoredProduct } from '@/types/product'
+import { diffFields, logAdminActivity } from '@/lib/admin-activity'
 
 export const runtime = 'nodejs'
 
@@ -166,6 +167,9 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: perWarehouse.error }, { status: 422 })
   }
 
+  // Versi sebelum diubah — hanya untuk log aktivitas (field mana berubah dari apa ke apa).
+  const before = await getProductById(body.id)
+
   const updated = await updateProduct(body.id, patch)
   if (!updated) {
     return NextResponse.json({ error: 'Produk tidak ditemukan.' }, { status: 404 })
@@ -195,6 +199,30 @@ export async function PATCH(request: Request) {
 
   // Segarkan cache storefront agar perubahan (harga/stok/arsip) langsung tampil di ecommerce.
   // id produk diketahui → revalidasi halaman detail spesifik + beranda + katalog.
+  // Deskripsi & gambar tak disalin utuh ke log (panjang, dan isinya ada di produknya sendiri) —
+  // cukup ditandai berubah. Rincian stok per gudang tetap di stock_mutations.
+  const ringkas: Record<string, unknown> = { ...patch }
+  delete ringkas.description
+  delete ringkas.images
+  const changes: Record<string, unknown> = diffFields((before ?? {}) as Record<string, unknown>, ringkas)
+  if (patch.description !== undefined && patch.description !== before?.description) {
+    changes.description = 'diubah'
+  }
+  if (patch.images !== undefined && JSON.stringify(patch.images) !== JSON.stringify(before?.images)) {
+    changes.images = { before: before?.images?.length ?? 0, after: patch.images.length }
+  }
+  if (perWarehouse.entries?.length) changes.stokPerGudang = perWarehouse.entries
+
+  if (Object.keys(changes).length > 0) {
+    await logAdminActivity({
+      action: 'product.update',
+      entityType: 'product',
+      entityId: body.id,
+      entityLabel: updated.name,
+      details: { sku: updated.sku, changes },
+    })
+  }
+
   revalidatePath('/')
   revalidatePath('/products')
   revalidatePath(`/produk/${body.id}`)

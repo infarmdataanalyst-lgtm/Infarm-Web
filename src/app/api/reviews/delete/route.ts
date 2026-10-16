@@ -11,6 +11,7 @@ import { NextResponse } from 'next/server'
 import { revalidateTag } from 'next/cache'
 import { requireAdminRole } from '@/lib/oms-guard'
 import { deleteInternalReviews } from '@/lib/mock-db/reviews'
+import { logAdminActivity } from '@/lib/admin-activity'
 
 export const runtime = 'nodejs'
 
@@ -43,6 +44,13 @@ export async function POST(request: Request) {
 
   // `deleted` bisa lebih kecil dari jumlah id: id ulasan pembeli yang ikut terkirim memang
   // dilewati query. Angkanya dikembalikan apa adanya supaya OMS bisa mengatakan yang sebenarnya.
+  await logAdminActivity({
+    action: 'review.delete',
+    entityType: 'review',
+    entityLabel: `${ids.length} ulasan`,
+    details: { ids, deleted },
+  })
+
   revalidateTag('reviews', 'max')
 
   return NextResponse.json({ deleted })

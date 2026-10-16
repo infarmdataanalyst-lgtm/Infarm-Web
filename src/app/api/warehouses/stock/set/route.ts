@@ -26,6 +26,7 @@ import { readStockRows, setWarehouseStock } from '@/lib/mock-db/warehouses'
 import { syncVariantLegacyStock } from '@/lib/mock-db/variants'
 import { recordAdminStockChanges, type ManualStockChange } from '@/lib/stock-audit'
 import { validateStock } from '@/lib/product-validation'
+import { logAdminActivity } from '@/lib/admin-activity'
 
 export const runtime = 'nodejs'
 
@@ -141,6 +142,21 @@ export async function POST(request: Request) {
 
   // Riwayat: best effort, tak pernah menggagalkan penyimpanan stok yang sudah berhasil di atas.
   await recordAdminStockChanges(audit, 'manual_update')
+
+  // Ringkasan saja — rincian per sel (sebelum → sesudah) sudah tercatat di stock_mutations.
+  if (audit.length > 0 || failed.length > 0) {
+    await logAdminActivity({
+      action: 'stock.update',
+      entityType: 'stock',
+      entityLabel: `${audit.length} sel stok`,
+      details: {
+        savedCount: audit.length,
+        failedCount: failed.length,
+        productIds,
+        warehouseIds: [...new Set(audit.map((a) => a.warehouseId))],
+      },
+    })
+  }
 
   if (audit.length > 0) {
     revalidatePath('/')
