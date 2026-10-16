@@ -9,6 +9,7 @@ import { NextResponse } from 'next/server'
 import { revalidateTag } from 'next/cache'
 import { requireAdmin } from '@/lib/oms-guard'
 import { setDefaultWarehouse } from '@/lib/mock-db/warehouses'
+import { logAdminActivity } from '@/lib/admin-activity'
 
 export const runtime = 'nodejs'
 
@@ -31,6 +32,13 @@ export async function PATCH(request: Request) {
     if (!warehouse) return NextResponse.json({ error: 'Gudang tidak ditemukan.' }, { status: 404 })
 
     // Stok efektif & origin ongkir bergantung gudang default → segarkan cache storefront
+    await logAdminActivity({
+      action: 'warehouse.set_default',
+      entityType: 'warehouse',
+      entityId: id,
+      entityLabel: warehouse.nama,
+    })
+
     revalidateTag('products', 'max')
     return NextResponse.json({ success: true, warehouse })
   } catch (e) {

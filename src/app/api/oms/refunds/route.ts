@@ -15,6 +15,7 @@
 
 import { NextResponse } from 'next/server'
 import { requireAdmin, requireAdminRole, getAdminIdentity } from '@/lib/oms-guard'
+import { logAdminActivity } from '@/lib/admin-activity'
 import { readOrdersNeedingRefund, resolveRefund, getOrderByOrderId } from '@/lib/mock-db/orders'
 import { normalizeInvoiceId } from '@/lib/invoice-id'
 import { reportRefundToGa } from '@/lib/ga-refund'
@@ -145,6 +146,19 @@ export async function PATCH(request: Request) {
   }
 
   console.log(`[oms/refunds] ${orderId} → ${status} oleh ${by}`)
+
+  await logAdminActivity({
+    action: 'refund.create',
+    entityType: 'order',
+    entityId: orderId,
+    entityLabel: orderId,
+    details: {
+      status,
+      ...(status === 'SUDAH_REFUND' ? { amount, totalPesanan: order.totalAmount } : {}),
+      note,
+    },
+    actor: identity,
+  })
 
   // Jalur C laporan refund GA4: pengembalian manual (transfer VA) yang dinyatakan selesai admin.
   // `updated` hanya didapat pemenang compare-and-swap resolveRefund, jadi tombol yang ditekan dua

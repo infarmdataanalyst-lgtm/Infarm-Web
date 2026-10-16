@@ -6,6 +6,7 @@ import { requireAdmin } from '@/lib/oms-guard'
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { createVariant, isVariantSkuTaken } from '@/lib/mock-db/variants'
 import { validateName, validateSkuFormat, validatePrice, validateStock } from '@/lib/product-validation'
+import { logAdminActivity } from '@/lib/admin-activity'
 
 export const runtime = 'nodejs'
 
@@ -37,6 +38,13 @@ export async function POST(request: Request) {
 
   try {
     const variant = await createVariant({ productId, name, sku, price, stock, isDefault })
+    await logAdminActivity({
+      action: 'variant.create',
+      entityType: 'variant',
+      entityId: variant.id,
+      entityLabel: name,
+      details: { productId, sku, price, stock, isDefault },
+    })
     revalidateTag('variants', 'max')
     revalidatePath(`/produk/${productId}`)
     return NextResponse.json({ success: true, variant }, { status: 201 })

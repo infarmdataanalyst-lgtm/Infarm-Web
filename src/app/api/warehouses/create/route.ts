@@ -7,6 +7,7 @@ import { revalidateTag } from 'next/cache'
 import { requireAdmin } from '@/lib/oms-guard'
 import { createWarehouse } from '@/lib/mock-db/warehouses'
 import { validateWarehouseForm, toWarehouseFormValues } from '@/lib/warehouse-validation'
+import { logAdminActivity } from '@/lib/admin-activity'
 
 export const runtime = 'nodejs'
 
@@ -39,6 +40,19 @@ export async function POST(request: Request) {
     })
 
     // Gudang default menentukan stok efektif & origin ongkir → segarkan cache storefront
+    await logAdminActivity({
+      action: 'warehouse.create',
+      entityType: 'warehouse',
+      entityId: warehouse.id,
+      entityLabel: warehouse.nama,
+      details: {
+        alamat: values.alamat || null,
+        mengantarOriginId: values.mengantarOriginId || null,
+        isDefault: body.isDefault === true,
+        isActive: body.isActive !== false,
+      },
+    })
+
     revalidateTag('products', 'max')
     return NextResponse.json({ success: true, warehouse })
   } catch (e) {

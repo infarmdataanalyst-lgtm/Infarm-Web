@@ -29,6 +29,7 @@
 import { randomUUID } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { requireAdminRole, getAdminIdentity } from '@/lib/oms-guard'
+import { logAdminActivity } from '@/lib/admin-activity'
 import {
   getOrderByOrderId,
   claimRefundForProcessing,
@@ -211,6 +212,25 @@ export async function POST(request: Request) {
     reason: 'CANCELLATION',
     referenceId: orderId,
     idempotencyKey,
+  })
+
+  // Dicatat TEPAT setelah panggilan ke Xendit, apa pun hasilnya: inilah titik uang (mungkin)
+  // berpindah atas perintah admin ini. Cabang-cabang sesudahnya hanya soal mencatat hasilnya.
+  await logAdminActivity({
+    action: 'refund.xendit',
+    entityType: 'order',
+    entityId: orderId,
+    entityLabel: orderId,
+    details: {
+      amount: order.totalAmount,
+      channel: info?.channel ?? null,
+      paymentRequestId: claimReference,
+      berhasil: hasil.ok,
+      ...(hasil.ok
+        ? { status: hasil.status, reference: hasil.reference || null }
+        : { alasan: hasil.reason, errorCode: hasil.errorCode ?? null }),
+    },
+    actor: identity,
   })
 
   if (!hasil.ok) {

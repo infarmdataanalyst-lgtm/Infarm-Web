@@ -23,6 +23,7 @@ import {
 } from '@/lib/product-validation'
 import { validateProductImages } from '@/lib/product-image-validation'
 import type { CreateProductInput, ProductCategory } from '@/types/product'
+import { logAdminActivity } from '@/lib/admin-activity'
 
 // 'fs' butuh runtime Node.js (bukan Edge)
 export const runtime = 'nodejs'
@@ -149,6 +150,21 @@ export async function POST(request: Request) {
 
   // Segarkan cache halaman storefront agar produk baru langsung tampil saat navigasi.
   // '/produk/[id]' butuh arg 'page' karena route dinamis (revalidasi semua halaman detail).
+  await logAdminActivity({
+    action: 'product.create',
+    entityType: 'product',
+    entityId: saved.id,
+    entityLabel: saved.name,
+    details: {
+      sku: result.input.sku,
+      category: result.input.category,
+      price: result.input.price,
+      stock: result.input.stock,
+      berat: result.input.berat,
+      ...(perWarehouse.entries?.length ? { stokPerGudang: perWarehouse.entries } : {}),
+    },
+  })
+
   revalidatePath('/')
   revalidatePath('/products')
   revalidatePath('/produk/[id]', 'page')

@@ -16,6 +16,7 @@ import {
   STORE_NAME_MAX,
   STORE_DESCRIPTION_MAX,
 } from '@/lib/mock-db/settings'
+import { logAdminActivity } from '@/lib/admin-activity'
 
 // createAdminClient (Supabase) butuh runtime Node.js, bukan Edge
 export const runtime = 'nodejs'
@@ -69,7 +70,16 @@ export async function PATCH(request: Request) {
   }
 
   try {
+    // Nilai lama — hanya untuk log aktivitas.
+    const sebelum = await getStoreProfile()
     const saved = await setStoreProfile({ name, description })
+    await logAdminActivity({
+      action: 'setting.update',
+      entityType: 'setting',
+      entityId: 'store_profile',
+      entityLabel: 'Profil toko',
+      details: { before: sebelum, after: saved },
+    })
     return NextResponse.json({ success: true, ...saved })
   } catch (e) {
     const message = e instanceof Error ? e.message : 'Gagal menyimpan pengaturan.'

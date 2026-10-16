@@ -6,6 +6,7 @@ import { requireAdmin } from '@/lib/oms-guard'
 import { revalidatePath, revalidateTag } from 'next/cache'
 import { updateVariant, isVariantSkuTaken } from '@/lib/mock-db/variants'
 import { validateName, validateSkuFormat, validatePrice, validateStock } from '@/lib/product-validation'
+import { logAdminActivity } from '@/lib/admin-activity'
 
 export const runtime = 'nodejs'
 
@@ -39,6 +40,13 @@ export async function PATCH(request: Request) {
   try {
     const variant = await updateVariant(id, { productId, name, sku, price, stock, isDefault })
     if (!variant) return NextResponse.json({ error: 'Varian tidak ditemukan.' }, { status: 404 })
+    await logAdminActivity({
+      action: 'variant.update',
+      entityType: 'variant',
+      entityId: id,
+      entityLabel: name,
+      details: { productId, sku, price, stock, isDefault },
+    })
     revalidateTag('variants', 'max')
     revalidatePath(`/produk/${productId}`)
     return NextResponse.json({ success: true, variant })

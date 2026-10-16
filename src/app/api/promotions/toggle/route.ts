@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/oms-guard'
 import { setPromotionActive } from '@/lib/mock-db/promotions'
+import { logAdminActivity } from '@/lib/admin-activity'
 
 export const runtime = 'nodejs'
 
@@ -31,6 +32,14 @@ export async function PATCH(request: Request) {
   if (!promotion) {
     return NextResponse.json({ error: 'Promo tidak ditemukan.' }, { status: 404 })
   }
+
+  await logAdminActivity({
+    action: 'promotion.toggle',
+    entityType: 'promotion',
+    entityId: promotion.id,
+    entityLabel: promotion.name,
+    details: { isActive: body.isActive },
+  })
 
   return NextResponse.json({ success: true, promotion })
 }

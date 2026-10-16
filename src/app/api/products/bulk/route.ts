@@ -15,9 +15,11 @@ import {
   ProductInUseError,
   bulkSetArchived,
   bulkSetCategory,
+  readProductsByIds,
 } from '@/lib/mock-db/products'
 import { PRODUCT_CATEGORIES } from '@/lib/data/categories'
 import type { ProductCategory } from '@/types/product'
+import { logAdminActivity } from '@/lib/admin-activity'
 
 export const runtime = 'nodejs'
 
@@ -62,6 +64,9 @@ export async function POST(request: Request) {
     )
   }
 
+  // Nama & SKU dibaca SEBELUM aksi untuk log — setelah hapus massal keduanya sudah tak ada.
+  const sasaran = await readProductsByIds(ids)
+
   try {
     let affected = 0
 
@@ -79,6 +84,20 @@ export async function POST(request: Request) {
     }
 
     // Stok/harga/ketersediaan berubah → segarkan cache storefront (pola sama dengan create/update).
+    // Satu baris untuk seluruh batch, bukan satu per produk.
+    await logAdminActivity({
+      action: 'product.bulk',
+      entityType: 'product',
+      entityLabel: `${action} ${ids.length} produk`,
+      details: {
+        aksi: action,
+        ...(action === 'category' ? { category: body.category } : {}),
+        jumlahDipilih: ids.length,
+        affected,
+        produk: sasaran.map((p) => ({ id: p.id, sku: p.sku, name: p.name })),
+      },
+    })
+
     revalidatePath('/')
     revalidatePath('/products')
     revalidatePath('/produk/[id]', 'page')

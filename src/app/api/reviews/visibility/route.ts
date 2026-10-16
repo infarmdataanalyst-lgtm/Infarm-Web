@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server'
 import { revalidateTag } from 'next/cache'
 import { requireAdmin } from '@/lib/oms-guard'
 import { setReviewVisibility } from '@/lib/mock-db/reviews'
+import { logAdminActivity } from '@/lib/admin-activity'
 
 export const runtime = 'nodejs'
 
@@ -34,6 +35,13 @@ export async function POST(request: Request) {
   }
 
   // Invalidasi cache baca ulasan storefront agar perubahan visibilitas langsung tampil
+  await logAdminActivity({
+    action: 'review.visibility',
+    entityType: 'review',
+    entityId: body.id,
+    details: { visible: body.visible },
+  })
+
   revalidateTag('reviews', 'max')
 
   return NextResponse.json({ success: true })

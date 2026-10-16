@@ -20,6 +20,7 @@
 
 import { NextResponse } from 'next/server'
 import { requireAdminRole } from '@/lib/oms-guard'
+import { logAdminActivity } from '@/lib/admin-activity'
 import { fetchTrackingDetail } from '@/lib/mengantar-tracking'
 import { readOrdersMissingMengantarIds, setMengantarIds } from '@/lib/mock-db/orders'
 
@@ -133,6 +134,21 @@ export async function POST(request: Request) {
   console.log(
     `[backfill-mengantar-ids] ${dryRun ? 'DRY RUN ' : ''}${kandidat.length} pesanan: ${terisi} terisi, ${gagal} gagal`,
   )
+
+  // dryRun tak menulis apa pun → tak dicatat.
+  if (!dryRun) {
+    await logAdminActivity({
+      action: 'order.backfill_mengantar_ids',
+      entityType: 'order',
+      entityLabel: `${kandidat.length} pesanan`,
+      details: {
+        jumlah: kandidat.length,
+        terisi,
+        gagal,
+        invoiceTerisi: hasil.filter((h) => h.status === 'terisi').map((h) => h.invoice),
+      },
+    })
+  }
 
   return NextResponse.json({
     dryRun,

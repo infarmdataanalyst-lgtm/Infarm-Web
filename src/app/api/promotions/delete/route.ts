@@ -4,7 +4,8 @@
 
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/oms-guard'
-import { deletePromotion } from '@/lib/mock-db/promotions'
+import { deletePromotion, getPromotionById } from '@/lib/mock-db/promotions'
+import { logAdminActivity } from '@/lib/admin-activity'
 
 export const runtime = 'nodejs'
 
@@ -25,10 +26,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'id promo wajib ada.' }, { status: 400 })
   }
 
+  // Dibaca sebelum dihapus — untuk nama promo di log aktivitas.
+  const before = await getPromotionById(body.id)
+
   const deleted = await deletePromotion(body.id)
   if (!deleted) {
     return NextResponse.json({ error: 'Promo tidak ditemukan.' }, { status: 404 })
   }
+
+  await logAdminActivity({
+    action: 'promotion.delete',
+    entityType: 'promotion',
+    entityId: body.id,
+    entityLabel: before?.name ?? null,
+    details: before ? { type: before.type, isActive: before.isActive } : {},
+  })
 
   return NextResponse.json({ success: true })
 }

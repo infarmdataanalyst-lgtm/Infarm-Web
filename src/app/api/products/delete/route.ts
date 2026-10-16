@@ -5,7 +5,8 @@
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/oms-guard'
 import { revalidatePath, revalidateTag } from 'next/cache'
-import { deleteProduct, PRODUCT_IN_USE_MESSAGE } from '@/lib/mock-db/products'
+import { deleteProduct, getProductById, PRODUCT_IN_USE_MESSAGE } from '@/lib/mock-db/products'
+import { logAdminActivity } from '@/lib/admin-activity'
 
 export const runtime = 'nodejs'
 
@@ -26,6 +27,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'id produk wajib ada.' }, { status: 400 })
   }
 
+  // Dibaca sebelum dihapus — setelahnya nama & SKU tak bisa diambil lagi untuk log.
+  const before = await getProductById(body.id)
+
   const result = await deleteProduct(body.id)
   if (result === 'in-use') {
     return NextResponse.json({ error: PRODUCT_IN_USE_MESSAGE, code: 'PRODUCT_IN_USE' }, { status: 409 })
@@ -39,6 +43,14 @@ export async function POST(request: Request) {
 
   // Segarkan cache storefront agar produk yang dihapus hilang dari ecommerce.
   // id diketahui → revalidasi halaman detail spesifik + beranda + katalog.
+  await logAdminActivity({
+    action: 'product.delete',
+    entityType: 'product',
+    entityId: body.id,
+    entityLabel: before?.name ?? null,
+    details: { sku: before?.sku ?? null, category: before?.category ?? null },
+  })
+
   revalidatePath('/')
   revalidatePath('/products')
   revalidatePath(`/produk/${body.id}`)

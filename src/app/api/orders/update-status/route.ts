@@ -7,6 +7,7 @@
 
 import { NextResponse } from 'next/server'
 import { getAdminIdentity, requireAdmin } from '@/lib/oms-guard'
+import { logAdminActivity } from '@/lib/admin-activity'
 import { maskOrderForRole } from '@/lib/oms-pii'
 import {
   getOrderByOrderId,
@@ -180,11 +181,25 @@ export async function PATCH(request: Request) {
   const updatedFull = await updateOrderStatus(orderId, newStatus, logistics)
   // Pesanan yang dikembalikan ke modal ikut tersensor untuk peran 'staff' (lib/oms-pii.ts) — ia
   // menggantikan baris di tabel Pesanan, jadi harus sama bentuknya dengan /api/orders/list.
-  const role = (await getAdminIdentity())?.role ?? 'staff'
+  const actor = await getAdminIdentity()
+  const role = actor?.role ?? 'staff'
   const updated = updatedFull ? maskOrderForRole(updatedFull, role) : updatedFull
   if (!updated) {
     return NextResponse.json({ error: 'Gagal memperbarui status pesanan.' }, { status: 500 })
   }
+
+  await logAdminActivity({
+    action: 'order.status_update',
+    entityType: 'order',
+    entityId: order.orderId,
+    entityLabel: order.orderId,
+    details: {
+      status: { before: current, after: newStatus },
+      ...(logistics ? { logistics } : {}),
+      ...(newStatus === 'Dibatalkan' ? { paymentStatus: order.paymentStatus ?? null } : {}),
+    },
+    actor,
+  })
 
   // Bila dibatalkan: lepaskan kembali stok yang dialokasikan untuk pesanan ini (produk OMS).
   if (newStatus === 'Dibatalkan') {

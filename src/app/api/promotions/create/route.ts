@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/oms-guard'
 import { PromotionWriteError, createPromotion } from '@/lib/mock-db/promotions'
 import { validatePromotionInput } from '@/lib/promotion-validation'
+import { logAdminActivity } from '@/lib/admin-activity'
 
 export const runtime = 'nodejs'
 
@@ -28,6 +29,13 @@ export async function POST(request: Request) {
 
   try {
     const promotion = await createPromotion(result.value)
+    await logAdminActivity({
+      action: 'promotion.create',
+      entityType: 'promotion',
+      entityId: promotion.id,
+      entityLabel: promotion.name,
+      details: { ...result.value },
+    })
     return NextResponse.json({ success: true, promotion }, { status: 201 })
   } catch (e) {
     if (e instanceof PromotionWriteError) {

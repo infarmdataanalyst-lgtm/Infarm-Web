@@ -9,6 +9,7 @@ import { NextResponse } from 'next/server'
 import { revalidateTag } from 'next/cache'
 import { requireAdmin } from '@/lib/oms-guard'
 import { getWarehouseById, setWarehouseActive } from '@/lib/mock-db/warehouses'
+import { logAdminActivity } from '@/lib/admin-activity'
 
 export const runtime = 'nodejs'
 
@@ -45,6 +46,13 @@ export async function PATCH(request: Request) {
 
   try {
     const warehouse = await setWarehouseActive(id, isActive)
+    await logAdminActivity({
+      action: 'warehouse.toggle',
+      entityType: 'warehouse',
+      entityId: id,
+      entityLabel: existing.nama,
+      details: { isActive: { before: existing.isActive, after: isActive } },
+    })
     revalidateTag('products', 'max')
     return NextResponse.json({ success: true, warehouse })
   } catch (e) {

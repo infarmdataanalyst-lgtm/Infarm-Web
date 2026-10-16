@@ -14,6 +14,7 @@ import { NextResponse } from 'next/server'
 import { revalidateTag } from 'next/cache'
 import { requireAdmin } from '@/lib/oms-guard'
 import { deleteWarehouse, getWarehouseById, getWarehouseUsage } from '@/lib/mock-db/warehouses'
+import { logAdminActivity } from '@/lib/admin-activity'
 
 export const runtime = 'nodejs'
 
@@ -53,6 +54,14 @@ export async function DELETE(request: Request) {
   try {
     const deleted = await deleteWarehouse(id)
     if (!deleted) return NextResponse.json({ error: 'Gudang tidak ditemukan.' }, { status: 404 })
+
+    await logAdminActivity({
+      action: 'warehouse.delete',
+      entityType: 'warehouse',
+      entityId: id,
+      entityLabel: existing.nama,
+      details: { alamat: existing.alamat ?? null, mengantarOriginId: existing.mengantarOriginId ?? null },
+    })
 
     revalidateTag('products', 'max')
     return NextResponse.json({ success: true })

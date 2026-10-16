@@ -16,6 +16,7 @@ import { NextResponse } from 'next/server'
 import { requireAdmin, requireAdminRole } from '@/lib/oms-guard'
 import { getPickupHolidays, setPickupHolidays } from '@/lib/mock-db/settings'
 import { normalizePickupHolidays, wibDateString } from '@/lib/pickup-schedule'
+import { logAdminActivity } from '@/lib/admin-activity'
 
 export const runtime = 'nodejs'
 
@@ -48,7 +49,16 @@ export async function PATCH(request: Request) {
   }
 
   try {
+    // Nilai lama — hanya untuk log aktivitas.
+    const sebelum = await getPickupHolidays()
     const saved = await setPickupHolidays(result.holidays)
+    await logAdminActivity({
+      action: 'setting.update',
+      entityType: 'setting',
+      entityId: 'pickup_holidays',
+      entityLabel: 'Hari libur penjemputan',
+      details: { before: sebelum, after: saved },
+    })
     return NextResponse.json({ success: true, holidays: saved, dropped: result.dropped })
   } catch (e) {
     const message = e instanceof Error ? e.message : 'Gagal menyimpan pengaturan.'

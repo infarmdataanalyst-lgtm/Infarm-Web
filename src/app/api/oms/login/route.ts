@@ -4,6 +4,7 @@
 
 import { NextResponse } from 'next/server'
 import { authenticateAdmin } from '@/lib/mock-db/admins'
+import { logAdminActivity } from '@/lib/admin-activity'
 import {
   RATE_LIMITS,
   getClientIp,
@@ -84,6 +85,15 @@ export async function POST(request: Request) {
     recordAttempt(ipKey, RATE_LIMITS.OMS_LOGIN_IP)
     recordAttempt(ipUserKey, RATE_LIMITS.OMS_LOGIN_IP_USER)
     recordAttempt(userKey, RATE_LIMITS.OMS_LOGIN_USER)
+    // Dicatat SETELAH rate limit: percobaan yang sudah diblokir limiter tak sampai ke sini, jadi
+    // serangan tebak password tak bisa membanjiri log. Password TIDAK pernah ikut dicatat.
+    await logAdminActivity({
+      action: 'auth.login_failed',
+      entityType: 'auth',
+      entityLabel: akun,
+      details: { ip },
+      actor: null,
+    })
     // Pesan generik (jangan bocorkan apakah username ada atau password yang salah)
     return NextResponse.json(
       { error: 'Email kerja atau kata sandi salah. Silakan periksa kembali.' },
@@ -93,6 +103,15 @@ export async function POST(request: Request) {
 
   const maxAge = remember ? OMS_SESSION_MAX_AGE_REMEMBER : OMS_SESSION_MAX_AGE_DEFAULT
   const token = await createSessionToken(admin.id, maxAge)
+
+  await logAdminActivity({
+    action: 'auth.login',
+    entityType: 'auth',
+    entityId: admin.id,
+    entityLabel: akun,
+    details: { ip, remember },
+    actor: admin,
+  })
 
   const res = NextResponse.json({ success: true, name: admin.name })
   // sameSite 'strict', bukan 'lax' (SEC-026): 'lax' tetap mengirim cookie pada navigasi GET

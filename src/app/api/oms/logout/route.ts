@@ -4,10 +4,18 @@
 
 import { NextResponse } from 'next/server'
 import { OMS_SESSION_COOKIE } from '@/lib/oms-auth'
+import { logAdminActivity } from '@/lib/admin-activity'
+import { getAdminIdentity } from '@/lib/oms-guard'
 
 export const runtime = 'nodejs'
 
 export async function POST() {
+  // Dibaca SEBELUM cookie dihapus. Sesi yang sudah tak valid tak dicatat — tak ada pelakunya.
+  const actor = await getAdminIdentity()
+  if (actor) {
+    await logAdminActivity({ action: 'auth.logout', entityType: 'auth', entityId: actor.id, actor })
+  }
+
   const res = NextResponse.json({ success: true })
   // Atribut WAJIB sama persis dengan saat cookie dibuat di /api/oms/login (httpOnly, secure,
   // sameSite, path). Browser mencocokkan cookie berdasarkan atributnya; kalau berbeda, yang

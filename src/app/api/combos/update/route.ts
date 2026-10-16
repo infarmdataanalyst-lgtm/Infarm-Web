@@ -4,8 +4,9 @@
 import { NextResponse } from 'next/server'
 import { revalidateTag } from 'next/cache'
 import { requireAdmin } from '@/lib/oms-guard'
-import { updateCombo } from '@/lib/mock-db/combos'
+import { getComboById, updateCombo } from '@/lib/mock-db/combos'
 import { validateComboInput } from '@/lib/combo-validation'
+import { diffFields, logAdminActivity } from '@/lib/admin-activity'
 
 export const runtime = 'nodejs'
 
@@ -31,6 +32,9 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: result.error }, { status: 422 })
   }
 
+  // Versi sebelum diubah — hanya untuk log aktivitas.
+  const before = await getComboById(body.id)
+
   const combo = await updateCombo(body.id, result.value)
   if (!combo) {
     return NextResponse.json({ error: 'Combo tidak ditemukan.' }, { status: 404 })
@@ -38,5 +42,17 @@ export async function PATCH(request: Request) {
 
   // Invalidasi cache combo storefront
   revalidateTag('combos', 'max')
+  await logAdminActivity({
+    action: 'combo.update',
+    entityType: 'combo',
+    entityId: combo.id,
+    entityLabel: combo.name,
+    details: {
+      changes: diffFields(
+        (before ?? {}) as Record<string, unknown>,
+        result.value as unknown as Record<string, unknown>,
+      ),
+    },
+  })
   return NextResponse.json({ success: true, combo })
 }

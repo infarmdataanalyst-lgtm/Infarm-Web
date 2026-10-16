@@ -6,6 +6,7 @@ import { revalidateTag } from 'next/cache'
 import { requireAdmin } from '@/lib/oms-guard'
 import { createCombo } from '@/lib/mock-db/combos'
 import { validateComboInput } from '@/lib/combo-validation'
+import { logAdminActivity } from '@/lib/admin-activity'
 
 export const runtime = 'nodejs'
 
@@ -28,6 +29,13 @@ export async function POST(request: Request) {
   }
 
   const combo = await createCombo(result.value)
+  await logAdminActivity({
+    action: 'combo.create',
+    entityType: 'combo',
+    entityId: combo.id,
+    entityLabel: combo.name,
+    details: { comboPrice: combo.comboPrice, isActive: combo.isActive, items: combo.items },
+  })
   // Invalidasi cache combo storefront (rekomendasi paket di detail produk)
   revalidateTag('combos', 'max')
   return NextResponse.json({ success: true, combo }, { status: 201 })

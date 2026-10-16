@@ -11,6 +11,7 @@ import { revalidateTag } from 'next/cache'
 import { requireAdmin } from '@/lib/oms-guard'
 import { getWarehouseMode, setWarehouseMode } from '@/lib/warehouse'
 import type { WarehouseMode } from '@/types/warehouse'
+import { logAdminActivity } from '@/lib/admin-activity'
 
 export const runtime = 'nodejs'
 
@@ -41,7 +42,16 @@ export async function PATCH(request: Request) {
   }
 
   try {
+    // Nilai lama — hanya untuk log aktivitas.
+    const sebelum = await getWarehouseMode()
     const saved = await setWarehouseMode(raw as WarehouseMode)
+    await logAdminActivity({
+      action: 'setting.update',
+      entityType: 'setting',
+      entityId: 'warehouse_mode',
+      entityLabel: 'Mode pergudangan',
+      details: { before: sebelum, after: saved },
+    })
     // Mode menentukan cara stok efektif dihitung → segarkan cache baca storefront.
     revalidateTag('products', 'max')
     revalidateTag('settings', 'max')
